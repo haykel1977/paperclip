@@ -1606,7 +1606,8 @@ export function issueRoutes(
   async function resolveCompanyRouteId(req: Request) {
     const companyRef = req.params.companyId as string;
     const canResolveFromDatabase = typeof (db as { select?: unknown }).select === "function";
-    if (canResolveFromDatabase) {
+    const resolveReference = (companiesSvc as { resolveReference?: (reference: string) => Promise<{ id: string } | null> }).resolveReference;
+    if (canResolveFromDatabase && typeof resolveReference === "function") {
       const company = await companiesSvc.resolveReference(companyRef);
       if (!company) throw notFound("Company not found");
       assertCompanyAccess(req, company.id);
