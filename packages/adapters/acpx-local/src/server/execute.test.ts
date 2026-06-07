@@ -13,6 +13,23 @@ async function makeTempRoot() {
   return root;
 }
 
+async function withEnv(overrides: Record<string, string>, fn: () => Promise<void>) {
+  const env = process.env;
+  const previous = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(overrides)) {
+    previous.set(key, env[key]);
+    env[key] = value;
+  }
+  try {
+    await fn();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete env[key];
+      else env[key] = value;
+    }
+  }
+}
+
 afterEach(async () => {
   vi.restoreAllMocks();
   await Promise.all(tempRoots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
@@ -201,27 +218,18 @@ describe("acpx_local runtime skill isolation", () => {
     await fs.writeFile(sourceAuth, "{\"source\":true}", "utf8");
     await fs.writeFile(managedAuth, "{\"stale\":true}", "utf8");
 
-    const previousCodexHome = process.env.CODEX_HOME;
-    const previousPaperclipHome = process.env.PAPERCLIP_HOME;
-    const previousPaperclipInstanceId = process.env.PAPERCLIP_INSTANCE_ID;
-    try {
-      process.env.CODEX_HOME = sourceCodexHome;
-      process.env.PAPERCLIP_HOME = paperclipHome;
-      process.env.PAPERCLIP_INSTANCE_ID = paperclipInstanceId;
+    await withEnv({
+      CODEX_HOME: sourceCodexHome,
+      PAPERCLIP_HOME: paperclipHome,
+      PAPERCLIP_INSTANCE_ID: paperclipInstanceId,
+    }, async () => {
       await runExecutor({
         agent: "codex",
         stateDir: path.join(root, "state"),
         paperclipRuntimeSkills: [],
         paperclipSkillSync: { desiredSkills: [] },
       });
-    } finally {
-      if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
-      else process.env.CODEX_HOME = previousCodexHome;
-      if (previousPaperclipHome === undefined) delete process.env.PAPERCLIP_HOME;
-      else process.env.PAPERCLIP_HOME = previousPaperclipHome;
-      if (previousPaperclipInstanceId === undefined) delete process.env.PAPERCLIP_INSTANCE_ID;
-      else process.env.PAPERCLIP_INSTANCE_ID = previousPaperclipInstanceId;
-    }
+    });
 
     const authStat = await fs.lstat(managedAuth);
     expect(authStat.isSymbolicLink()).toBe(true);
@@ -255,27 +263,18 @@ describe("acpx_local runtime skill isolation", () => {
       throw error;
     });
 
-    const previousCodexHome = process.env.CODEX_HOME;
-    const previousPaperclipHome = process.env.PAPERCLIP_HOME;
-    const previousPaperclipInstanceId = process.env.PAPERCLIP_INSTANCE_ID;
-    try {
-      process.env.CODEX_HOME = sourceCodexHome;
-      process.env.PAPERCLIP_HOME = paperclipHome;
-      process.env.PAPERCLIP_INSTANCE_ID = paperclipInstanceId;
+    await withEnv({
+      CODEX_HOME: sourceCodexHome,
+      PAPERCLIP_HOME: paperclipHome,
+      PAPERCLIP_INSTANCE_ID: paperclipInstanceId,
+    }, async () => {
       await runExecutor({
         agent: "codex",
         stateDir: path.join(root, "state"),
         paperclipRuntimeSkills: [],
         paperclipSkillSync: { desiredSkills: [] },
       });
-    } finally {
-      if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
-      else process.env.CODEX_HOME = previousCodexHome;
-      if (previousPaperclipHome === undefined) delete process.env.PAPERCLIP_HOME;
-      else process.env.PAPERCLIP_HOME = previousPaperclipHome;
-      if (previousPaperclipInstanceId === undefined) delete process.env.PAPERCLIP_INSTANCE_ID;
-      else process.env.PAPERCLIP_INSTANCE_ID = previousPaperclipInstanceId;
-    }
+    });
 
     expect((await fs.lstat(managedAuth)).isSymbolicLink()).toBe(true);
     expect(path.resolve(path.dirname(managedAuth), await fs.readlink(managedAuth))).toBe(sourceAuth);
