@@ -370,7 +370,7 @@ export async function executeDeliveryHook(input: {
     let labelsToReconcile: string[] = [];
     const labelListReco = await runProc(
       "gh",
-      ["label", "list", "--repo", input.repo, "--json", "name", "--jq", "[.[].name]"],
+      ["label", "list", "--repo", input.repo, "--limit", "200", "--json", "name", "--jq", "[.[].name]"],
       worktreeCwd,
       env,
     );
@@ -401,7 +401,7 @@ export async function executeDeliveryHook(input: {
   let labelsToApply: string[] = [];
   const labelList = await runProc(
     "gh",
-    ["label", "list", "--repo", input.repo, "--json", "name", "--jq", "[.[].name]"],
+    ["label", "list", "--repo", input.repo, "--limit", "200", "--json", "name", "--jq", "[.[].name]"],
     worktreeCwd,
     env,
   );

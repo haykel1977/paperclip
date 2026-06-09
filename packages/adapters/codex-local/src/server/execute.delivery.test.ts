@@ -73,4 +73,26 @@ describe("executeDeliveryHook", () => {
     const r = await executeDeliveryHook({ ...base, runProc } as any);
     expect(r.reason).toBe("conflict");
   });
+
+  it("T6: labels present in repo -> applied to created PR; label list uses --limit", async () => {
+    const calls: string[][] = [];
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M HEARTBEAT.md\n", stderr: "" };
+      if (key === "gh label list")
+        return { exitCode: 0, stdout: JSON.stringify(["bug", "factory-proof", "human-gate-required"]), stderr: "" };
+      if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/2\n", stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    const r = await executeDeliveryHook({ ...base, runProc } as any);
+    expect(r.reason).toBe("created");
+    const labelCall = calls.find((c) => c[0] === "gh" && c[1] === "label" && c[2] === "list");
+    expect(labelCall).toContain("--limit");
+    expect(labelCall).toContain("200");
+    const createCall = calls.find((c) => c[0] === "gh" && c[1] === "pr" && c[2] === "create");
+    expect(createCall).toContain("factory-proof");
+    expect(createCall).toContain("human-gate-required");
+  });
 });
