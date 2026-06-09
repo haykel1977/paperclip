@@ -282,6 +282,176 @@ export async function ensureCodexSkillsInjected(
   );
 }
 
+/**
+ * executeDeliveryHook — deterministic post-run delivery (commit -> push -> PR).
+ *
+ * Why: Paperclip had no delivery hook; delivery was fully delegated to the model
+ * (qwen3-coder:30b) which edits but does not reliably run the git sequence
+ * (investigation C2+C3, 2026-06-08).
+ *
+ * Doctrine: NO LLM here. Pure git + gh CLI. Never merges (HAS-46 human review by
+ * @haykel1977 is mandatory). Idempotent. Reviewer requested best-effort post-create
+ * (GitHub forbids self-review; branch protection enforces the human gate).
+ */
+export async function executeDeliveryHook(input: {
+  runId: string;
+  worktreeCwd: string;
+  branch: string;
+  env: Record<string, string>;
+  issueIdentifier: string | null;
+  issueId: string | null;
+  repo: string;
+  baseBranch: string;
+  runProc: (
+    cmd: string,
+    args: string[],
+    cwd: string,
+    env: Record<string, string>,
+  ) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
+  log: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
+}): Promise<{ delivered: boolean; prUrl: string | null; reason: string }> {
+  const { worktreeCwd, branch, env, runProc, log } = input;
+  const ts = () => new Date().toISOString();
+
+  const status = await runProc("git", ["status", "--porcelain"], worktreeCwd, env);
+  if (status.exitCode !== 0) {
+    await log("stderr", `[delivery ${ts()}] git status failed: ${status.stderr}\n`);
+    return { delivered: false, prUrl: null, reason: "git_status_failed" };
+  }
+  if (!status.stdout.trim()) {
+    await log("stdout", `[delivery ${ts()}] no diff — nothing to deliver (ok).\n`);
+    return { delivered: false, prUrl: null, reason: "no_diff" };
+  }
+  if (/^(UU|AA|DD) /m.test(status.stdout)) {
+    await log("stderr", `[delivery ${ts()}] merge conflict markers — abort, no force.\n`);
+    return { delivered: false, prUrl: null, reason: "conflict" };
+  }
+
+  const title = `${input.issueIdentifier ?? "FACTORY"}: factory delivery`;
+  const body = [
+    `Paperclip issue: ${input.issueIdentifier ?? "?"} (${input.issueId ?? "?"})`,
+    `Run: ${input.runId}`,
+    `Model: sovereign (qwen3-coder:30b @ Bifrost CCX43)`,
+    `Factory: sovereign delivery hook (deterministic, no LLM)`,
+    ``,
+    `HAS-46: human review required — never auto-merge.`,
+  ].join("\n");
+
+  const add = await runProc("git", ["add", "-A"], worktreeCwd, env);
+  if (add.exitCode !== 0) {
+    await log("stderr", `[delivery ${ts()}] git add failed: ${add.stderr}\n`);
+    return { delivered: false, prUrl: null, reason: "git_add_failed" };
+  }
+  const commit = await runProc("git", ["commit", "-m", title, "-m", body], worktreeCwd, env);
+  if (commit.exitCode !== 0) {
+    await log("stderr", `[delivery ${ts()}] git commit failed: ${commit.stderr}\n`);
+    return { delivered: false, prUrl: null, reason: "git_commit_failed" };
+  }
+
+  const push = await runProc("git", ["push", "-u", "origin", branch], worktreeCwd, env);
+  if (push.exitCode !== 0) {
+    const s = (push.stderr || "").toLowerCase();
+    const reason =
+      s.includes("401") || s.includes("403") || s.includes("denied") ? "push_auth_failed" : "push_failed";
+    await log("stderr", `[delivery ${ts()}] git push ${reason}: ${push.stderr}\n`);
+    return { delivered: false, prUrl: null, reason };
+  }
+
+  // Idempotence: existing PR on this head -> reconcile labels (filtered), no duplicate.
+  const existing = await runProc(
+    "gh",
+    ["pr", "list", "--repo", input.repo, "--head", branch, "--json", "url", "--jq", ".[0].url // empty"],
+    worktreeCwd,
+    env,
+  );
+  if (existing.exitCode === 0 && existing.stdout.trim()) {
+    const existingUrl = existing.stdout.trim();
+    const labelsRequiredReco = ["factory-proof", "human-gate-required"];
+    let labelsToReconcile: string[] = [];
+    const labelListReco = await runProc(
+      "gh",
+      ["label", "list", "--repo", input.repo, "--json", "name", "--jq", "[.[].name]"],
+      worktreeCwd,
+      env,
+    );
+    if (labelListReco.exitCode === 0) {
+      try {
+        const existingLabels: string[] = JSON.parse(labelListReco.stdout || "[]");
+        labelsToReconcile = labelsRequiredReco.filter((l) => existingLabels.includes(l));
+      } catch (e) {
+        await log("stderr", `[delivery ${ts()}] reco label parse failed: ${(e as Error).message}\n`);
+      }
+    }
+    if (labelsToReconcile.length > 0) {
+      const editArgs = ["pr", "edit", existingUrl];
+      for (const l of labelsToReconcile) editArgs.push("--add-label", l);
+      const lr = await runProc("gh", editArgs, worktreeCwd, env);
+      if (lr.exitCode !== 0) {
+        await log("stderr", `[delivery ${ts()}] relabel existing PR failed (non-fatal): ${lr.stderr}\n`);
+      }
+    } else {
+      await log("stderr", `[delivery ${ts()}] reco skipped (no labels exist in repo, Phase -1 not done?)\n`);
+    }
+    await log("stdout", `[delivery ${ts()}] PR already exists (idempotent): ${existingUrl}\n`);
+    return { delivered: true, prUrl: existingUrl, reason: "pr_exists" };
+  }
+
+  // Label pre-flight: only apply labels that exist in the repo (Phase -1).
+  const labelsRequired = ["factory-proof", "human-gate-required"];
+  let labelsToApply: string[] = [];
+  const labelList = await runProc(
+    "gh",
+    ["label", "list", "--repo", input.repo, "--json", "name", "--jq", "[.[].name]"],
+    worktreeCwd,
+    env,
+  );
+  if (labelList.exitCode === 0) {
+    try {
+      const existingNames: string[] = JSON.parse(labelList.stdout || "[]");
+      labelsToApply = labelsRequired.filter((l) => existingNames.includes(l));
+      const missing = labelsRequired.filter((l) => !existingNames.includes(l));
+      if (missing.length) {
+        await log("stderr", `[delivery ${ts()}] labels missing (Phase -1 not done?): ${missing.join(",")}\n`);
+      }
+    } catch (e) {
+      await log("stderr", `[delivery ${ts()}] label parse failed: ${(e as Error).message}\n`);
+    }
+  } else {
+    await log("stderr", `[delivery ${ts()}] gh label list failed, no labels: ${labelList.stderr}\n`);
+  }
+
+  const prArgs = [
+    "pr",
+    "create",
+    "--repo",
+    input.repo,
+    "--head",
+    branch,
+    "--base",
+    input.baseBranch,
+    "--title",
+    title,
+    "--body",
+    body,
+  ];
+  for (const l of labelsToApply) prArgs.push("--label", l);
+  // NOTE: no --reviewer at create time (Adjustment C — GitHub forbids self-review).
+  const pr = await runProc("gh", prArgs, worktreeCwd, env);
+  if (pr.exitCode !== 0) {
+    await log("stderr", `[delivery ${ts()}] gh pr create failed: ${pr.stderr}\n`);
+    return { delivered: false, prUrl: null, reason: "pr_create_failed" };
+  }
+  const url = (pr.stdout.match(/https:\/\/github\.com\/\S+\/pull\/\d+/) || [null])[0];
+  if (url) {
+    const rev = await runProc("gh", ["pr", "edit", url, "--add-reviewer", "haykel1977"], worktreeCwd, env);
+    if (rev.exitCode !== 0) {
+      await log("stderr", `[delivery ${ts()}] add-reviewer failed (non-fatal): ${rev.stderr}\n`);
+    }
+  }
+  await log("stdout", `[delivery ${ts()}] PR created: ${url}\n`);
+  return { delivered: true, prUrl: url, reason: "created" };
+}
+
 export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
   const { runId, agent, runtime, config, context, onLog, onMeta, onSpawn, authToken } = ctx;
 
@@ -319,6 +489,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     : [];
   const runtimePrimaryUrl = asString(context.paperclipRuntimePrimaryUrl, "");
   const configuredCwd = asString(config.cwd, "");
+  const deliveryHookEnabled = config.deliveryHookEnabled !== false; // delivery hook: deterministic, no LLM (default on)
   const useConfiguredInsteadOfAgentHome = workspaceSource === "agent_home" && configuredCwd.length > 0;
   const effectiveWorkspaceCwd = useConfiguredInsteadOfAgentHome ? "" : workspaceCwd;
   const cwd = effectiveWorkspaceCwd || configuredCwd || process.cwd();
@@ -841,6 +1012,42 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       return toResult(retry, true, true);
     }
 
+    if (
+      deliveryHookEnabled &&
+      !executionTargetIsRemote &&
+      (initial.proc.exitCode ?? 1) === 0 &&
+      workspaceBranch
+    ) {
+      try {
+        const delivery = await executeDeliveryHook({
+          runId,
+          worktreeCwd: cwd,
+          branch: workspaceBranch,
+          env: runtimeEnv,
+          issueIdentifier: asString(context.issueIdentifier, "") || null,
+          issueId: asString(context.issueId, "") || null,
+          repo: asString(config.deliveryRepo, "Beyn-SOLIDUS/quantum"),
+          baseBranch: asString(config.deliveryBaseBranch, "main"),
+          runProc: async (c, a, wd, e) => {
+            const p = await runAdapterExecutionTargetProcess(runId, runtimeExecutionTarget, c, a, {
+              cwd: wd,
+              env: e,
+              timeoutSec: 120,
+              graceSec: 10,
+              onLog,
+            });
+            return { exitCode: p.exitCode ?? 1, stdout: p.stdout ?? "", stderr: p.stderr ?? "" };
+          },
+          log: onLog,
+        });
+        await onLog(
+          "stdout",
+          `[paperclip] delivery: ${delivery.reason}${delivery.prUrl ? " -> " + delivery.prUrl : ""}\n`,
+        );
+      } catch (err) {
+        await onLog("stderr", `[paperclip] delivery hook error (non-fatal): ${(err as Error).message}\n`);
+      }
+    }
     return toResult(initial, false, false);
   } finally {
     if (paperclipBridge) {
