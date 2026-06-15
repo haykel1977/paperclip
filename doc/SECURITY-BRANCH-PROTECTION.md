@@ -71,3 +71,20 @@ JSON
 > This snippet is documentation only. Running it requires admin rights on the
 > repository and is an intentional, manual maintainer step — no automation in
 > this repo performs it.
+
+## Repository security features (manual)
+
+Two GitHub repository features must be enabled by a maintainer
+(Settings → Code security). They cannot be toggled from a workflow or script:
+
+- **Dependency graph** — required by the `Dependency Review` step in
+  `.github/workflows/commitperclip-review.yml`. When it is disabled the action
+  errors with _"Dependency review is not supported on this repository"_. That
+  step is configured `continue-on-error: true` + `warn-only: true` so the review
+  gate still passes while the feature is off, but enabling Dependency graph turns
+  the dependency diff into an active signal.
+- **Dependabot alerts / security updates** — pairs with `.github/dependabot.yml`.
+  The grouped `npm-security` update flow only opens PRs once alerts are enabled.
+
+Enabling these completes the supply-chain side of the hardening that the
+committed config and workflows assume.
