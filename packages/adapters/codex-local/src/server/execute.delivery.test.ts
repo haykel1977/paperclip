@@ -28,6 +28,7 @@ describe("executeDeliveryHook", () => {
       "git status --porcelain": { exitCode: 0, stdout: " M HEARTBEAT.md\n" },
       "git add -A": { exitCode: 0 },
       "git commit -m": { exitCode: 0 },
+      // paperclip:allow-git-push: mock key for sovereign delivery hook push path under test (not a real invocation)
       "git push -u": { exitCode: 0 },
       "gh pr list": { exitCode: 0, stdout: "" },
       "gh label list": { exitCode: 0, stdout: "[]" },
@@ -49,6 +50,7 @@ describe("executeDeliveryHook", () => {
       "git status --porcelain": { exitCode: 0, stdout: " M f\n" },
       "git add -A": { exitCode: 0 },
       "git commit -m": { exitCode: 0 },
+      // paperclip:allow-git-push: mock key for sovereign delivery hook push path under test (not a real invocation)
       "git push -u": { exitCode: 1, stderr: "remote: 401 Unauthorized" },
     });
     const r = await executeDeliveryHook({ ...base, runProc } as any);
@@ -60,6 +62,7 @@ describe("executeDeliveryHook", () => {
       "git status --porcelain": { exitCode: 0, stdout: " M f\n" },
       "git add -A": { exitCode: 0 },
       "git commit -m": { exitCode: 0 },
+      // paperclip:allow-git-push: mock key for sovereign delivery hook push path under test (not a real invocation)
       "git push -u": { exitCode: 0 },
       "gh pr list": { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/9\n" },
       "gh label list": { exitCode: 0, stdout: "[]" },
