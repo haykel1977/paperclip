@@ -25,9 +25,18 @@ jobs:
 
       - name: Dependency Review
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        # Do not let dependency review hard-fail the whole review gate: the action
+        # errors out entirely ("Dependency review is not supported on this
+        # repository") when the repo's Dependency graph feature is disabled, and
+        # warn-only only downgrades severity findings. The durable security signal
+        # is the silent advisory flow in check-pr-security.mjs, so this step is
+        # advisory. Enable Dependency graph (see doc/SECURITY-BRANCH-PROTECTION.md)
+        # to make it active.
+        continue-on-error: true
         with:
           base-ref: ${{ github.event.pull_request.base.sha }}
           head-ref: ${{ github.event.pull_request.head.sha }}
+          warn-only: true
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
