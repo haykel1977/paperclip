@@ -1,0 +1,27 @@
+# gitleaks configuration for paperclip.
+# Extends the bundled default ruleset and layers repo-specific allowlists so
+# committed example/placeholder values do not produce false positives.
+# Docs: https://github.com/gitleaks/gitleaks#configuration
+
+title = "paperclip gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Global allowlist for known-safe paths and placeholder values"
+
+paths = [
+  '''pnpm-lock\.yaml''',
+  '''\.env\.example''',
+  '''(^|/)__snapshots__/''',
+  '''(^|/)(test|tests|__tests__)/''',
+  '''\.(test|spec)\.(ts|tsx|js|jsx|mjs)$''',
+]
+
+regexes = [
+  # Common placeholder / example secret values used throughout docs and fixtures.
+  '''(?i)(example|sample|placeholder|dummy|test|fake|changeme|your[-_]?key|xxx+)''',
+  # The AWS documentation example key, frequently used in tests.
+  '''AKIAIOSFODNN7EXAMPLE''',
+]
