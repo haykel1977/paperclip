@@ -9,6 +9,20 @@ updates:
     open-pull-requests-limit: 10
     labels:
       - "dependencies"
+    # Group routine version bumps so reviewers get fewer, batched PRs.
+    # Security updates are delivered by Dependabot's separate security-update
+    # flow and are NOT affected by the `ignore` rules below — major-version
+    # security patches still open even though routine major bumps are skipped.
+    groups:
+      npm-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+      npm-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
     ignore:
       # Ignore major version bumps — review those manually
       - dependency-name: "*"
@@ -21,3 +35,10 @@ updates:
       day: monday
       time: "06:00"
     open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    groups:
+      github-actions:
+        applies-to: version-updates
+        patterns:
+          - "*"
