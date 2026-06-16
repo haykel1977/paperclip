@@ -180,10 +180,14 @@ const AgentRunCard = memo(function AgentRunCard({
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              {isActive ? (
+              {run.status === "running" ? (
                 <span className="relative flex h-2.5 w-2.5 shrink-0">
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan-400 opacity-70" />
                   <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-cyan-500" />
+                </span>
+              ) : run.status === "queued" ? (
+                <span className="relative flex h-2.5 w-2.5 shrink-0">
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500/70" />
                 </span>
               ) : (
                 <span className="inline-flex h-2.5 w-2.5 rounded-full bg-muted-foreground/35" />
@@ -191,7 +195,7 @@ const AgentRunCard = memo(function AgentRunCard({
               <Identity name={run.agentName} size="sm" className="[&>span:last-child]:!text-[11px]" />
             </div>
             <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
-              <span>{isActive ? "Live now" : run.finishedAt ? `Finished ${relativeTime(run.finishedAt)}` : `Started ${relativeTime(run.createdAt)}`}</span>
+              <span>{run.status === "running" ? "Live now" : run.status === "queued" ? "Starting…" : run.finishedAt ? `Finished ${relativeTime(run.finishedAt)}` : `Started ${relativeTime(run.createdAt)}`}</span>
             </div>
           </div>
 
