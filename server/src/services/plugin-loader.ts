@@ -64,6 +64,23 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  * @see PLUGIN_SPEC.md §10 — Package Contract
  */
 export const NPM_PLUGIN_PACKAGE_PREFIX = "paperclip-plugin-";
+const NPM_PACKAGE_NAME_RE = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i;
+const NPM_VERSION_RE = /^[A-Za-z0-9._~^*<>=+-]+$/;
+
+function validateNpmPackageName(packageName: string): string | null {
+  if (!NPM_PACKAGE_NAME_RE.test(packageName)) {
+    return "packageName must be a valid npm package name";
+  }
+  return null;
+}
+
+function validateNpmVersion(version: string): string | null {
+  if (version.length === 0) return null;
+  if (version.startsWith("-") || !NPM_VERSION_RE.test(version)) {
+    return "version contains invalid characters";
+  }
+  return null;
+}
 
 /**
  * Default local plugin directory.  The loader scans this directory for
@@ -859,7 +876,17 @@ export function pluginLoader(
       );
     } else {
       // npm install
-      const spec = version ? `${packageName}@${version}` : packageName!;
+      const normalizedPackageName = packageName!.trim();
+      const normalizedVersion = version?.trim() ?? "";
+      const packageNameError = validateNpmPackageName(normalizedPackageName);
+      if (packageNameError) {
+        throw new Error(packageNameError);
+      }
+      const versionError = validateNpmVersion(normalizedVersion);
+      if (versionError) {
+        throw new Error(versionError);
+      }
+      const spec = normalizedVersion ? `${normalizedPackageName}@${normalizedVersion}` : normalizedPackageName;
 
       log.info(
         { spec, installDir: targetInstallDir },
@@ -872,7 +899,7 @@ export function pluginLoader(
         // executing arbitrary code on the host before manifest validation.
         await execFileAsync(
           "npm",
-          ["install", spec, "--prefix", targetInstallDir, "--save", "--ignore-scripts"],
+          ["install", "--prefix", targetInstallDir, "--save", "--ignore-scripts", "--", spec],
           { timeout: 120_000 }, // 2 minute timeout for npm install
         );
       } catch (err) {
@@ -881,7 +908,7 @@ export function pluginLoader(
 
       // Resolve the package path after installation
       const nodeModulesPath = path.join(targetInstallDir, "node_modules");
-      resolvedPackageName = packageName!;
+      resolvedPackageName = normalizedPackageName;
 
       // Handle scoped packages
       if (resolvedPackageName.startsWith("@")) {
