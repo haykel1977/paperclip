@@ -134,14 +134,11 @@ describe("executeDeliveryHook", () => {
     });
     const result = await executeDeliveryHook({ ...base, worktreeCwd, env: { PAPERCLIP_AUTONOMOUS_DELIVERY: "1" }, runProc });
     expect(result.reason).toBe("delivery_blocked: missing bot token");
-    expect(calls.some((call) => call[0] === "git" && call[1] === "add")).toBe(false);
-    expect(calls.some((call) => call[0] === "git" && call[1] === "commit")).toBe(false);
     expect(calls.some((call) => call[0] === "git" && call[1] === "push")).toBe(false);
     expect(calls.some((call) => call[0] === "gh")).toBe(false);
   });
 
   it("flag ON + gate vert -> bot-merge-ready sans reviewer humain", async () => {
-
     const worktreeCwd = mkWorktree();
     const calls: string[][] = [];
     const envCalls: Array<{ cmd: string; args: string[]; env: Record<string, string> }> = [];

@@ -1,230 +1,396 @@
-import { useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { 
-  Activity, 
-  Users, 
-  TrendingUp, 
-  Clock, 
-  AlertTriangle, 
-  CheckCircle,
-  Calendar,
-  Target,
-  DollarSign
-} from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "@/lib/router";
+import { useQuery } from "@tanstack/react-query";
+import { dashboardApi } from "../api/dashboard";
+import { activityApi } from "../api/activity";
+import { accessApi } from "../api/access";
+import { issuesApi } from "../api/issues";
+import { agentsApi } from "../api/agents";
+import { projectsApi } from "../api/projects";
+import { buildCompanyUserProfileMap } from "../lib/company-members";
+import { useCompany } from "../context/CompanyContext";
+import { useDialogActions } from "../context/DialogContext";
+import { useBreadcrumbs } from "../context/BreadcrumbContext";
+import { queryKeys } from "../lib/queryKeys";
+import { MetricCard } from "../components/MetricCard";
+import { EmptyState } from "../components/EmptyState";
+import { StatusIcon } from "../components/StatusIcon";
 
-interface Agent {
-  id: string;
-  name: string;
-  status: "active" | "paused" | "error";
-  lastActive: string;
-  tasksCompleted: number;
-}
+import { ActivityRow } from "../components/ActivityRow";
+import { Identity } from "../components/Identity";
+import { timeAgo } from "../lib/timeAgo";
+import { cn, formatCents } from "../lib/utils";
+import { Bot, CircleDot, DollarSign, ShieldCheck, LayoutDashboard, PauseCircle } from "lucide-react";
+import { ActiveAgentsPanel } from "../components/ActiveAgentsPanel";
+import { ChartCard, RunActivityChart, PriorityChart, IssueStatusChart, SuccessRateChart } from "../components/ActivityCharts";
+import { PageSkeleton } from "../components/PageSkeleton";
+import type { Agent, Issue } from "@paperclipai/shared";
+import { PluginSlotOutlet } from "@/plugins/slots";
 
-interface Project {
-  id: string;
-  name: string;
-  progress: number;
-  deadline: string;
-  members: number;
-}
+const DASHBOARD_ACTIVITY_LIMIT = 10;
 
-interface Task {
-  id: string;
-  title: string;
-  priority: "high" | "medium" | "low";
-  assignee: string;
-  dueDate: string;
+function getRecentIssues(issues: Issue[]): Issue[] {
+  return [...issues]
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 }
 
 export function Dashboard() {
-  const [agents] = useState<Agent[]>([
-    { id: "1", name: "Code Assistant", status: "active", lastActive: "2 mins ago", tasksCompleted: 12 },
-    { id: "2", name: "Research Bot", status: "active", lastActive: "5 mins ago", tasksCompleted: 8 },
-    { id: "3", name: "Marketing Expert", status: "paused", lastActive: "1 hour ago", tasksCompleted: 5 },
-    { id: "4", name: "Data Analyst", status: "error", lastActive: "10 mins ago", tasksCompleted: 3 },
-  ]);
+  const { selectedCompanyId, companies } = useCompany();
+  const { openOnboarding } = useDialogActions();
+  const { setBreadcrumbs } = useBreadcrumbs();
+  const [animatedActivityIds, setAnimatedActivityIds] = useState<Set<string>>(new Set());
+  const seenActivityIdsRef = useRef<Set<string>>(new Set());
+  const hydratedActivityRef = useRef(false);
+  const activityAnimationTimersRef = useRef<number[]>([]);
 
-  const [projects] = useState<Project[]>([
-    { id: "1", name: "Product Launch", progress: 75, deadline: "2024-06-15", members: 4 },
-    { id: "2", name: "Market Research", progress: 40, deadline: "2024-07-01", members: 3 },
-    { id: "3", name: "Documentation", progress: 20, deadline: "2024-06-30", members: 2 },
-  ]);
+  const { data: agents } = useQuery({
+    queryKey: queryKeys.agents.list(selectedCompanyId!),
+    queryFn: () => agentsApi.list(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
 
-  const [tasks] = useState<Task[]>([
-    { id: "1", title: "Write API documentation", priority: "high", assignee: "Code Assistant", dueDate: "2024-06-10" },
-    { id: "2", title: "Analyze market trends", priority: "medium", assignee: "Research Bot", dueDate: "2024-06-12" },
-    { id: "3", title: "Create marketing materials", priority: "high", assignee: "Marketing Expert", dueDate: "2024-06-14" },
-  ]);
+  useEffect(() => {
+    setBreadcrumbs([{ label: "Dashboard" }]);
+  }, [setBreadcrumbs]);
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "active": return "bg-green-500";
-      case "paused": return "bg-yellow-500";
-      case "error": return "bg-red-500";
-      default: return "bg-gray-500";
+  const { data, isLoading, error } = useQuery({
+    queryKey: queryKeys.dashboard(selectedCompanyId!),
+    queryFn: () => dashboardApi.summary(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+
+  const { data: activity } = useQuery({
+    queryKey: [...queryKeys.activity(selectedCompanyId!), { limit: DASHBOARD_ACTIVITY_LIMIT }],
+    queryFn: () => activityApi.list(selectedCompanyId!, { limit: DASHBOARD_ACTIVITY_LIMIT }),
+    enabled: !!selectedCompanyId,
+  });
+
+  const { data: issues } = useQuery({
+    queryKey: queryKeys.issues.list(selectedCompanyId!),
+    queryFn: () => issuesApi.list(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+
+  const { data: projects } = useQuery({
+    queryKey: queryKeys.projects.list(selectedCompanyId!),
+    queryFn: () => projectsApi.list(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+
+  const { data: companyMembers } = useQuery({
+    queryKey: queryKeys.access.companyUserDirectory(selectedCompanyId!),
+    queryFn: () => accessApi.listUserDirectory(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+
+  const userProfileMap = useMemo(
+    () => buildCompanyUserProfileMap(companyMembers?.users),
+    [companyMembers?.users],
+  );
+
+  const recentIssues = issues ? getRecentIssues(issues) : [];
+  const recentActivity = useMemo(() => (activity ?? []).slice(0, 10), [activity]);
+
+  useEffect(() => {
+    for (const timer of activityAnimationTimersRef.current) {
+      window.clearTimeout(timer);
     }
+    activityAnimationTimersRef.current = [];
+    seenActivityIdsRef.current = new Set();
+    hydratedActivityRef.current = false;
+    setAnimatedActivityIds(new Set());
+  }, [selectedCompanyId]);
+
+  useEffect(() => {
+    if (recentActivity.length === 0) return;
+
+    const seen = seenActivityIdsRef.current;
+    const currentIds = recentActivity.map((event) => event.id);
+
+    if (!hydratedActivityRef.current) {
+      for (const id of currentIds) seen.add(id);
+      hydratedActivityRef.current = true;
+      return;
+    }
+
+    const newIds = currentIds.filter((id) => !seen.has(id));
+    if (newIds.length === 0) {
+      for (const id of currentIds) seen.add(id);
+      return;
+    }
+
+    setAnimatedActivityIds((prev) => {
+      const next = new Set(prev);
+      for (const id of newIds) next.add(id);
+      return next;
+    });
+
+    for (const id of newIds) seen.add(id);
+
+    const timer = window.setTimeout(() => {
+      setAnimatedActivityIds((prev) => {
+        const next = new Set(prev);
+        for (const id of newIds) next.delete(id);
+        return next;
+      });
+      activityAnimationTimersRef.current = activityAnimationTimersRef.current.filter((t) => t !== timer);
+    }, 980);
+    activityAnimationTimersRef.current.push(timer);
+  }, [recentActivity]);
+
+  useEffect(() => {
+    return () => {
+      for (const timer of activityAnimationTimersRef.current) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, []);
+
+  const agentMap = useMemo(() => {
+    const map = new Map<string, Agent>();
+    for (const a of agents ?? []) map.set(a.id, a);
+    return map;
+  }, [agents]);
+
+  const entityNameMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const i of issues ?? []) map.set(`issue:${i.id}`, i.identifier ?? i.id.slice(0, 8));
+    for (const a of agents ?? []) map.set(`agent:${a.id}`, a.name);
+    for (const p of projects ?? []) map.set(`project:${p.id}`, p.name);
+    return map;
+  }, [issues, agents, projects]);
+
+  const entityTitleMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const i of issues ?? []) map.set(`issue:${i.id}`, i.title);
+    return map;
+  }, [issues]);
+
+  const agentName = (id: string | null) => {
+    if (!id || !agents) return null;
+    return agents.find((a) => a.id === id)?.name ?? null;
   };
 
-  const getPriorityColor = (priority: string) => {
-    switch (priority) {
-      case "high": return "bg-red-100 text-red-800";
-      case "medium": return "bg-yellow-100 text-yellow-800";
-      case "low": return "bg-green-100 text-green-800";
-      default: return "bg-gray-100 text-gray-800";
+  if (!selectedCompanyId) {
+    if (companies.length === 0) {
+      return (
+        <EmptyState
+          icon={LayoutDashboard}
+          message="Welcome to Paperclip. Set up your first company and agent to get started."
+          action="Get Started"
+          onAction={openOnboarding}
+        />
+      );
     }
-  };
+    return (
+      <EmptyState icon={LayoutDashboard} message="Create or select a company to view the dashboard." />
+    );
+  }
+
+  if (isLoading) {
+    return <PageSkeleton variant="dashboard" />;
+  }
+
+  const hasNoAgents = agents !== undefined && agents.length === 0;
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold">Dashboard</h1>
-          <p className="text-muted-foreground">Overview of your AI agents and projects</p>
+      {error && <p className="text-sm text-destructive">{error.message}</p>}
+
+      {hasNoAgents && (
+        <div className="flex items-center justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 dark:border-amber-500/25 dark:bg-amber-950/60">
+          <div className="flex items-center gap-2.5">
+            <Bot className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
+            <p className="text-sm text-amber-900 dark:text-amber-100">
+              You have no agents.
+            </p>
+          </div>
+          <button
+            onClick={() => openOnboarding({ initialStep: 2, companyId: selectedCompanyId! })}
+            className="text-sm font-medium text-amber-700 hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-100 underline underline-offset-2 shrink-0"
+          >
+            Create one here
+          </button>
         </div>
-        <Button variant="default">New Task</Button>
-      </div>
+      )}
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Agents</CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">12</div>
-            <p className="text-xs text-muted-foreground">+2 from last month</p>
-          </CardContent>
-        </Card>
+      <ActiveAgentsPanel companyId={selectedCompanyId!} />
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Active Projects</CardTitle>
-            <Target className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">8</div>
-            <p className="text-xs text-muted-foreground">+1 from last week</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Pending Tasks</CardTitle>
-            <AlertTriangle className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">15</div>
-            <p className="text-xs text-muted-foreground">3 urgent</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Monthly Cost</CardTitle>
-            <DollarSign className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">$2,450</div>
-            <p className="text-xs text-muted-foreground">+12% from last month</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Main Content Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Active Agents */}
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Activity className="h-4 w-4" />
-              Active Agents
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {agents.map(agent => (
-                <div key={agent.id} className="flex items-center justify-between p-3 hover:bg-muted rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-3 h-3 rounded-full ${getStatusColor(agent.status)}`}></div>
-                    <div>
-                      <div className="font-medium">{agent.name}</div>
-                      <div className="text-sm text-muted-foreground">Last active: {agent.lastActive}</div>
-                    </div>
-                  </div>
-                  <Badge variant={agent.status === "active" ? "default" : agent.status === "paused" ? "secondary" : "destructive"}>
-                    {agent.status.charAt(0).toUpperCase() + agent.status.slice(1)}
-                  </Badge>
+      {data && (
+        <>
+          {data.budgets.activeIncidents > 0 ? (
+            <div className="flex items-start justify-between gap-3 rounded-xl border border-red-500/20 bg-[linear-gradient(180deg,rgba(255,80,80,0.12),rgba(255,255,255,0.02))] px-4 py-3">
+              <div className="flex items-start gap-2.5">
+                <PauseCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-300" />
+                <div>
+                  <p className="text-sm font-medium text-red-50">
+                    {data.budgets.activeIncidents} active budget incident{data.budgets.activeIncidents === 1 ? "" : "s"}
+                  </p>
+                  <p className="text-xs text-red-100/70">
+                    {data.budgets.pausedAgents} agents paused · {data.budgets.pausedProjects} projects paused · {data.budgets.pendingApprovals} pending budget approvals
+                  </p>
                 </div>
-              ))}
+              </div>
+              <Link to="/costs" className="text-sm underline underline-offset-2 text-red-100">
+                Open budgets
+              </Link>
             </div>
-          </CardContent>
-        </Card>
+          ) : null}
 
-        {/* Upcoming Tasks */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Calendar className="h-4 w-4" />
-              Upcoming Tasks
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {tasks.map(task => (
-                <div key={task.id} className="p-3 hover:bg-muted rounded-lg">
-                  <div className="flex justify-between items-start">
-                    <div className="font-medium">{task.title}</div>
-                    <Badge className={getPriorityColor(task.priority)}>{task.priority}</Badge>
-                  </div>
-                  <div className="text-sm text-muted-foreground mt-1">
-                    Assigned to: {task.assignee}
-                  </div>
-                  <div className="text-sm text-muted-foreground mt-1 flex items-center gap-1">
-                    <Clock className="h-3 w-3" />
-                    Due: {task.dueDate}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+          <div className="grid grid-cols-2 xl:grid-cols-4 gap-1 sm:gap-2">
+            <MetricCard
+              icon={Bot}
+              value={data.agents.active + data.agents.running + data.agents.paused + data.agents.error}
+              label="Agents Enabled"
+              to="/agents"
+              description={
+                <span>
+                  {data.agents.running} running{", "}
+                  {data.agents.paused} paused{", "}
+                  {data.agents.error} errors
+                </span>
+              }
+            />
+            <MetricCard
+              icon={CircleDot}
+              value={data.tasks.inProgress}
+              label="Tasks In Progress"
+              to="/issues"
+              description={
+                <span>
+                  {data.tasks.open} open{", "}
+                  {data.tasks.blocked} blocked
+                </span>
+              }
+            />
+            <MetricCard
+              icon={DollarSign}
+              value={formatCents(data.costs.monthSpendCents)}
+              label="Month Spend"
+              to="/costs"
+              description={
+                <span>
+                  {data.costs.monthBudgetCents > 0
+                    ? `${data.costs.monthUtilizationPercent}% of ${formatCents(data.costs.monthBudgetCents)} budget`
+                    : "Unlimited budget"}
+                </span>
+              }
+            />
+            <MetricCard
+              icon={ShieldCheck}
+              value={data.pendingApprovals + data.budgets.pendingApprovals}
+              label="Pending Approvals"
+              to="/approvals"
+              description={
+                <span>
+                  {data.budgets.pendingApprovals > 0
+                    ? `${data.budgets.pendingApprovals} budget overrides awaiting board review`
+                    : "Awaiting board review"}
+                </span>
+              }
+            />
+          </div>
 
-        {/* Projects Progress */}
-        <Card className="lg:col-span-3">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <TrendingUp className="h-4 w-4" />
-              Project Progress
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-6">
-              {projects.map(project => (
-                <div key={project.id}>
-                  <div className="flex justify-between mb-2">
-                    <span className="font-medium">{project.name}</span>
-                    <span className="text-sm text-muted-foreground">{project.progress}%</span>
-                  </div>
-                  <div className="w-full bg-secondary rounded-full h-2">
-                    <div 
-                      className="bg-primary h-2 rounded-full" 
-                      style={{ width: `${project.progress}%` }}
-                    ></div>
-                  </div>
-                  <div className="flex justify-between mt-2 text-sm text-muted-foreground">
-                    <span>Deadline: {project.deadline}</span>
-                    <span>{project.members} members</span>
-                  </div>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <ChartCard title="Run Activity" subtitle="Last 14 days">
+              <RunActivityChart activity={data.runActivity} />
+            </ChartCard>
+            <ChartCard title="Tasks by Priority" subtitle="Last 14 days">
+              <PriorityChart issues={issues ?? []} />
+            </ChartCard>
+            <ChartCard title="Tasks by Status" subtitle="Last 14 days">
+              <IssueStatusChart issues={issues ?? []} />
+            </ChartCard>
+            <ChartCard title="Success Rate" subtitle="Last 14 days">
+              <SuccessRateChart activity={data.runActivity} />
+            </ChartCard>
+          </div>
+
+          <PluginSlotOutlet
+            slotTypes={["dashboardWidget"]}
+            context={{ companyId: selectedCompanyId }}
+            className="grid gap-4 md:grid-cols-2"
+            itemClassName="rounded-lg border bg-card p-4 shadow-sm"
+          />
+
+          <div className="grid md:grid-cols-2 gap-4">
+            {/* Recent Activity */}
+            {recentActivity.length > 0 && (
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+                  Recent Activity
+                </h3>
+                <div className="border border-border divide-y divide-border overflow-hidden">
+                  {recentActivity.map((event) => (
+                    <ActivityRow
+                      key={event.id}
+                      event={event}
+                      agentMap={agentMap}
+                      userProfileMap={userProfileMap}
+                      entityNameMap={entityNameMap}
+                      entityTitleMap={entityTitleMap}
+                      className={animatedActivityIds.has(event.id) ? "activity-row-enter" : undefined}
+                    />
+                  ))}
                 </div>
-              ))}
+              </div>
+            )}
+
+            {/* Recent Tasks */}
+            <div className="min-w-0">
+              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+                Recent Tasks
+              </h3>
+              {recentIssues.length === 0 ? (
+                <div className="border border-border p-4">
+                  <p className="text-sm text-muted-foreground">No tasks yet.</p>
+                </div>
+              ) : (
+                <div className="border border-border divide-y divide-border overflow-hidden">
+                  {recentIssues.slice(0, 10).map((issue) => (
+                    <Link
+                      key={issue.id}
+                      to={`/issues/${issue.identifier ?? issue.id}`}
+                      className="px-4 py-3 text-sm cursor-pointer hover:bg-accent/50 transition-colors no-underline text-inherit block"
+                    >
+                      <div className="flex items-start gap-2 sm:items-center sm:gap-3">
+                        {/* Status icon - left column on mobile */}
+                        <span className="shrink-0 sm:hidden">
+                          <StatusIcon status={issue.status} blockerAttention={issue.blockerAttention} />
+                        </span>
+
+                        {/* Right column on mobile: title + metadata stacked */}
+                        <span className="flex min-w-0 flex-1 flex-col gap-1 sm:contents">
+                          <span className="line-clamp-2 text-sm sm:order-2 sm:flex-1 sm:min-w-0 sm:line-clamp-none sm:truncate">
+                            {issue.title}
+                          </span>
+                          <span className="flex items-center gap-2 sm:order-1 sm:shrink-0">
+                            <span className="hidden sm:inline-flex"><StatusIcon status={issue.status} blockerAttention={issue.blockerAttention} /></span>
+                            <span className="text-xs font-mono text-muted-foreground">
+                              {issue.identifier ?? issue.id.slice(0, 8)}
+                            </span>
+                            {issue.assigneeAgentId && (() => {
+                              const name = agentName(issue.assigneeAgentId);
+                              return name
+                                ? <span className="hidden sm:inline-flex"><Identity name={name} size="sm" /></span>
+                                : null;
+                            })()}
+                            <span className="text-xs text-muted-foreground sm:hidden">&middot;</span>
+                            <span className="text-xs text-muted-foreground shrink-0 sm:order-last">
+                              {timeAgo(issue.updatedAt)}
+                            </span>
+                          </span>
+                        </span>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              )}
             </div>
-          </CardContent>
-        </Card>
-      </div>
+          </div>
+
+        </>
+      )}
     </div>
   );
 }
