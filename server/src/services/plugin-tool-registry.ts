@@ -38,6 +38,28 @@ import { logger } from "../middleware/logger.js";
  */
 export const TOOL_NAMESPACE_SEPARATOR = ":";
 
+const PLUGIN_TOOL_NAMESPACE_RE = /^[a-z0-9][a-z0-9._-]*$/;
+const PLUGIN_TOOL_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+const RESERVED_TOOL_KEYS = new Set(["__proto__", "prototype", "constructor"]);
+
+export function isSafePluginToolName(toolName: string): boolean {
+  return PLUGIN_TOOL_NAME_RE.test(toolName) && !RESERVED_TOOL_KEYS.has(toolName);
+}
+
+function assertSafePluginToolNamespace(pluginId: string): void {
+  if (!PLUGIN_TOOL_NAMESPACE_RE.test(pluginId)) {
+    throw new Error(`Invalid plugin tool namespace "${pluginId}"`);
+  }
+}
+
+function assertSafePluginToolName(toolName: string): void {
+  if (!isSafePluginToolName(toolName)) {
+    throw new Error(
+      `Invalid plugin tool name "${toolName}". Tool names must be alphanumeric-led and may only contain letters, digits, dots, underscores, or hyphens.`,
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -243,18 +265,22 @@ export function createPluginToolRegistry(
   // -----------------------------------------------------------------------
 
   function buildName(pluginId: string, toolName: string): string {
+    assertSafePluginToolNamespace(pluginId);
+    assertSafePluginToolName(toolName);
     return `${pluginId}${TOOL_NAMESPACE_SEPARATOR}${toolName}`;
   }
 
   function parseName(namespacedName: string): { pluginId: string; toolName: string } | null {
-    const sepIndex = namespacedName.lastIndexOf(TOOL_NAMESPACE_SEPARATOR);
+    const sepIndex = namespacedName.indexOf(TOOL_NAMESPACE_SEPARATOR);
     if (sepIndex <= 0 || sepIndex >= namespacedName.length - 1) {
       return null;
     }
-    return {
-      pluginId: namespacedName.slice(0, sepIndex),
-      toolName: namespacedName.slice(sepIndex + 1),
-    };
+    const pluginId = namespacedName.slice(0, sepIndex);
+    const toolName = namespacedName.slice(sepIndex + 1);
+    if (!PLUGIN_TOOL_NAMESPACE_RE.test(pluginId) || !isSafePluginToolName(toolName)) {
+      return null;
+    }
+    return { pluginId, toolName };
   }
 
   function addTool(pluginId: string, decl: PluginToolDeclaration, pluginDbId: string): void {
@@ -308,7 +334,12 @@ export function createPluginToolRegistry(
             `Workers are keyed by DB UUID; omitting this guarantees worker-lookup failure.`,
         );
       }
+      assertSafePluginToolNamespace(pluginId);
       const dbId = pluginDbId;
+      const tools = manifest.tools ?? [];
+      for (const decl of tools) {
+        assertSafePluginToolName(decl.name);
+      }
 
       // Remove any previously registered tools for this plugin (idempotent)
       const previousCount = removePluginTools(pluginId);
@@ -319,7 +350,6 @@ export function createPluginToolRegistry(
         );
       }
 
-      const tools = manifest.tools ?? [];
       if (tools.length === 0) {
         log.debug({ pluginId }, "plugin declares no tools");
         return;

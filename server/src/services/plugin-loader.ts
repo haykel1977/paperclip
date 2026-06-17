@@ -2146,6 +2146,7 @@ function normalizeRelativePluginEntrypoint(entrypointPath: string): string {
 function normalizeRelativePluginPackagePath(relativePath: string, label: string): string {
   if (
     path.isAbsolute(relativePath) ||
+    /^[A-Za-z]:/.test(relativePath) ||
     relativePath.includes("\\") ||
     relativePath.split("/").some((segment) => segment === "..")
   ) {

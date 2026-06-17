@@ -109,8 +109,15 @@ export type PluginWebhookDeclarationInput = z.infer<typeof pluginWebhookDeclarat
  *
  * @see PLUGIN_SPEC.md §11 — Agent Tools
  */
+const pluginToolNameSchema = z.string().min(1).max(100).regex(
+  /^[A-Za-z0-9][A-Za-z0-9._-]*$/,
+  "tool name must start with an alphanumeric character and contain only letters, digits, dots, underscores, or hyphens",
+).refine((value) => !["__proto__", "prototype", "constructor"].includes(value), {
+  message: "tool name cannot use reserved object property names",
+});
+
 export const pluginToolDeclarationSchema = z.object({
-  name: z.string().min(1),
+  name: pluginToolNameSchema,
   displayName: z.string().min(1),
   description: z.string().min(1),
   parametersSchema: jsonSchemaSchema,
@@ -544,8 +551,8 @@ export const pluginDatabaseDeclarationSchema = z.object({
     message: "namespaceSlug must be lowercase letters, digits, or underscores and start with a letter or digit",
   }).max(40).optional(),
   migrationsDir: z.string().min(1).refine(
-    (value) => !value.startsWith("/") && !value.includes("..") && !/[\\]/.test(value),
-    { message: "migrationsDir must be a relative package path without '..' or backslashes" },
+    (value) => !value.startsWith("/") && !/^[A-Za-z]:/.test(value) && !value.includes("..") && !/[\\]/.test(value),
+    { message: "migrationsDir must be a relative package path without drive prefixes, '..', or backslashes" },
   ),
   coreReadTables: z.array(z.enum(PLUGIN_DATABASE_CORE_READ_TABLES)).optional(),
 });

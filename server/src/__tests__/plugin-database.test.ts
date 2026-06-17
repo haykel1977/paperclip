@@ -72,6 +72,20 @@ describe("plugin database migration path resolution", () => {
     });
   });
 
+  it("rejects drive-prefixed migrations directories", async () => {
+    await withTempDir(async (root) => {
+      const packageRoot = path.join(root, "package");
+      await mkdir(packageRoot, { recursive: true });
+
+      await expect(resolveMigrationsDir(packageRoot, "C:migrations")).rejects.toThrow(
+        /escapes package root/,
+      );
+      await expect(resolveMigrationsDir(packageRoot, "C:/migrations")).rejects.toThrow(
+        /escapes package root/,
+      );
+    });
+  });
+
   it.skipIf(process.platform === "win32")("rejects migrations directories that escape through symlinks", async () => {
     await withTempDir(async (root) => {
       const packageRoot = path.join(root, "package");

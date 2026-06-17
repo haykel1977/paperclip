@@ -341,6 +341,7 @@ function isPathInsideDir(candidatePath: string, parentDir: string): boolean {
 export async function resolveMigrationsDir(packageRoot: string, migrationsDir: string): Promise<string> {
   if (
     path.isAbsolute(migrationsDir) ||
+    /^[A-Za-z]:/.test(migrationsDir) ||
     migrationsDir.includes("\\") ||
     migrationsDir.split("/").some((segment) => segment === "..")
   ) {

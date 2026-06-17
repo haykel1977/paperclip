@@ -183,6 +183,29 @@ describe("plugin loader worker entrypoint containment", () => {
     });
   });
 
+  it("rejects drive-prefixed worker entrypoints before worker startup", async () => {
+    await withTempDir(async (root) => {
+      const localPluginDir = path.join(root, "plugins");
+      const packageRoot = path.join(localPluginDir, "node_modules", packageName);
+      const pluginManifest = manifest("C:dist/worker.js");
+      await writePluginPackage(packageRoot, pluginManifest);
+
+      mockRegistry.getById.mockResolvedValue(pluginRecord({ packageRoot, manifest: pluginManifest }));
+      const runtime = runtimeServices();
+      const loader = pluginLoader({} as never, {
+        localPluginDir,
+        enableLocalFilesystem: false,
+        enableNpmDiscovery: false,
+      }, runtime.services);
+
+      const result = await loader.loadSingle(pluginId);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("relative path inside the package root");
+      expect(runtime.startWorker).not.toHaveBeenCalled();
+    });
+  });
+
   it("rejects traversal worker entrypoints that would escape by sibling-prefix paths", async () => {
     await withTempDir(async (root) => {
       const localPluginDir = path.join(root, "plugins");

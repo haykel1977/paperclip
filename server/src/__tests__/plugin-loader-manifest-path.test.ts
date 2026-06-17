@@ -95,6 +95,22 @@ describe("plugin loader manifest path containment", () => {
     });
   });
 
+  it("rejects package-declared manifest drive-prefixed paths", async () => {
+    await withTempDir(async (root) => {
+      const packageRoot = path.join(root, "package");
+      await writePackageJson(packageRoot, "C:manifest.js");
+
+      const loader = pluginLoader({} as never, {
+        enableLocalFilesystem: false,
+        enableNpmDiscovery: false,
+      });
+
+      await expect(loader.loadManifest(packageRoot)).rejects.toThrow(
+        /Plugin manifest path must be a relative path inside the package root/,
+      );
+    });
+  });
+
   it.skipIf(process.platform === "win32")("rejects package-declared manifest symlinks that escape the package root", async () => {
     await withTempDir(async (root) => {
       const packageRoot = path.join(root, "package");

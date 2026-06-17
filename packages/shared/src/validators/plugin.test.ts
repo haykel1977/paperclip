@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import { PLUGIN_CAPABILITIES } from "../constants.js";
 import {
   listPluginStateSchema,
+  pluginDatabaseDeclarationSchema,
   pluginLocalFolderDeclarationSchema,
   pluginManagedAgentDeclarationSchema,
   pluginManagedRoutineDeclarationSchema,
   pluginManifestV1Schema,
   pluginStateScopeKeySchema,
+  pluginToolDeclarationSchema,
   pluginUiSlotDeclarationSchema,
   setPluginStateSchema,
 } from "./plugin.js";
@@ -45,6 +47,37 @@ describe("plugin manifest validators", () => {
     });
 
     expect(parsed.capabilities).toEqual(["ui.dashboardWidget.register"]);
+  });
+});
+
+describe("plugin tool validators", () => {
+  it("rejects tool names that confuse namespaced dispatch", () => {
+    for (const name of ["wiki:search", "wiki/search", "wiki search", "__proto__", "constructor"]) {
+      expect(pluginToolDeclarationSchema.safeParse({
+        name,
+        displayName: "Wiki Search",
+        description: "Search wiki pages.",
+        parametersSchema: { type: "object" },
+      }).success).toBe(false);
+    }
+  });
+
+  it("accepts safe tool names", () => {
+    const parsed = pluginToolDeclarationSchema.parse({
+      name: "wiki.search_pages-1",
+      displayName: "Wiki Search",
+      description: "Search wiki pages.",
+      parametersSchema: { type: "object" },
+    });
+
+    expect(parsed.name).toBe("wiki.search_pages-1");
+  });
+});
+
+describe("plugin database validators", () => {
+  it("rejects drive-prefixed migrations directories", () => {
+    expect(pluginDatabaseDeclarationSchema.safeParse({ migrationsDir: "C:migrations" }).success).toBe(false);
+    expect(pluginDatabaseDeclarationSchema.safeParse({ migrationsDir: "C:/migrations" }).success).toBe(false);
   });
 });
 
