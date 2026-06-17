@@ -248,9 +248,33 @@ function buildPluginModuleKey(contribution: PluginUiContribution): string {
   return `${contribution.pluginId}:${cacheHint}`;
 }
 
-function buildPluginUiUrl(contribution: PluginUiContribution): string {
-  const cacheHint = encodeURIComponent(contribution.updatedAt ?? contribution.version ?? "0");
-  return `/_plugins/${encodeURIComponent(contribution.pluginId)}/ui/${contribution.uiEntryFile}?v=${cacheHint}`;
+function encodePluginUiRelativePath(relativePath: string): string | null {
+  if (typeof relativePath !== "string") return null;
+  const normalized = relativePath.trim();
+  if (!normalized || normalized.startsWith("/") || normalized.includes("\\") || normalized.includes(":") || normalized.includes("?") || normalized.includes("#")) {
+    return null;
+  }
+  const segments = normalized.split("/");
+  if (segments.some((segment) => !segment || segment === "." || segment === ".." || !/^[A-Za-z0-9._-]+$/.test(segment))) {
+    return null;
+  }
+  return segments.map((segment) => encodeURIComponent(segment)).join("/");
+}
+
+export function buildPluginUiAssetUrl(
+  pluginId: string,
+  relativePath: string,
+  cacheHint?: string | null,
+): string | null {
+  const encodedPath = encodePluginUiRelativePath(relativePath);
+  if (!encodedPath) return null;
+  const suffix = cacheHint ? `?v=${encodeURIComponent(cacheHint)}` : "";
+  return `/_plugins/${encodeURIComponent(pluginId)}/ui/${encodedPath}${suffix}`;
+}
+
+function buildPluginUiUrl(contribution: PluginUiContribution): string | null {
+  const cacheHint = contribution.updatedAt ?? contribution.version ?? "0";
+  return buildPluginUiAssetUrl(contribution.pluginId, contribution.uiEntryFile, cacheHint);
 }
 
 /**
@@ -488,6 +512,11 @@ async function loadPluginModule(contribution: PluginUiContribution): Promise<voi
   pluginLoadStates.set(moduleKey, "loading");
 
   const url = buildPluginUiUrl(contribution);
+  if (!url) {
+    pluginLoadStates.set(moduleKey, "error");
+    console.error(`Plugin "${pluginKey}" declares an invalid UI entry file: ${contribution.uiEntryFile}`);
+    return;
+  }
 
   const importPromise = (async () => {
     try {

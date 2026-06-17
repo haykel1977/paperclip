@@ -38,6 +38,7 @@ import {
   type PluginRenderEnvironmentContext,
 } from "./bridge";
 import {
+  buildPluginUiAssetUrl,
   ensurePluginContributionLoaded,
   resolveRegisteredPluginComponent,
   type RegisteredPluginComponent,
@@ -445,13 +446,16 @@ function LauncherRenderContent({
 
   if (!component) {
     if (renderEnvironment.environment === "iframe") {
-      return (
-        <iframe
-          src={`/_plugins/${encodeURIComponent(instance.launcher.pluginId)}/ui/${instance.launcher.action.target}`}
-          title={`${instance.launcher.pluginDisplayName} ${instance.launcher.displayName}`}
-          className="h-full min-h-[24rem] w-full rounded-md border border-border bg-background"
-        />
-      );
+      const iframeSrc = buildPluginUiAssetUrl(instance.launcher.pluginId, instance.launcher.action.target);
+      if (iframeSrc) {
+        return (
+          <iframe
+            src={iframeSrc}
+            title={`${instance.launcher.pluginDisplayName} ${instance.launcher.displayName}`}
+            className="h-full min-h-[24rem] w-full rounded-md border border-border bg-background"
+          />
+        );
+      }
     }
 
     return (

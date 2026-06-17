@@ -8,6 +8,7 @@ import {
   PluginSlotMount,
   _collectRegisterableExportNamesForTests,
   _resetPluginModuleLoader,
+  buildPluginUiAssetUrl,
   registerPluginWebComponent,
   type ResolvedPluginSlot,
 } from "./slots";
@@ -22,6 +23,27 @@ afterEach(() => {
   }
   roots = [];
   _resetPluginModuleLoader();
+});
+
+describe("plugin UI asset URLs", () => {
+  it("encodes safe nested asset paths", () => {
+    expect(buildPluginUiAssetUrl("plugin/one", "assets/index-abc123.js", "1.0.0")).toBe(
+      "/_plugins/plugin%2Fone/ui/assets/index-abc123.js?v=1.0.0",
+    );
+  });
+
+  it.each([
+    "../secrets.js",
+    "/absolute.js",
+    "https://evil.example/x.js",
+    "//evil.example/x.js",
+    "assets/%2e%2e/secret.js",
+    "assets\\secret.js",
+    "index.js?x=1",
+    "index.js#hash",
+  ])("rejects unsafe asset path %s", (assetPath) => {
+    expect(buildPluginUiAssetUrl("plugin-1", assetPath)).toBeNull();
+  });
 });
 
 describe("plugin slot export registration", () => {
