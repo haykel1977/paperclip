@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, mkdir, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { and, eq, sql } from "drizzle-orm";
@@ -21,6 +21,7 @@ import {
 import {
   derivePluginDatabaseNamespace,
   pluginDatabaseService,
+  resolveMigrationsDir,
   validatePluginMigrationStatement,
   validatePluginRuntimeExecute,
   validatePluginRuntimeQuery,
@@ -37,6 +38,54 @@ if (!embeddedPostgresSupport.supported) {
     `Skipping embedded Postgres plugin database tests on this host: ${embeddedPostgresSupport.reason ?? "unsupported environment"}`,
   );
 }
+
+describe("plugin database migration path resolution", () => {
+  async function withTempDir<T>(fn: (root: string) => Promise<T>): Promise<T> {
+    const root = await mkdtemp(path.join(os.tmpdir(), "paperclip-plugin-db-path-"));
+    try {
+      return await fn(root);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+
+  it("resolves migrations directories inside the plugin package root", async () => {
+    await withTempDir(async (root) => {
+      const packageRoot = path.join(root, "package");
+      const migrationsDir = path.join(packageRoot, "migrations");
+      await mkdir(migrationsDir, { recursive: true });
+
+      await expect(resolveMigrationsDir(packageRoot, "migrations")).resolves.toBe(
+        await realpath(migrationsDir),
+      );
+    });
+  });
+
+  it("rejects traversal migrations directories", async () => {
+    await withTempDir(async (root) => {
+      const packageRoot = path.join(root, "package");
+      await mkdir(packageRoot, { recursive: true });
+
+      await expect(resolveMigrationsDir(packageRoot, "../outside")).rejects.toThrow(
+        /escapes package root/,
+      );
+    });
+  });
+
+  it.skipIf(process.platform === "win32")("rejects migrations directories that escape through symlinks", async () => {
+    await withTempDir(async (root) => {
+      const packageRoot = path.join(root, "package");
+      const outsideDir = path.join(root, "outside-migrations");
+      await mkdir(packageRoot, { recursive: true });
+      await mkdir(outsideDir, { recursive: true });
+      await symlink(outsideDir, path.join(packageRoot, "migrations"), "dir");
+
+      await expect(resolveMigrationsDir(packageRoot, "migrations")).rejects.toThrow(
+        /escapes package root/,
+      );
+    });
+  });
+});
 
 describe("plugin database SQL validation", () => {
   it("allows namespace migrations with whitelisted public foreign keys", () => {

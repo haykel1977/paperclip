@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { and, eq, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
@@ -333,14 +333,34 @@ async function listSqlMigrationFiles(migrationsDir: string): Promise<string[]> {
     .sort((a, b) => a.localeCompare(b));
 }
 
-function resolveMigrationsDir(packageRoot: string, migrationsDir: string): string {
+function isPathInsideDir(candidatePath: string, parentDir: string): boolean {
+  const relative = path.relative(parentDir, candidatePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+export async function resolveMigrationsDir(packageRoot: string, migrationsDir: string): Promise<string> {
   const resolvedRoot = path.resolve(packageRoot);
   const resolvedDir = path.resolve(resolvedRoot, migrationsDir);
-  const relative = path.relative(resolvedRoot, resolvedDir);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+  if (!isPathInsideDir(resolvedDir, resolvedRoot)) {
     throw new Error(`Plugin migrationsDir escapes package root: ${migrationsDir}`);
   }
-  return resolvedDir;
+
+  try {
+    const [realRoot, realDir] = await Promise.all([
+      realpath(resolvedRoot),
+      realpath(resolvedDir),
+    ]);
+    if (!isPathInsideDir(realDir, realRoot)) {
+      throw new Error(`Plugin migrationsDir escapes package root: ${migrationsDir}`);
+    }
+    return realDir;
+  } catch (error) {
+    const code = typeof error === "object" && error && "code" in error
+      ? String((error as { code?: unknown }).code)
+      : "";
+    if (code === "ENOENT") return resolvedDir;
+    throw error;
+  }
 }
 
 type PluginDatabaseClient = Pick<Db, "select" | "insert" | "update" | "execute">;
@@ -470,7 +490,7 @@ export function pluginDatabaseService(db: PluginDatabaseRootClient) {
       const namespace = await ensureNamespace(pluginId, manifest);
       if (!namespace) return null;
 
-      const migrationDir = resolveMigrationsDir(packageRoot, manifest.database.migrationsDir);
+      const migrationDir = await resolveMigrationsDir(packageRoot, manifest.database.migrationsDir);
       const migrationFiles = await listSqlMigrationFiles(migrationDir);
       const coreReadTables = manifest.database.coreReadTables ?? [];
       const lockKey = Number.parseInt(createHash("sha256").update(pluginId).digest("hex").slice(0, 12), 16);
