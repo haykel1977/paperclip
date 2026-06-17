@@ -47,6 +47,7 @@
     "test:e2e:headed": "bash scripts/run-e2e.sh --config tests/e2e/playwright.config.ts --headed",
     "test:e2e:multiuser": "bash scripts/run-e2e.sh --config tests/e2e/playwright-multiuser.config.ts",
     "test:e2e:multiuser-authenticated": "bash scripts/run-e2e.sh --config tests/e2e/playwright-multiuser-authenticated.config.ts",
+    "test:e2e:delivery": "bash scripts/run-e2e.sh --config tests/e2e/playwright-delivery.config.ts",
     "evals:smoke": "cd evals/promptfoo && npx promptfoo@0.103.3 eval",
     "test:release-smoke": "bash scripts/run-e2e.sh --config tests/release-smoke/playwright.config.ts",
     "test:release-smoke:headed": "bash scripts/run-e2e.sh --config tests/release-smoke/playwright.config.ts --headed",

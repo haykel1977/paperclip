@@ -44,6 +44,17 @@ jobs:
           PAPERCLIP_PLAYWRIGHT_CHANNEL: "chrome"
         run: pnpm run test:e2e:multiuser
 
+      # Delivery hook → PR creation harness.
+      # Validates Paperclip API lifecycle (issue create/checkout/done) and the
+      # mock GitHub server utility. Full delivery hook tests (adapter-side git/gh
+      # intercept) are skipped with documented rationale pending architectural
+      # support for a server-side delivery result endpoint.
+      - name: Run delivery E2E tests
+        continue-on-error: true
+        env:
+          PAPERCLIP_PLAYWRIGHT_CHANNEL: "chrome"
+        run: pnpm run test:e2e:delivery
+
       - uses: actions/upload-artifact@v7
         if: always()
         with:
