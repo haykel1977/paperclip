@@ -17,6 +17,7 @@ import {
   Field,
   ToggleField,
 } from "../components/agent-config-primitives";
+import { CompanyInvitesSection } from "../components/CompanyInvitesSection";
 
 const BYTES_PER_MIB = 1024 * 1024;
 const DEFAULT_COMPANY_ATTACHMENT_MAX_MIB = DEFAULT_COMPANY_ATTACHMENT_MAX_BYTES / BYTES_PER_MIB;
@@ -364,6 +365,9 @@ export function CompanySettings() {
           />
         </div>
       </div>
+
+      {/* Invites */}
+      <CompanyInvitesSection companyId={selectedCompanyId!} />
 
       {/* Import / Export */}
       <div className="space-y-4">
