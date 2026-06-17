@@ -158,6 +158,76 @@ describe.sequential("plugin scoped API routes", () => {
     expect(workerManager.call.mock.calls[0]?.[2].headers.authorization).toBeUndefined();
   });
 
+  it("does not dispatch routes with unsafe parameter names", async () => {
+    const apiRoutes = manifest([
+      {
+        routeKey: "summary.get",
+        method: "GET",
+        path: "/companies/:__proto__/summary",
+        auth: "board",
+        capability: "api.routes.register",
+        companyResolution: { from: "query", key: "companyId" },
+      },
+    ]);
+    const { app, workerManager } = await createApp({
+      actor: {
+        type: "board",
+        userId: "user-1",
+        source: "local_implicit",
+        isInstanceAdmin: true,
+      },
+      plugin: {
+        id: pluginId,
+        pluginKey: apiRoutes.id,
+        status: "ready",
+        manifestJson: apiRoutes,
+      },
+    });
+
+    const res = await request(app)
+      .get(`/api/plugins/${pluginId}/api/companies/acme/summary?companyId=${companyId}`);
+
+    expect(res.status).toBe(404);
+    expect(workerManager.call).not.toHaveBeenCalled();
+  });
+
+  it("filters unsafe query keys before dispatching scoped API routes", async () => {
+    const apiRoutes = manifest([
+      {
+        routeKey: "summary.get",
+        method: "GET",
+        path: "/companies/:companySlug/summary",
+        auth: "board",
+        capability: "api.routes.register",
+        companyResolution: { from: "query", key: "companyId" },
+      },
+    ]);
+    const { app, workerManager } = await createApp({
+      actor: {
+        type: "board",
+        userId: "user-1",
+        source: "local_implicit",
+        isInstanceAdmin: true,
+      },
+      plugin: {
+        id: pluginId,
+        pluginKey: apiRoutes.id,
+        status: "ready",
+        manifestJson: apiRoutes,
+      },
+    });
+
+    const res = await request(app)
+      .get(`/api/plugins/${pluginId}/api/companies/acme/summary?companyId=${companyId}&constructor=evil&safe=value`);
+
+    expect(res.status).toBe(200);
+    const input = workerManager.call.mock.calls[0]?.[2] as { query: Record<string, unknown> } | undefined;
+    expect(input).toBeTruthy();
+    expect(Object.keys(input!.query).sort()).toEqual(["companyId", "safe"]);
+    expect(input!.query.companyId).toBe(companyId);
+    expect(input!.query.safe).toBe("value");
+  });
+
   it("only forwards allowlisted response headers from plugin routes", async () => {
     const apiRoutes = manifest([
       {

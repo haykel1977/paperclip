@@ -507,18 +507,28 @@ export function pluginRoutes(
   });
   const issuesSvc = issueService(db);
 
+  function isSafePluginRecordKey(key: string): boolean {
+    return key !== "__proto__" && key !== "prototype" && key !== "constructor";
+  }
+
   function matchScopedApiRoute(route: PluginApiRouteDeclaration, method: string, requestPath: string) {
     if (route.method !== method) return null;
     const normalize = (value: string) => value.replace(/\/+$/, "") || "/";
     const routeSegments = normalize(route.path).split("/").filter(Boolean);
     const requestSegments = normalize(requestPath).split("/").filter(Boolean);
     if (routeSegments.length !== requestSegments.length) return null;
-    const params: Record<string, string> = {};
+    const params = Object.create(null) as Record<string, string>;
     for (let i = 0; i < routeSegments.length; i += 1) {
       const routeSegment = routeSegments[i]!;
       const requestSegment = requestSegments[i]!;
       if (routeSegment.startsWith(":")) {
-        params[routeSegment.slice(1)] = decodeURIComponent(requestSegment);
+        const paramName = routeSegment.slice(1);
+        if (!isSafePluginRecordKey(paramName)) return null;
+        try {
+          params[paramName] = decodeURIComponent(requestSegment);
+        } catch {
+          return null;
+        }
         continue;
       }
       if (routeSegment !== requestSegment) return null;
@@ -534,10 +544,10 @@ export function pluginRoutes(
       "x-paperclip-run-id",
       "x-request-id",
     ]);
-    const headers: Record<string, string> = {};
+    const headers = Object.create(null) as Record<string, string>;
     for (const [name, value] of Object.entries(req.headers)) {
       const lower = name.toLowerCase();
-      if (!safeHeaderNames.has(lower)) continue;
+      if (!safeHeaderNames.has(lower) || !isSafePluginRecordKey(lower)) continue;
       if (Array.isArray(value)) {
         headers[lower] = value.join(", ");
       } else if (typeof value === "string") {
@@ -559,8 +569,9 @@ export function pluginRoutes(
   }
 
   function normalizeQuery(query: Request["query"]): Record<string, string | string[]> {
-    const normalized: Record<string, string | string[]> = {};
+    const normalized = Object.create(null) as Record<string, string | string[]>;
     for (const [key, value] of Object.entries(query)) {
+      if (!isSafePluginRecordKey(key)) continue;
       if (typeof value === "string") {
         normalized[key] = value;
       } else if (Array.isArray(value)) {
