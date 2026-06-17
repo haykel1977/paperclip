@@ -93,6 +93,31 @@ const MIME_TYPES: Record<string, string> = {
 // Helper
 // ---------------------------------------------------------------------------
 
+function isPathInsideDir(childPath: string, parentDir: string): boolean {
+  const relative = path.relative(parentDir, childPath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function realpathIfExists(targetPath: string): string | null {
+  try {
+    return fs.realpathSync(targetPath);
+  } catch {
+    return null;
+  }
+}
+
+function resolveExistingUiDir(packageRoot: string, entrypointsUi: string): string | null {
+  const resolvedPackageRoot = path.resolve(packageRoot);
+  const uiDir = path.resolve(resolvedPackageRoot, entrypointsUi);
+  if (!fs.existsSync(uiDir)) return null;
+
+  const realPackageRoot = realpathIfExists(resolvedPackageRoot);
+  const realUiDir = realpathIfExists(uiDir);
+  if (!realPackageRoot || !realUiDir) return null;
+
+  return isPathInsideDir(realUiDir, realPackageRoot) ? realUiDir : null;
+}
+
 /**
  * Resolve a plugin's UI directory from its package location.
  *
@@ -114,16 +139,8 @@ export function resolvePluginUiDir(
 ): string | null {
   // For local-path installs, prefer the persisted package path.
   if (packagePath) {
-    const resolvedPackagePath = path.resolve(packagePath);
-    if (fs.existsSync(resolvedPackagePath)) {
-      const uiDirFromPackagePath = path.resolve(resolvedPackagePath, entrypointsUi);
-      if (
-        uiDirFromPackagePath.startsWith(resolvedPackagePath)
-        && fs.existsSync(uiDirFromPackagePath)
-      ) {
-        return uiDirFromPackagePath;
-      }
-    }
+    const uiDirFromPackagePath = resolveExistingUiDir(packagePath, entrypointsUi);
+    if (uiDirFromPackagePath) return uiDirFromPackagePath;
   }
 
   // Resolve the package root within the local plugin directory's node_modules.
@@ -142,24 +159,22 @@ export function resolvePluginUiDir(
   if (!fs.existsSync(packageRoot)) {
     // For local-path installs, the packageName may be a directory that doesn't
     // live inside node_modules. Check if the package exists directly at the
-    // localPluginDir level.
-    const directPath = path.join(localPluginDir, packageName);
-    if (fs.existsSync(directPath)) {
-      packageRoot = directPath;
+    // localPluginDir level, but do not allow packageName to escape localPluginDir.
+    const directPath = path.resolve(localPluginDir, packageName);
+    const realLocalPluginDir = realpathIfExists(localPluginDir);
+    const realDirectPath = realpathIfExists(directPath);
+    if (
+      realDirectPath &&
+      realLocalPluginDir &&
+      isPathInsideDir(realDirectPath, realLocalPluginDir)
+    ) {
+      packageRoot = realDirectPath;
     } else {
       return null;
     }
   }
 
-  // Resolve the UI directory relative to the package root
-  const uiDir = path.resolve(packageRoot, entrypointsUi);
-
-  // Verify the resolved UI directory exists and is actually inside the package
-  if (!fs.existsSync(uiDir)) {
-    return null;
-  }
-
-  return uiDir;
+  return resolveExistingUiDir(packageRoot, entrypointsUi);
 }
 
 /**
