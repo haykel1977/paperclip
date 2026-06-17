@@ -126,6 +126,24 @@ interface AvailableBundledPlugin {
   experimental: boolean;
 }
 
+const NPM_PACKAGE_NAME_RE = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i;
+const NPM_VERSION_RE = /^[A-Za-z0-9._~^*<>=+-]+$/;
+
+function validateNpmPackageName(packageName: string): string | null {
+  if (!NPM_PACKAGE_NAME_RE.test(packageName)) {
+    return "packageName must be a valid npm package name";
+  }
+  return null;
+}
+
+function validateNpmVersion(version: string): string | null {
+  if (version.length === 0) return null;
+  if (version.startsWith("-") || !NPM_VERSION_RE.test(version)) {
+    return "version contains invalid characters";
+  }
+  return null;
+}
+
 /** Response body for GET /api/plugins/:pluginId/health */
 interface PluginHealthCheckResult {
   pluginId: string;
@@ -1032,16 +1050,24 @@ export function pluginRoutes(
       return;
     }
 
-    // Basic security check for package name (prevent injection)
-    if (!isLocalPath && /[<>:"|?*]/.test(trimmedPackage)) {
-      res.status(400).json({ error: "packageName contains invalid characters" });
-      return;
+    const trimmedVersion = version?.trim() ?? "";
+    if (!isLocalPath) {
+      const packageNameError = validateNpmPackageName(trimmedPackage);
+      if (packageNameError) {
+        res.status(400).json({ error: packageNameError });
+        return;
+      }
+      const versionError = validateNpmVersion(trimmedVersion);
+      if (versionError) {
+        res.status(400).json({ error: versionError });
+        return;
+      }
     }
 
     try {
       const installOptions = isLocalPath
         ? { localPath: trimmedPackage }
-        : { packageName: trimmedPackage, version: version?.trim() };
+        : { packageName: trimmedPackage, version: trimmedVersion || undefined };
 
       const discovered = await loader.installPlugin(installOptions);
 
@@ -2058,7 +2084,19 @@ export function pluginRoutes(
     assertInstanceAdmin(req);
     const { pluginId } = req.params;
     const body = req.body as { version?: string } | undefined;
-    const version = body?.version;
+    const rawVersion = body?.version;
+    if (rawVersion !== undefined && typeof rawVersion !== "string") {
+      res.status(400).json({ error: "version must be a string if provided" });
+      return;
+    }
+    const version = rawVersion?.trim() || undefined;
+    if (version) {
+      const versionError = validateNpmVersion(version);
+      if (versionError) {
+        res.status(400).json({ error: versionError });
+        return;
+      }
+    }
 
     const plugin = await resolvePlugin(registry, pluginId);
     if (!plugin) {

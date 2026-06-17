@@ -1534,7 +1534,7 @@ export function pluginLoader(
         try {
           await execFileAsync(
             "npm",
-            ["uninstall", plugin.packageName, "--prefix", localPluginDir, "--ignore-scripts"],
+            ["uninstall", "--prefix", localPluginDir, "--ignore-scripts", "--", plugin.packageName],
             { timeout: 120_000 },
           );
         } catch (err) {
