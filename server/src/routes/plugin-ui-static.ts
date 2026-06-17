@@ -153,10 +153,20 @@ export function resolvePluginUiDir(
     packageRoot = path.join(localPluginDir, "node_modules", packageName);
   }
 
-  // If the standard location doesn't exist, the plugin may have been installed
-  // from a local path. Try to check if the package.json is accessible at the
-  // computed path or if the package is found elsewhere.
-  if (!fs.existsSync(packageRoot)) {
+  // If the standard location exists, ensure it is really under node_modules.
+  // A corrupted packageName from storage must not escape via ../../ segments.
+  if (fs.existsSync(packageRoot)) {
+    const realNodeModulesDir = realpathIfExists(path.resolve(localPluginDir, "node_modules"));
+    const realPackageRoot = realpathIfExists(packageRoot);
+    if (
+      !realNodeModulesDir ||
+      !realPackageRoot ||
+      !isPathInsideDir(realPackageRoot, realNodeModulesDir)
+    ) {
+      return null;
+    }
+    packageRoot = realPackageRoot;
+  } else {
     // For local-path installs, the packageName may be a directory that doesn't
     // live inside node_modules. Check if the package exists directly at the
     // localPluginDir level, but do not allow packageName to escape localPluginDir.
