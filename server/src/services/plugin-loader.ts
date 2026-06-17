@@ -2050,56 +2050,38 @@ function resolveWorkerEntrypoint(
   localPluginDir: string,
 ): string {
   const manifest = plugin.manifestJson;
-  const workerRelPath = manifest.entrypoints.worker;
+  const workerRelPath = normalizeRelativePluginEntrypoint(manifest.entrypoints.worker);
 
-  // For local-path installs we persist the resolved package path; use it first
+  // For local-path installs we persist the resolved package path; use it first.
   if (plugin.packagePath && existsSync(plugin.packagePath)) {
-    const entrypoint = path.resolve(plugin.packagePath, workerRelPath);
-    if (entrypoint.startsWith(path.resolve(plugin.packagePath)) && existsSync(entrypoint)) {
-      return entrypoint;
-    }
+    const entrypoint = resolveExistingFileInsideRoot(plugin.packagePath, workerRelPath);
+    if (entrypoint) return entrypoint;
   }
 
-  // Try the local plugin directory (standard npm install location)
   const packageName = plugin.packageName;
-  let packageDir: string;
+  const candidateDirs: string[] = [];
+  if (validateNpmPackageName(packageName) === null) {
+    candidateDirs.push(resolveManagedInstallPackageDir(localPluginDir, packageName));
 
-  if (packageName.startsWith("@")) {
-    // Scoped package: @scope/plugin-name → localPluginDir/node_modules/@scope/plugin-name
-    const [scope, name] = packageName.split("/");
-    packageDir = path.join(localPluginDir, "node_modules", scope!, name!);
-  } else {
-    packageDir = path.join(localPluginDir, "node_modules", packageName);
-  }
-
-  // Also check if the package exists directly under localPluginDir
-  // (for direct local-path installs or symlinked packages)
-  const directDir = path.join(localPluginDir, packageName);
-
-  // Try in order: node_modules path, direct path
-  for (const dir of [packageDir, directDir]) {
-    const entrypoint = path.resolve(dir, workerRelPath);
-
-    // Security: ensure entrypoint is actually inside the directory (prevent path traversal)
-    if (!entrypoint.startsWith(path.resolve(dir))) {
-      continue;
-    }
-
-    if (existsSync(entrypoint)) {
-      return entrypoint;
+    // Also check if the package exists directly under localPluginDir, but do
+    // not let a corrupted packageName turn the whole node_modules directory
+    // into the package root.
+    if (packageName !== "node_modules") {
+      const directDir = path.join(localPluginDir, packageName);
+      if (isPathInsideDir(directDir, localPluginDir)) {
+        candidateDirs.push(directDir);
+      }
     }
   }
 
-  // Fallback: try the worker path as-is (absolute or relative to cwd)
-  // ONLY if it's already an absolute path and we trust the manifest (which we've already validated)
-  if (path.isAbsolute(workerRelPath) && existsSync(workerRelPath)) {
-    return workerRelPath;
+  for (const dir of candidateDirs) {
+    const entrypoint = resolveExistingFileInsideRoot(dir, workerRelPath);
+    if (entrypoint) return entrypoint;
   }
 
   throw new Error(
     `Worker entrypoint not found for plugin "${plugin.pluginKey}". ` +
-      `Checked: ${path.resolve(packageDir, workerRelPath)}, ` +
-      `${path.resolve(directDir, workerRelPath)}`,
+      `Checked: ${candidateDirs.map((dir) => path.resolve(dir, workerRelPath)).join(", ") || "no safe package directories"}`,
   );
 }
 
@@ -2112,13 +2094,20 @@ function resolvePluginPackageRoot(
   }
 
   const packageName = plugin.packageName;
-  const packageDir = packageName.startsWith("@")
-    ? path.join(localPluginDir, "node_modules", ...packageName.split("/"))
-    : path.join(localPluginDir, "node_modules", packageName);
+  const packageNameError = validateNpmPackageName(packageName);
+  if (packageNameError) {
+    throw new Error(packageNameError);
+  }
+
+  const packageDir = resolveManagedInstallPackageDir(localPluginDir, packageName);
   if (existsSync(packageDir)) return packageDir;
 
-  const directDir = path.join(localPluginDir, packageName);
-  if (existsSync(directDir)) return directDir;
+  if (packageName !== "node_modules") {
+    const directDir = path.join(localPluginDir, packageName);
+    if (isPathInsideDir(directDir, localPluginDir) && existsSync(directDir)) {
+      return directDir;
+    }
+  }
 
   throw new Error(`Package root not found for plugin "${plugin.pluginKey}"`);
 }
@@ -2143,6 +2132,38 @@ function realpathIfExists(targetPath: string): string | null {
   } catch {
     return null;
   }
+}
+
+function normalizeRelativePluginEntrypoint(entrypointPath: string): string {
+  if (
+    path.isAbsolute(entrypointPath) ||
+    entrypointPath.includes("\\") ||
+    entrypointPath.split("/").some((segment) => segment === "..")
+  ) {
+    throw new Error("Plugin worker entrypoint must be a relative path inside the package root");
+  }
+
+  const normalized = path.posix.normalize(entrypointPath);
+  if (normalized === "." || normalized.startsWith("../") || normalized === "..") {
+    throw new Error("Plugin worker entrypoint must be a relative path inside the package root");
+  }
+  return normalized;
+}
+
+function resolveExistingFileInsideRoot(rootPath: string, relativePath: string): string | null {
+  const resolvedRoot = path.resolve(rootPath);
+  const resolvedTarget = path.resolve(resolvedRoot, relativePath);
+  if (!isPathInsideDir(resolvedTarget, resolvedRoot) || !existsSync(resolvedTarget)) {
+    return null;
+  }
+
+  const realRoot = realpathIfExists(resolvedRoot);
+  const realTarget = realpathIfExists(resolvedTarget);
+  if (!realRoot || !realTarget || !isPathInsideDir(realTarget, realRoot)) {
+    return null;
+  }
+
+  return realTarget;
 }
 
 function isSafeManagedRemovalTarget(targetPath: string, localPluginDir: string): boolean {
