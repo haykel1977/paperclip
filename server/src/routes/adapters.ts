@@ -90,6 +90,24 @@ interface AdapterInfo {
 // Helpers
 // ---------------------------------------------------------------------------
 
+const NPM_PACKAGE_NAME_RE = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i;
+const NPM_VERSION_RE = /^[A-Za-z0-9._~^*<>=+-]+$/;
+
+function validateNpmPackageName(packageName: string): string | null {
+  if (!NPM_PACKAGE_NAME_RE.test(packageName)) {
+    return "packageName must be a valid npm package name";
+  }
+  return null;
+}
+
+function validateNpmVersion(version: string): string | null {
+  if (version.length === 0) return null;
+  if (version.startsWith("-") || !NPM_VERSION_RE.test(version)) {
+    return "version contains invalid characters";
+  }
+  return null;
+}
+
 /**
  * Resolve the adapter package directory (same rules as plugin-loader).
  */
@@ -235,19 +253,48 @@ export function adapterRoutes() {
       res.status(400).json({ error: "packageName is required and must be a string." });
       return;
     }
+    if (version !== undefined && typeof version !== "string") {
+      res.status(400).json({ error: "version must be a string if provided." });
+      return;
+    }
+    if (typeof isLocalPath !== "boolean") {
+      res.status(400).json({ error: "isLocalPath must be a boolean if provided." });
+      return;
+    }
+
+    const trimmedPackageName = packageName.trim();
+    if (trimmedPackageName.length === 0) {
+      res.status(400).json({ error: "packageName cannot be empty." });
+      return;
+    }
 
     // Strip version suffix if the UI sends "pkg@1.2.3" instead of separating it
     // e.g. "@scope/adapter-package@0.3.0" → packageName + version
-    let canonicalName = packageName;
-    let explicitVersion = version;
-    const versionSuffix = packageName.match(/@(\d+\.\d+\.\d+.*)$/);
-    if (versionSuffix) {
-      // For scoped packages: "@scope/name@1.2.3" → "@scope/name" + "1.2.3"
-      // For unscoped: "name@1.2.3" → "name" + "1.2.3"
-      const lastAtIndex = packageName.lastIndexOf("@");
-      if (lastAtIndex > 0 && !explicitVersion) {
-        canonicalName = packageName.slice(0, lastAtIndex);
-        explicitVersion = versionSuffix[1];
+    let canonicalName = trimmedPackageName;
+    let explicitVersion = version?.trim();
+    if (!isLocalPath) {
+      const versionSuffix = trimmedPackageName.match(/@(\d+\.\d+\.\d+.*)$/);
+      if (versionSuffix) {
+        // For scoped packages: "@scope/name@1.2.3" → "@scope/name" + "1.2.3"
+        // For unscoped: "name@1.2.3" → "name" + "1.2.3"
+        const lastAtIndex = trimmedPackageName.lastIndexOf("@");
+        if (lastAtIndex > 0 && !explicitVersion) {
+          canonicalName = trimmedPackageName.slice(0, lastAtIndex);
+          explicitVersion = versionSuffix[1];
+        }
+      }
+    }
+
+    if (!isLocalPath) {
+      const packageNameError = validateNpmPackageName(canonicalName);
+      if (packageNameError) {
+        res.status(400).json({ error: packageNameError });
+        return;
+      }
+      const versionError = explicitVersion ? validateNpmVersion(explicitVersion) : null;
+      if (versionError) {
+        res.status(400).json({ error: versionError });
+        return;
       }
     }
 
@@ -262,7 +309,7 @@ export function adapterRoutes() {
 
         logger.info({ spec, pluginsDir }, "Installing adapter package via npm");
 
-        await execFileAsync("npm", ["install", "--no-save", spec], {
+        await execFileAsync("npm", ["install", "--no-save", "--", spec], {
           cwd: pluginsDir,
           timeout: 120_000,
         });
@@ -281,7 +328,7 @@ export function adapterRoutes() {
         }
       } else {
         // Local path — normalize (e.g., Windows → WSL) and use the resolved path
-        moduleLocalPath = path.resolve(await normalizeLocalPath(packageName));
+        moduleLocalPath = path.resolve(await normalizeLocalPath(trimmedPackageName));
         try {
           const pkgRaw = await readFile(path.join(moduleLocalPath, "package.json"), "utf-8");
           const v = JSON.parse(pkgRaw).version;
@@ -339,7 +386,7 @@ export function adapterRoutes() {
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      logger.error({ err, packageName }, "Failed to install external adapter");
+      logger.error({ err, packageName: trimmedPackageName }, "Failed to install external adapter");
 
       // Distinguish npm errors from load errors
       if (message.includes("npm") || message.includes("ERR!")) {
@@ -476,7 +523,7 @@ export function adapterRoutes() {
     if (externalRecord.packageName && !externalRecord.localPath) {
       try {
         const pluginsDir = getAdapterPluginsDir();
-        await execFileAsync("npm", ["uninstall", externalRecord.packageName], {
+        await execFileAsync("npm", ["uninstall", "--", externalRecord.packageName], {
           cwd: pluginsDir,
           timeout: 60_000,
         });
@@ -587,9 +634,15 @@ export function adapterRoutes() {
     try {
       const pluginsDir = getAdapterPluginsDir();
 
+      const packageNameError = validateNpmPackageName(record.packageName);
+      if (packageNameError) {
+        res.status(400).json({ error: `Stored adapter package name is invalid: ${packageNameError}` });
+        return;
+      }
+
       logger.info({ type, packageName: record.packageName }, "Reinstalling adapter package via npm");
 
-      await execFileAsync("npm", ["install", "--no-save", record.packageName], {
+      await execFileAsync("npm", ["install", "--no-save", "--", record.packageName], {
         cwd: pluginsDir,
         timeout: 120_000,
       });

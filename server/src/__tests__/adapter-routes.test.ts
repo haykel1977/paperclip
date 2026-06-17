@@ -290,6 +290,30 @@ describe("adapter routes", () => {
     expect(res.status, JSON.stringify(res.body)).toBe(403);
   });
 
+  it("POST /api/adapters/install rejects unsafe npm package input before install", async () => {
+    const app = createApp({ isInstanceAdmin: true });
+
+    const optionLike = await request(app)
+      .post("/api/adapters/install")
+      .send({ packageName: "--ignore-scripts" });
+    expect(optionLike.status, JSON.stringify(optionLike.body)).toBe(400);
+    expect(optionLike.body.error).toContain("valid npm package name");
+
+    const badVersion = await request(app)
+      .post("/api/adapters/install")
+      .send({ packageName: "paperclip-adapter-example", version: "--ignore-scripts" });
+    expect(badVersion.status, JSON.stringify(badVersion.body)).toBe(400);
+    expect(badVersion.body.error).toContain("version contains invalid characters");
+
+    const badLocalPathFlag = await request(app)
+      .post("/api/adapters/install")
+      .send({ packageName: "paperclip-adapter-example", isLocalPath: "false" });
+    expect(badLocalPathFlag.status, JSON.stringify(badLocalPathFlag.body)).toBe(400);
+    expect(badLocalPathFlag.body.error).toContain("isLocalPath must be a boolean");
+
+    expect(mockPluginLoader.loadExternalAdapterPackage).not.toHaveBeenCalled();
+  });
+
   it("POST /api/adapters/install preserves module-provided sessionManagement (hot-install parity with init-time IIFE)", async () => {
     const HOT_INSTALL_TYPE = "hot_install_session_test";
     const declaredSessionManagement = {
