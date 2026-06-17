@@ -226,17 +226,21 @@ export type PluginManagedRoutineDeclarationInput = z.infer<typeof pluginManagedR
 const pluginLocalFolderRelativePathSchema = z.string().min(1).max(500).refine(
   (value) =>
     !value.startsWith("/") &&
+    !/^[A-Za-z]:/.test(value) &&
     !value.includes("..") &&
     !value.includes("\\") &&
     !value.split("/").some((segment) => segment === "" || segment === "."),
-  { message: "local folder paths must be relative paths without traversal, empty segments, or backslashes" },
+  { message: "local folder paths must be relative paths without traversal, empty segments, drive prefixes, or backslashes" },
 );
 
 export const pluginLocalFolderDeclarationSchema = z.object({
   folderKey: z.string().min(1).max(100).regex(/^[a-z0-9][a-z0-9._:-]*$/, {
     message: "folderKey must start with a lowercase alphanumeric and contain only lowercase letters, digits, dots, colons, underscores, or hyphens",
+  }).refine((value) => value !== "constructor" && value !== "prototype", {
+    message: "folderKey cannot use reserved object property names",
   }),
   displayName: z.string().min(1).max(100),
+
   description: z.string().max(500).optional(),
   access: z.enum(["read", "readWrite"]).optional(),
   requiredDirectories: z.array(pluginLocalFolderRelativePathSchema).optional(),

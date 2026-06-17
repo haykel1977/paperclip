@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { PLUGIN_CAPABILITIES } from "../constants.js";
 import {
+  pluginLocalFolderDeclarationSchema,
   pluginManagedAgentDeclarationSchema,
   pluginManagedRoutineDeclarationSchema,
   pluginManifestV1Schema,

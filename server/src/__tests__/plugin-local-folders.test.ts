@@ -4,13 +4,16 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 import {
   assertConfiguredLocalFolder,
+  assertPluginLocalFolderKey,
   assertWritableConfiguredLocalFolder,
+  getStoredLocalFolders,
   inspectPluginLocalFolder,
   listPluginLocalFolderEntries,
   preparePluginLocalFolder,
   readPluginLocalFolderText,
   resolvePluginLocalFolderPath,
   deletePluginLocalFolderFile,
+  setStoredLocalFolder,
   writePluginLocalFolderTextAtomic,
 } from "../services/plugin-local-folders.js";
 
@@ -49,7 +52,27 @@ describe("plugin local folders", () => {
     expect(status.requiredFiles).toEqual(["schema.md"]);
   });
 
+  it("rejects reserved local folder keys", () => {
+    expect(() => assertPluginLocalFolderKey("constructor")).toThrow();
+    expect(() => setStoredLocalFolder({}, "prototype", { path: "/tmp" })).toThrow();
+  });
+
+  it("filters unsafe persisted local folder maps", () => {
+    const localFolders = Object.create(null) as Record<string, { path: string }>;
+    localFolders["content-root"] = { path: "/tmp/content" };
+    localFolders.constructor = { path: "/tmp/constructor" };
+    localFolders.prototype = { path: "/tmp/prototype" };
+
+    const stored = getStoredLocalFolders({ localFolders });
+
+    expect(Object.getPrototypeOf(stored)).toBeNull();
+    expect(stored["content-root"]?.path).toBe("/tmp/content");
+    expect("constructor" in stored).toBe(false);
+    expect("prototype" in stored).toBe(false);
+  });
+
   it("reports missing required folders and files without using product-specific branches", async () => {
+
     const root = await makeRoot();
 
     const status = await inspectPluginLocalFolder({
@@ -189,7 +212,26 @@ describe("plugin local folders", () => {
     });
   });
 
+  it("rejects drive-prefixed local folder relative paths", async () => {
+    const root = await makeRoot();
+
+    for (const relativePath of ["C:secrets.txt", "C:/secrets.txt"]) {
+      await expect(resolvePluginLocalFolderPath(root, relativePath)).rejects.toMatchObject({
+        status: 403,
+      });
+    }
+
+    await expect(inspectPluginLocalFolder({
+      folderKey: "content-root",
+      storedConfig: {
+        path: root,
+        requiredFiles: ["C:secrets.txt"],
+      },
+    })).rejects.toMatchObject({ status: 400 });
+  });
+
   it("detects required symlinks that escape the configured folder", async () => {
+
     const root = await makeRoot();
     const outside = await makeRoot();
     await fs.writeFile(path.join(outside, "secret.txt"), "nope", "utf8");

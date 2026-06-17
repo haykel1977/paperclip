@@ -25,6 +25,7 @@ export interface PluginLocalFolderSettingsJson {
 }
 
 const LOCAL_FOLDER_KEY_PATTERN = /^[a-z0-9][a-z0-9._:-]*$/;
+const UNSAFE_OBJECT_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 
 function problem(
   code: PluginLocalFolderProblem["code"],
@@ -34,8 +35,12 @@ function problem(
   return { code, message, path: problemPath };
 }
 
+function isUnsafeObjectKey(key: string) {
+  return UNSAFE_OBJECT_KEYS.has(key);
+}
+
 export function assertPluginLocalFolderKey(folderKey: string) {
-  if (!LOCAL_FOLDER_KEY_PATTERN.test(folderKey)) {
+  if (!LOCAL_FOLDER_KEY_PATTERN.test(folderKey) || isUnsafeObjectKey(folderKey)) {
     throw badRequest("folderKey must start with a lowercase alphanumeric and contain only lowercase letters, digits, dots, colons, underscores, or hyphens");
   }
 }
@@ -63,6 +68,7 @@ function normalizeRelativePath(relativePath: string): string {
   if (
     !relativePath ||
     path.isAbsolute(relativePath) ||
+    /^[A-Za-z]:/.test(relativePath) ||
     relativePath.includes("\\") ||
     relativePath.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
   ) {
@@ -75,7 +81,7 @@ function validateRequiredPath(pathValue: string, label: string): string {
   try {
     return normalizeRelativePath(pathValue);
   } catch {
-    throw badRequest(`${label} must contain only relative paths without traversal, empty segments, or backslashes`);
+    throw badRequest(`${label} must contain only relative paths without traversal, empty segments, drive prefixes, or backslashes`);
   }
 }
 
@@ -110,8 +116,14 @@ function mergeFolderConfig(
 
 export function getStoredLocalFolders(settingsJson: Record<string, unknown> | null | undefined) {
   const folders = (settingsJson as PluginLocalFolderSettingsJson | undefined)?.localFolders;
-  if (!folders || typeof folders !== "object") return {};
-  return folders;
+  const safeFolders: Record<string, StoredPluginLocalFolderConfig> = Object.create(null);
+  if (!folders || typeof folders !== "object" || Array.isArray(folders)) return safeFolders;
+  for (const [folderKey, config] of Object.entries(folders)) {
+    if (isUnsafeObjectKey(folderKey)) continue;
+    if (!config || typeof config !== "object" || Array.isArray(config)) continue;
+    safeFolders[folderKey] = config as StoredPluginLocalFolderConfig;
+  }
+  return safeFolders;
 }
 
 export function setStoredLocalFolder(
@@ -119,6 +131,7 @@ export function setStoredLocalFolder(
   folderKey: string,
   config: StoredPluginLocalFolderConfig,
 ): PluginLocalFolderSettingsJson {
+  assertPluginLocalFolderKey(folderKey);
   return {
     ...(settingsJson ?? {}),
     localFolders: {
