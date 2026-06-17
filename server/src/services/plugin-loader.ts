@@ -24,7 +24,7 @@
  * @see PLUGIN_SPEC.md §10 — Package Contract
  * @see PLUGIN_SPEC.md §12 — Process Model
  */
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { readdir, readFile, rm, stat } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import os from "node:os";
@@ -1518,19 +1518,29 @@ export function pluginLoader(
 
     async cleanupInstallArtifacts(plugin: PluginRecord): Promise<void> {
       const managedTargets = new Set<string>();
-      const managedNodeModulesDir = resolveManagedInstallPackageDir(localPluginDir, plugin.packageName);
-      const directManagedDir = path.join(localPluginDir, plugin.packageName);
+      const packageNameError = validateNpmPackageName(plugin.packageName);
+      const packageNameIsSafe = packageNameError === null && plugin.packageName !== "node_modules";
 
-      managedTargets.add(managedNodeModulesDir);
-      if (isPathInsideDir(directManagedDir, localPluginDir)) {
-        managedTargets.add(directManagedDir);
+      if (packageNameIsSafe) {
+        managedTargets.add(resolveManagedInstallPackageDir(localPluginDir, plugin.packageName));
+
+        const directManagedDir = path.join(localPluginDir, plugin.packageName);
+        if (isPathInsideDir(directManagedDir, localPluginDir)) {
+          managedTargets.add(directManagedDir);
+        }
+      } else {
+        log.warn(
+          { pluginId: plugin.id, pluginKey: plugin.pluginKey, packageName: plugin.packageName },
+          "plugin-loader: skipping cleanup targets derived from unsafe packageName",
+        );
       }
+
       if (plugin.packagePath && isPathInsideDir(plugin.packagePath, localPluginDir)) {
         managedTargets.add(path.resolve(plugin.packagePath));
       }
 
       const packageJsonPath = path.join(localPluginDir, "package.json");
-      if (existsSync(packageJsonPath)) {
+      if (packageNameIsSafe && existsSync(packageJsonPath)) {
         try {
           await execFileAsync(
             "npm",
@@ -1552,6 +1562,13 @@ export function pluginLoader(
 
       for (const target of managedTargets) {
         if (!existsSync(target)) continue;
+        if (!isSafeManagedRemovalTarget(target, localPluginDir)) {
+          log.warn(
+            { pluginId: plugin.id, pluginKey: plugin.pluginKey, target },
+            "plugin-loader: skipping cleanup target outside managed plugin directory",
+          );
+          continue;
+        }
         await rm(target, { recursive: true, force: true });
       }
     },
@@ -2118,4 +2135,22 @@ function isPathInsideDir(candidatePath: string, parentDir: string): boolean {
   const resolvedParent = path.resolve(parentDir);
   const relative = path.relative(resolvedParent, resolvedCandidate);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function realpathIfExists(targetPath: string): string | null {
+  try {
+    return realpathSync(targetPath);
+  } catch {
+    return null;
+  }
+}
+
+function isSafeManagedRemovalTarget(targetPath: string, localPluginDir: string): boolean {
+  if (!isPathInsideDir(targetPath, localPluginDir)) return false;
+
+  const realTarget = realpathIfExists(targetPath);
+  const realLocalPluginDir = realpathIfExists(localPluginDir);
+  if (!realTarget || !realLocalPluginDir) return false;
+
+  return isPathInsideDir(realTarget, realLocalPluginDir);
 }
