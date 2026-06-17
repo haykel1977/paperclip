@@ -83,11 +83,16 @@ function isAutonomousDeliveryEnabled(env: Record<string, string>): boolean {
   return (env.PAPERCLIP_AUTONOMOUS_DELIVERY ?? process.env.PAPERCLIP_AUTONOMOUS_DELIVERY ?? "0") === "1";
 }
 
+function readDeliveryBotToken(env: Record<string, string>): string | null {
+  return nonEmpty(env.PAPERCLIP_DELIVERY_BOT_TOKEN ?? process.env.PAPERCLIP_DELIVERY_BOT_TOKEN);
+}
+
 async function pathExists(candidate: string): Promise<boolean> {
   return fs.access(candidate).then(() => true).catch(() => false);
 }
 
 async function resolvePackageManager(worktreeCwd: string): Promise<string> {
+
   const [hasPnpmLock, hasYarnLock] = await Promise.all([
     pathExists(path.join(worktreeCwd, "pnpm-lock.yaml")),
     pathExists(path.join(worktreeCwd, "yarn.lock")),
@@ -188,9 +193,17 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     return { delivered: false, prUrl: null, reason: "conflict" };
   }
 
+  const deliveryBotToken = autonomousDelivery ? readDeliveryBotToken(env) : null;
+  if (autonomousDelivery && !deliveryBotToken) {
+    await log("stderr", `[delivery ${ts()}] delivery_blocked: missing bot token\n`);
+    return { delivered: false, prUrl: null, reason: "delivery_blocked: missing bot token" };
+  }
+  const deliveryCommandEnv = deliveryBotToken ? { ...env, GH_TOKEN: deliveryBotToken } : env;
+
   const title = `${input.issueIdentifier ?? "FACTORY"}: factory delivery`;
   const bodyHeader = [
     `Paperclip issue: ${input.issueIdentifier ?? "?"} (${input.issueId ?? "?"})`,
+
     `Run: ${input.runId}`,
     `Model: sovereign (qwen3-coder:30b @ Bifrost CCX43)`,
     `Factory: sovereign delivery hook (deterministic, no LLM)`,
@@ -232,11 +245,12 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     return { delivered: false, prUrl: null, reason: "delivery_blocked" };
   }
 
-  const push = await runProc("git", ["push", "-u", "origin", branch], worktreeCwd, env);
+  const push = await runProc("git", ["push", "-u", "origin", branch], worktreeCwd, deliveryCommandEnv);
   if (push.exitCode !== 0) {
     const s = (push.stderr || "").toLowerCase();
     const reason =
       s.includes("401") || s.includes("403") || s.includes("denied") ? "push_auth_failed" : "push_failed";
+
     await log("stderr", `[delivery ${ts()}] push ${reason}: ${push.stderr}\n`);
     return { delivered: false, prUrl: null, reason };
   }
@@ -245,18 +259,20 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     "gh",
     ["pr", "list", "--repo", input.repo, "--head", branch, "--json", "url", "--jq", ".[0].url // empty"],
     worktreeCwd,
-    env,
+    deliveryCommandEnv,
   );
   if (existing.exitCode === 0 && existing.stdout.trim()) {
+
     const existingUrl = existing.stdout.trim();
     let labelsToReconcile: string[] = [];
     const labelListReco = await runProc(
       "gh",
       ["label", "list", "--repo", input.repo, "--limit", "200", "--json", "name", "--jq", "[.[].name]"],
       worktreeCwd,
-      env,
+      deliveryCommandEnv,
     );
     if (labelListReco.exitCode === 0) {
+
       try {
         const existingLabels: string[] = JSON.parse(labelListReco.stdout || "[]");
         labelsToReconcile = deliveryLabels.filter((label) => existingLabels.includes(label));
@@ -267,9 +283,10 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     if (labelsToReconcile.length > 0) {
       const editArgs = ["pr", "edit", existingUrl];
       for (const label of labelsToReconcile) editArgs.push("--add-label", label);
-      const lr = await runProc("gh", editArgs, worktreeCwd, env);
+      const lr = await runProc("gh", editArgs, worktreeCwd, deliveryCommandEnv);
       if (lr.exitCode !== 0) {
         await log("stderr", `[delivery ${ts()}] relabel existing PR failed (non-fatal): ${lr.stderr}\n`);
+
       }
     } else {
       await log("stderr", `[delivery ${ts()}] reco skipped (no labels exist in repo, Phase -1 not done?)\n`);
@@ -283,9 +300,10 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     "gh",
     ["label", "list", "--repo", input.repo, "--limit", "200", "--json", "name", "--jq", "[.[].name]"],
     worktreeCwd,
-    env,
+    deliveryCommandEnv,
   );
   if (labelList.exitCode === 0) {
+
     try {
       const existingNames: string[] = JSON.parse(labelList.stdout || "[]");
       labelsToApply = deliveryLabels.filter((label) => existingNames.includes(label));
@@ -316,12 +334,13 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
   ];
   for (const label of labelsToApply) prArgs.push("--label", label);
 
-  const pr = await runProc("gh", prArgs, worktreeCwd, env);
+  const pr = await runProc("gh", prArgs, worktreeCwd, deliveryCommandEnv);
   if (pr.exitCode !== 0) {
     await log("stderr", `[delivery ${ts()}] gh pr create failed: ${pr.stderr}\n`);
     return { delivered: false, prUrl: null, reason: "pr_create_failed" };
   }
   const url = (pr.stdout.match(/https:\/\/github\.com\/\S+\/pull\/\d+/) || [null])[0];
+
   if (url && !autonomousDelivery) {
     const rev = await runProc("gh", ["pr", "edit", url, "--add-reviewer", "haykel1977"], worktreeCwd, env);
     if (rev.exitCode !== 0) {

@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { executeDeliveryHook } from "@paperclipai/adapter-utils/delivery-hook";
 
 const tmpDirs: string[] = [];
@@ -26,11 +26,24 @@ const base = {
   log: vi.fn(async () => {}),
 };
 
+const savedAutonomous = process.env.PAPERCLIP_AUTONOMOUS_DELIVERY;
+const savedBotToken = process.env.PAPERCLIP_DELIVERY_BOT_TOKEN;
+
+beforeEach(() => {
+  delete process.env.PAPERCLIP_AUTONOMOUS_DELIVERY;
+  delete process.env.PAPERCLIP_DELIVERY_BOT_TOKEN;
+});
+
 afterEach(() => {
+  if (savedAutonomous === undefined) delete process.env.PAPERCLIP_AUTONOMOUS_DELIVERY;
+  else process.env.PAPERCLIP_AUTONOMOUS_DELIVERY = savedAutonomous;
+  if (savedBotToken === undefined) delete process.env.PAPERCLIP_DELIVERY_BOT_TOKEN;
+  else process.env.PAPERCLIP_DELIVERY_BOT_TOKEN = savedBotToken;
   for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
 describe("gemini-local delivery hook", () => {
+
   it("gate rouge -> delivery_blocked et aucun push", async () => {
 
     const worktreeCwd = mkWorktree();
@@ -77,9 +90,15 @@ describe("gemini-local delivery hook", () => {
       if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/45\n", stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     });
-    await executeDeliveryHook({ ...base, worktreeCwd, env: { PAPERCLIP_AUTONOMOUS_DELIVERY: "1" }, runProc });
+    await executeDeliveryHook({
+      ...base,
+      worktreeCwd,
+      env: { PAPERCLIP_AUTONOMOUS_DELIVERY: "1", PAPERCLIP_DELIVERY_BOT_TOKEN: "bot-token" },
+      runProc,
+    });
     const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
     expect(createCall).toContain("bot-merge-ready");
+
     expect(createCall).not.toContain("human-gate-required");
   });
 });
