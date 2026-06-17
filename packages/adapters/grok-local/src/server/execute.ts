@@ -2,8 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AdapterExecutionContext, AdapterExecutionResult } from "@paperclipai/adapter-utils";
+import { executeConfiguredDeliveryHook } from "@paperclipai/adapter-utils/delivery-hook";
 import {
   adapterExecutionTargetIsRemote,
+
   adapterExecutionTargetRemoteCwd,
   adapterExecutionTargetSessionIdentity,
   adapterExecutionTargetSessionMatches,
@@ -214,8 +216,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const workspaceId = asString(workspaceContext.workspaceId, "");
   const workspaceRepoUrl = asString(workspaceContext.repoUrl, "");
   const workspaceRepoRef = asString(workspaceContext.repoRef, "");
+  const workspaceBranch = asString(workspaceContext.branchName, "");
   const agentHome = asString(workspaceContext.agentHome, "");
   const workspaceHints = Array.isArray(context.paperclipWorkspaces)
+
     ? context.paperclipWorkspaces.filter(
         (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null,
       )
@@ -286,11 +290,13 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       workspaceId,
       workspaceRepoUrl,
       workspaceRepoRef,
+      workspaceBranch,
       workspaceHints,
       agentHome,
       executionTargetIsRemote,
       executionCwd: effectiveExecutionCwd,
     });
+
     if (!hasExplicitApiKey && authToken) {
       env.PAPERCLIP_API_KEY = authToken;
     }
@@ -336,11 +342,13 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         workspaceId,
         workspaceRepoUrl,
         workspaceRepoRef,
+        workspaceBranch,
         workspaceHints,
         agentHome,
         executionTargetIsRemote,
         executionCwd: effectiveExecutionCwd,
       });
+
     }
 
     const runtimeExecutionTarget = overrideAdapterExecutionTargetRemoteCwd(executionTarget, effectiveExecutionCwd);
@@ -573,9 +581,39 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       return toResult(retry, true, true);
     }
 
+    try {
+      const deliveryEnv = Object.fromEntries(
+        Object.entries(runtimeEnv).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+      );
+      await executeConfiguredDeliveryHook({
+        runId,
+        worktreeCwd: cwd,
+        branch: workspaceBranch,
+        env: deliveryEnv,
+        config,
+        context,
+        executionTargetIsRemote,
+        exitCode: initial.proc.exitCode,
+        runProc: async (c, a, wd, e) => {
+          const p = await runAdapterExecutionTargetProcess(runId, runtimeExecutionTarget, c, a, {
+            cwd: wd,
+            env: e,
+            timeoutSec: 120,
+            graceSec: 10,
+            onLog,
+          });
+          return { exitCode: p.exitCode ?? 1, stdout: p.stdout ?? "", stderr: p.stderr ?? "" };
+        },
+        log: onLog,
+      });
+    } catch (err) {
+      await onLog("stderr", `[paperclip] delivery hook error (non-fatal): ${(err as Error).message}\n`);
+    }
+
     return toResult(initial);
   } finally {
     await Promise.all([
+
       restoreRemoteWorkspace?.(),
       stagedAssets.cleanup(),
     ]);

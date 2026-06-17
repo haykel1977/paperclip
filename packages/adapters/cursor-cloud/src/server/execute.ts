@@ -319,7 +319,10 @@ async function getAttachedRun(input: {
 }
 
 export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
+  // Delivery hook intentionally excluded: cursor-cloud runs in Cursor's hosted runtime,
+  // not a local Paperclip-managed worktree where git/gh can be gated safely.
   const { runId, agent, runtime, config, context, onLog, onMeta } = ctx;
+
   const envConfig = asStringEnvMap(config.env);
   const apiKey = asString(envConfig.CURSOR_API_KEY, "").trim();
   if (!apiKey) {

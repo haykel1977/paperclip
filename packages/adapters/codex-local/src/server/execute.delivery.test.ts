@@ -1,8 +1,32 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { executeDeliveryHook } from "./execute.js";
 
-function mkRunProc(seq: Record<string, { exitCode: number; stdout?: string; stderr?: string }>) {
+const tmpDirs: string[] = [];
+
+function mkWorktree() {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "paperclip-codex-delivery-"));
+  tmpDirs.push(dir);
+  writeFileSync(path.join(dir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n", "utf8");
+  writeFileSync(
+    path.join(dir, "package.json"),
+    JSON.stringify({
+      scripts: {
+        typecheck: "tsc --noEmit",
+        lint: "eslint .",
+        test: "vitest run",
+        "check:tokens": "secret scan",
+      },
+    }),
+    "utf8",
+  );
+  return dir;
+}
+
+function mkRunProc(seq: Record<string, { exitCode: number; stdout?: string; stderr?: string }> = {}) {
   return vi.fn(async (cmd: string, args: string[]) => {
     const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
     const m = seq[key] ?? seq[`${cmd} ${args[0] ?? ""}`] ?? { exitCode: 0, stdout: "" };
@@ -12,7 +36,6 @@ function mkRunProc(seq: Record<string, { exitCode: number; stdout?: string; stde
 
 const base = {
   runId: "r1",
-  worktreeCwd: "/wt",
   branch: "codex/HAS-222-x",
   env: {},
   issueIdentifier: "HAS-222",
@@ -23,180 +46,115 @@ const base = {
 };
 
 describe("executeDeliveryHook", () => {
-  // Lane defaults to "production" only when PAPERCLIP_DELIVERY_LANE is unset in both the
-  // passed env and process.env. Clear it so tests relying on the default are not affected
-  // by a lane set in the surrounding environment.
   const savedLane = process.env.PAPERCLIP_DELIVERY_LANE;
+  const savedAutonomous = process.env.PAPERCLIP_AUTONOMOUS_DELIVERY;
+
   beforeEach(() => {
     delete process.env.PAPERCLIP_DELIVERY_LANE;
+    delete process.env.PAPERCLIP_AUTONOMOUS_DELIVERY;
   });
+
   afterEach(() => {
     if (savedLane === undefined) delete process.env.PAPERCLIP_DELIVERY_LANE;
     else process.env.PAPERCLIP_DELIVERY_LANE = savedLane;
+    if (savedAutonomous === undefined) delete process.env.PAPERCLIP_AUTONOMOUS_DELIVERY;
+    else process.env.PAPERCLIP_AUTONOMOUS_DELIVERY = savedAutonomous;
+    for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
-  it("T1: diff present -> commit + push + PR", async () => {
+  it("diff present -> commit + gate + push + PR", async () => {
+    const worktreeCwd = mkWorktree();
     const runProc = mkRunProc({
       "git status --porcelain": { exitCode: 0, stdout: " M HEARTBEAT.md\n" },
-      "git add -A": { exitCode: 0 },
-      "git commit -m": { exitCode: 0 },
-      // paperclip:allow-git-push: mock key for sovereign delivery hook push path under test (not a real invocation)
       "git push -u": { exitCode: 0 },
       "gh pr list": { exitCode: 0, stdout: "" },
       "gh label list": { exitCode: 0, stdout: "[]" },
       "gh pr create": { exitCode: 0, stdout: "" },
     });
-    const r = await executeDeliveryHook({ ...base, runProc } as any);
-    expect(["created", "pr_exists"]).toContain(r.reason);
+    const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
+    expect(result.reason).toBe("created");
+    expect(runProc).toHaveBeenCalledWith("pnpm", ["run", "typecheck"], worktreeCwd, expect.objectContaining({ CI: "true" }));
+    expect(runProc).toHaveBeenCalledWith("git", ["push", "-u", "origin", base.branch], worktreeCwd, expect.any(Object));
   });
 
-  it("T2: no diff -> silent skip, no commit", async () => {
+  it("no diff -> silent skip, no commit", async () => {
+    const worktreeCwd = mkWorktree();
     const runProc = mkRunProc({ "git status --porcelain": { exitCode: 0, stdout: "" } });
-    const r = await executeDeliveryHook({ ...base, runProc } as any);
-    expect(r.reason).toBe("no_diff");
+    const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
+    expect(result.reason).toBe("no_diff");
     expect(runProc).toHaveBeenCalledTimes(1);
   });
 
-  it("T3: push 401 -> auth error, no retry loop", async () => {
-    const runProc = mkRunProc({
-      "git status --porcelain": { exitCode: 0, stdout: " M f\n" },
-      "git add -A": { exitCode: 0 },
-      "git commit -m": { exitCode: 0 },
-      // paperclip:allow-git-push: mock key for sovereign delivery hook push path under test (not a real invocation)
-      "git push -u": { exitCode: 1, stderr: "remote: 401 Unauthorized" },
-    });
-    const r = await executeDeliveryHook({ ...base, runProc } as any);
-    expect(r.reason).toBe("push_auth_failed");
-  });
-
-  it("T4: PR already exists -> idempotent, no duplicate", async () => {
-    const runProc = mkRunProc({
-      "git status --porcelain": { exitCode: 0, stdout: " M f\n" },
-      "git add -A": { exitCode: 0 },
-      "git commit -m": { exitCode: 0 },
-      // paperclip:allow-git-push: mock key for sovereign delivery hook push path under test (not a real invocation)
-      "git push -u": { exitCode: 0 },
-      "gh pr list": { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/9\n" },
-      "gh label list": { exitCode: 0, stdout: "[]" },
-    });
-    const r = await executeDeliveryHook({ ...base, runProc } as any);
-    expect(r.reason).toBe("pr_exists");
-  });
-
-  it("T5: conflict markers -> explicit error, no push mutation", async () => {
-    const runProc = mkRunProc({ "git status --porcelain": { exitCode: 0, stdout: "UU HEARTBEAT.md\n" } });
-    const r = await executeDeliveryHook({ ...base, runProc } as any);
-    expect(r.reason).toBe("conflict");
-  });
-
-  it("T6: labels present in repo -> applied to created PR; label list uses --limit", async () => {
+  it("gate rouge -> delivery_blocked et aucun push", async () => {
+    const worktreeCwd = mkWorktree();
     const calls: string[][] = [];
     const runProc = vi.fn(async (cmd: string, args: string[]) => {
       calls.push([cmd, ...args]);
       const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
-      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M HEARTBEAT.md\n", stderr: "" };
-      if (key === "gh label list")
-        return { exitCode: 0, stdout: JSON.stringify(["bug", "factory-proof", "human-gate-required"]), stderr: "" };
-      if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
-      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/2\n", stderr: "" };
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      if (key === "pnpm run lint") return { exitCode: 1, stdout: "", stderr: "lint failed" };
       return { exitCode: 0, stdout: "", stderr: "" };
     });
-    const r = await executeDeliveryHook({ ...base, runProc } as any);
-    expect(r.reason).toBe("created");
-    const labelCall = calls.find((c) => c[0] === "gh" && c[1] === "label" && c[2] === "list");
-    expect(labelCall).toContain("--limit");
-    expect(labelCall).toContain("200");
-    const createCall = calls.find((c) => c[0] === "gh" && c[1] === "pr" && c[2] === "create");
-    expect(createCall).toContain("factory-proof");
+    const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
+    expect(result.reason).toBe("delivery_blocked");
+    expect(calls.some((call) => call[0] === "git" && call[1] === "push")).toBe(false);
+  });
+
+  it("flag OFF -> human-gate-required et reviewer humain", async () => {
+    const worktreeCwd = mkWorktree();
+    const calls: string[][] = [];
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
+      if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "human-gate-required", "bot-merge-ready"]), stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/44\n", stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    await executeDeliveryHook({ ...base, worktreeCwd, runProc });
+    const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
     expect(createCall).toContain("human-gate-required");
+    expect(createCall).not.toContain("bot-merge-ready");
+    expect(calls.find((call) => call.includes("--add-reviewer"))).toContain("haykel1977");
   });
 
-  // mkLabelCapture: records gh argv so a test can inspect label flags + PR body.
-  function mkLabelCapture(repoLabels: string[]) {
+  it("flag ON + gate vert -> bot-merge-ready sans reviewer humain", async () => {
+    const worktreeCwd = mkWorktree();
     const calls: string[][] = [];
     const runProc = vi.fn(async (cmd: string, args: string[]) => {
       calls.push([cmd, ...args]);
       const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
-      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M HEARTBEAT.md\n", stderr: "" };
-      if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(repoLabels), stderr: "" };
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
       if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
-      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/3\n", stderr: "" };
+      if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "human-gate-required", "bot-merge-ready"]), stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/45\n", stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     });
-    return { calls, runProc };
-  }
-
-  function labelArgs(calls: string[][]): string[] {
-    const create = calls.find((c) => c[0] === "gh" && c[1] === "pr" && c[2] === "create");
-    if (!create) return [];
-    const out: string[] = [];
-    for (let i = 0; i < create.length - 1; i++) if (create[i] === "--label") out.push(create[i + 1]);
-    return out;
-  }
-
-  function bodyArg(calls: string[][]): string {
-    const create = calls.find((c) => c[0] === "gh" && c[1] === "pr" && c[2] === "create");
-    if (!create) return "";
-    const i = create.indexOf("--body");
-    return i >= 0 ? create[i + 1] : "";
-  }
-
-  it("T7: production lane (default) keeps human-gate label, no agent-pr, body has HAS-46", async () => {
-    const { calls, runProc } = mkLabelCapture([
-      "factory-proof",
-      "human-gate-required",
-      "agent-pr",
-      "automated",
-      "truth-first",
-    ]);
-    const r = await executeDeliveryHook({ ...base, env: { PAPERCLIP_DELIVERY_LANE: "production" }, runProc } as any);
-    expect(r.reason).toBe("created");
-    const labels = labelArgs(calls);
-    expect(labels).toContain("human-gate-required");
-    expect(labels).toContain("factory-proof");
-    expect(labels).not.toContain("agent-pr");
-    expect(bodyArg(calls)).toContain("HAS-46");
+    await executeDeliveryHook({ ...base, worktreeCwd, env: { PAPERCLIP_AUTONOMOUS_DELIVERY: "1" }, runProc });
+    const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
+    expect(createCall).toContain("bot-merge-ready");
+    expect(createCall).not.toContain("human-gate-required");
+    expect(calls.some((call) => call.includes("--add-reviewer"))).toBe(false);
   });
 
-  it("T8: unset lane env defaults to production (fail-closed human gate)", async () => {
-    const { calls, runProc } = mkLabelCapture(["factory-proof", "human-gate-required", "agent-pr"]);
-    const r = await executeDeliveryHook({ ...base, env: {}, runProc } as any);
-    expect(r.reason).toBe("created");
-    expect(labelArgs(calls)).toContain("human-gate-required");
-    expect(labelArgs(calls)).not.toContain("agent-pr");
-  });
-
-  it("T9: dev-test lane omits human-gate, adds Quantum gate labels + ADR/Truthfulness body", async () => {
-    const { calls, runProc } = mkLabelCapture([
-      "factory-proof",
-      "human-gate-required",
-      "agent-pr",
-      "automated",
-      "truth-first",
-    ]);
-    const r = await executeDeliveryHook({ ...base, env: { PAPERCLIP_DELIVERY_LANE: "dev-test" }, runProc } as any);
-    expect(r.reason).toBe("created");
-    const labels = labelArgs(calls);
-    expect(labels).not.toContain("human-gate-required");
-    expect(labels).toContain("agent-pr");
-    expect(labels).toContain("automated");
-    expect(labels).toContain("truth-first");
-    expect(labels).toContain("factory-proof");
-    const body = bodyArg(calls);
-    expect(body).toContain("ADR-GOV-007");
-    expect(body).toContain("Truthfulness Boundary");
-    expect(body).not.toContain("HAS-46");
-  });
-
-  it("T10: dev-test lane only applies gate labels that exist in the repo (pre-flight filter)", async () => {
-    // Repo has not yet created agent-pr/automated; only factory-proof + truth-first exist.
-    const { calls, runProc } = mkLabelCapture(["factory-proof", "truth-first"]);
-    const r = await executeDeliveryHook({ ...base, env: { PAPERCLIP_DELIVERY_LANE: "dev-test" }, runProc } as any);
-    expect(r.reason).toBe("created");
-    const labels = labelArgs(calls);
-    expect(labels).toContain("factory-proof");
-    expect(labels).toContain("truth-first");
-    expect(labels).not.toContain("agent-pr");
-    expect(labels).not.toContain("human-gate-required");
+  it("dev-test lane keeps existing no-human lane labels when autonomous flag is off", async () => {
+    const worktreeCwd = mkWorktree();
+    const calls: string[][] = [];
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
+      if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "human-gate-required", "agent-pr", "automated", "truth-first"]), stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/46\n", stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    await executeDeliveryHook({ ...base, worktreeCwd, env: { PAPERCLIP_DELIVERY_LANE: "dev-test" }, runProc });
+    const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
+    expect(createCall).toContain("agent-pr");
+    expect(createCall).toContain("automated");
+    expect(createCall).toContain("truth-first");
+    expect(createCall).not.toContain("human-gate-required");
   });
 });

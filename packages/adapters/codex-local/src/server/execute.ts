@@ -2,8 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { inferOpenAiCompatibleBiller, type AdapterExecutionContext, type AdapterExecutionResult } from "@paperclipai/adapter-utils";
+import { executeConfiguredDeliveryHook, executeDeliveryHook } from "@paperclipai/adapter-utils/delivery-hook";
 import {
   adapterExecutionTargetIsRemote,
+
   adapterExecutionTargetRemoteCwd,
   overrideAdapterExecutionTargetRemoteCwd,
   adapterExecutionTargetSessionIdentity,
@@ -282,209 +284,10 @@ export async function ensureCodexSkillsInjected(
   );
 }
 
-/**
- * executeDeliveryHook — deterministic post-run delivery (commit -> push -> PR).
- *
- * Why: Paperclip had no delivery hook; delivery was fully delegated to the model
- * (qwen3-coder:30b) which edits but does not reliably run the git sequence
- * (investigation C2+C3, 2026-06-08).
- *
- * Doctrine: NO LLM here. Pure git + gh CLI. Never merges. Idempotent. Reviewer
- * requested best-effort post-create (GitHub forbids self-review).
- *
- * Lane (PAPERCLIP_DELIVERY_LANE): default "production" is fail-closed — keeps the
- * human-gate label so Quantum's auto-merge stays blocked (ADR-GOV-007, HAS-46 human
- * review by @haykel1977). "dev-test" opts eligible PRs into the no-human lane: omits
- * the human-gate label and emits the labels/body Quantum's no-human gate requires.
- * The hook never merges in either lane.
- */
-export async function executeDeliveryHook(input: {
-  runId: string;
-  worktreeCwd: string;
-  branch: string;
-  env: Record<string, string>;
-  issueIdentifier: string | null;
-  issueId: string | null;
-  repo: string;
-  baseBranch: string;
-  runProc: (
-    cmd: string,
-    args: string[],
-    cwd: string,
-    env: Record<string, string>,
-  ) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
-  log: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
-}): Promise<{ delivered: boolean; prUrl: string | null; reason: string }> {
-  const { worktreeCwd, branch, env, runProc, log } = input;
-  const ts = () => new Date().toISOString();
-
-  // Delivery lane. Default is "production": fail-closed, keeps the human-gate label so
-  // Quantum's auto-merge stays blocked (ADR-GOV-007) and a human must merge. Operators
-  // opt eligible dev/test PRs into the no-human lane with PAPERCLIP_DELIVERY_LANE=dev-test,
-  // which omits the human-gate label and adds the labels/body Quantum's no-human gate
-  // requires (agent-pr/automated/truth-first + ADR ref + Truthfulness Boundary). The hook
-  // itself never merges in either lane — auto-merge is Quantum's decision, not Paperclip's.
-  const lane = (env.PAPERCLIP_DELIVERY_LANE ?? process.env.PAPERCLIP_DELIVERY_LANE ?? "production").trim();
-  const isDevTestLane = lane === "dev-test";
-  const deliveryLabels = isDevTestLane
-    ? ["factory-proof", "agent-pr", "automated", "truth-first"]
-    : ["factory-proof", "human-gate-required"];
-
-  const status = await runProc("git", ["status", "--porcelain"], worktreeCwd, env);
-  if (status.exitCode !== 0) {
-    await log("stderr", `[delivery ${ts()}] git status failed: ${status.stderr}\n`);
-    return { delivered: false, prUrl: null, reason: "git_status_failed" };
-  }
-  if (!status.stdout.trim()) {
-    await log("stdout", `[delivery ${ts()}] no diff — nothing to deliver (ok).\n`);
-    return { delivered: false, prUrl: null, reason: "no_diff" };
-  }
-  if (/^(UU|AA|DD) /m.test(status.stdout)) {
-    await log("stderr", `[delivery ${ts()}] merge conflict markers — abort, no force.\n`);
-    return { delivered: false, prUrl: null, reason: "conflict" };
-  }
-
-  const title = `${input.issueIdentifier ?? "FACTORY"}: factory delivery`;
-  const bodyHeader = [
-    `Paperclip issue: ${input.issueIdentifier ?? "?"} (${input.issueId ?? "?"})`,
-    `Run: ${input.runId}`,
-    `Model: sovereign (qwen3-coder:30b @ Bifrost CCX43)`,
-    `Factory: sovereign delivery hook (deterministic, no LLM)`,
-  ];
-  const bodyGate = isDevTestLane
-    ? [
-        ``,
-        `ADR: ADR-GOV-007 (dev/test no-human lane — eligible agent-pr/automated PRs may`,
-        `auto-merge once functional and security checks are green; production stays gated).`,
-        ``,
-        `## Truthfulness Boundary`,
-        `This PR is produced by a deterministic delivery hook with no LLM in the delivery`,
-        `path. Claims in this body are limited to factory metadata (issue, run, lane) that`,
-        `the hook can verify; it makes no assertions about correctness of the diff beyond`,
-        `the configured functional and security gates.`,
-      ]
-    : [``, `HAS-46: human review required — never auto-merge.`];
-  const body = [...bodyHeader, ...bodyGate].join("\n");
-
-  const add = await runProc("git", ["add", "-A"], worktreeCwd, env);
-  if (add.exitCode !== 0) {
-    await log("stderr", `[delivery ${ts()}] git add failed: ${add.stderr}\n`);
-    return { delivered: false, prUrl: null, reason: "git_add_failed" };
-  }
-  const commit = await runProc("git", ["commit", "-m", title, "-m", body], worktreeCwd, env);
-  if (commit.exitCode !== 0) {
-    await log("stderr", `[delivery ${ts()}] git commit failed: ${commit.stderr}\n`);
-    return { delivered: false, prUrl: null, reason: "git_commit_failed" };
-  }
-
-  // Sovereign delivery hook — operator-configured deterministic commit->push->PR path
-  // (no LLM, never merges; human review gated by HAS-46). See executeDeliveryHook doctrine above.
-  // paperclip:allow-git-push: sovereign delivery hook is the intended operator-configured push path
-  const push = await runProc("git", ["push", "-u", "origin", branch], worktreeCwd, env);
-  if (push.exitCode !== 0) {
-    const s = (push.stderr || "").toLowerCase();
-    const reason =
-      s.includes("401") || s.includes("403") || s.includes("denied") ? "push_auth_failed" : "push_failed";
-    await log("stderr", `[delivery ${ts()}] push ${reason}: ${push.stderr}\n`);
-    return { delivered: false, prUrl: null, reason };
-  }
-
-  // Idempotence: existing PR on this head -> reconcile labels (filtered), no duplicate.
-  const existing = await runProc(
-    "gh",
-    ["pr", "list", "--repo", input.repo, "--head", branch, "--json", "url", "--jq", ".[0].url // empty"],
-    worktreeCwd,
-    env,
-  );
-  if (existing.exitCode === 0 && existing.stdout.trim()) {
-    const existingUrl = existing.stdout.trim();
-    const labelsRequiredReco = deliveryLabels;
-    let labelsToReconcile: string[] = [];
-    const labelListReco = await runProc(
-      "gh",
-      ["label", "list", "--repo", input.repo, "--limit", "200", "--json", "name", "--jq", "[.[].name]"],
-      worktreeCwd,
-      env,
-    );
-    if (labelListReco.exitCode === 0) {
-      try {
-        const existingLabels: string[] = JSON.parse(labelListReco.stdout || "[]");
-        labelsToReconcile = labelsRequiredReco.filter((l) => existingLabels.includes(l));
-      } catch (e) {
-        await log("stderr", `[delivery ${ts()}] reco label parse failed: ${(e as Error).message}\n`);
-      }
-    }
-    if (labelsToReconcile.length > 0) {
-      const editArgs = ["pr", "edit", existingUrl];
-      for (const l of labelsToReconcile) editArgs.push("--add-label", l);
-      const lr = await runProc("gh", editArgs, worktreeCwd, env);
-      if (lr.exitCode !== 0) {
-        await log("stderr", `[delivery ${ts()}] relabel existing PR failed (non-fatal): ${lr.stderr}\n`);
-      }
-    } else {
-      await log("stderr", `[delivery ${ts()}] reco skipped (no labels exist in repo, Phase -1 not done?)\n`);
-    }
-    await log("stdout", `[delivery ${ts()}] PR already exists (idempotent): ${existingUrl}\n`);
-    return { delivered: true, prUrl: existingUrl, reason: "pr_exists" };
-  }
-
-  // Label pre-flight: only apply labels that exist in the repo (Phase -1).
-  const labelsRequired = deliveryLabels;
-  let labelsToApply: string[] = [];
-  const labelList = await runProc(
-    "gh",
-    ["label", "list", "--repo", input.repo, "--limit", "200", "--json", "name", "--jq", "[.[].name]"],
-    worktreeCwd,
-    env,
-  );
-  if (labelList.exitCode === 0) {
-    try {
-      const existingNames: string[] = JSON.parse(labelList.stdout || "[]");
-      labelsToApply = labelsRequired.filter((l) => existingNames.includes(l));
-      const missing = labelsRequired.filter((l) => !existingNames.includes(l));
-      if (missing.length) {
-        await log("stderr", `[delivery ${ts()}] labels missing (Phase -1 not done?): ${missing.join(",")}\n`);
-      }
-    } catch (e) {
-      await log("stderr", `[delivery ${ts()}] label parse failed: ${(e as Error).message}\n`);
-    }
-  } else {
-    await log("stderr", `[delivery ${ts()}] gh label list failed, no labels: ${labelList.stderr}\n`);
-  }
-
-  const prArgs = [
-    "pr",
-    "create",
-    "--repo",
-    input.repo,
-    "--head",
-    branch,
-    "--base",
-    input.baseBranch,
-    "--title",
-    title,
-    "--body",
-    body,
-  ];
-  for (const l of labelsToApply) prArgs.push("--label", l);
-  // NOTE: no --reviewer at create time (Adjustment C — GitHub forbids self-review).
-  const pr = await runProc("gh", prArgs, worktreeCwd, env);
-  if (pr.exitCode !== 0) {
-    await log("stderr", `[delivery ${ts()}] gh pr create failed: ${pr.stderr}\n`);
-    return { delivered: false, prUrl: null, reason: "pr_create_failed" };
-  }
-  const url = (pr.stdout.match(/https:\/\/github\.com\/\S+\/pull\/\d+/) || [null])[0];
-  if (url) {
-    const rev = await runProc("gh", ["pr", "edit", url, "--add-reviewer", "haykel1977"], worktreeCwd, env);
-    if (rev.exitCode !== 0) {
-      await log("stderr", `[delivery ${ts()}] add-reviewer failed (non-fatal): ${rev.stderr}\n`);
-    }
-  }
-  await log("stdout", `[delivery ${ts()}] PR created: ${url}\n`);
-  return { delivered: true, prUrl: url, reason: "created" };
-}
+export { executeDeliveryHook };
 
 export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
+
   const { runId, agent, runtime, config, context, onLog, onMeta, onSpawn, authToken } = ctx;
 
   const promptTemplate = asString(
@@ -521,9 +324,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     : [];
   const runtimePrimaryUrl = asString(context.paperclipRuntimePrimaryUrl, "");
   const configuredCwd = asString(config.cwd, "");
-  const deliveryHookEnabled = config.deliveryHookEnabled !== false; // delivery hook: deterministic, no LLM (default on)
   const useConfiguredInsteadOfAgentHome = workspaceSource === "agent_home" && configuredCwd.length > 0;
   const effectiveWorkspaceCwd = useConfiguredInsteadOfAgentHome ? "" : workspaceCwd;
+
   const cwd = effectiveWorkspaceCwd || configuredCwd || process.cwd();
   const envConfig = parseObject(config.env);
   const executionTarget = readAdapterExecutionTarget({
@@ -1044,44 +847,34 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       return toResult(retry, true, true);
     }
 
-    if (
-      deliveryHookEnabled &&
-      !executionTargetIsRemote &&
-      (initial.proc.exitCode ?? 1) === 0 &&
-      workspaceBranch
-    ) {
-      try {
-        const delivery = await executeDeliveryHook({
-          runId,
-          worktreeCwd: cwd,
-          branch: workspaceBranch,
-          env: runtimeEnv,
-          issueIdentifier: asString(context.issueIdentifier, "") || null,
-          issueId: asString(context.issueId, "") || null,
-          repo: asString(config.deliveryRepo, "Beyn-SOLIDUS/quantum"),
-          baseBranch: asString(config.deliveryBaseBranch, "main"),
-          runProc: async (c, a, wd, e) => {
-            const p = await runAdapterExecutionTargetProcess(runId, runtimeExecutionTarget, c, a, {
-              cwd: wd,
-              env: e,
-              timeoutSec: 120,
-              graceSec: 10,
-              onLog,
-            });
-            return { exitCode: p.exitCode ?? 1, stdout: p.stdout ?? "", stderr: p.stderr ?? "" };
-          },
-          log: onLog,
-        });
-        await onLog(
-          "stdout",
-          `[paperclip] delivery: ${delivery.reason}${delivery.prUrl ? " -> " + delivery.prUrl : ""}\n`,
-        );
-      } catch (err) {
-        await onLog("stderr", `[paperclip] delivery hook error (non-fatal): ${(err as Error).message}\n`);
-      }
+    try {
+      await executeConfiguredDeliveryHook({
+        runId,
+        worktreeCwd: cwd,
+        branch: workspaceBranch,
+        env: runtimeEnv,
+        config,
+        context,
+        executionTargetIsRemote,
+        exitCode: initial.proc.exitCode,
+        runProc: async (c, a, wd, e) => {
+          const p = await runAdapterExecutionTargetProcess(runId, runtimeExecutionTarget, c, a, {
+            cwd: wd,
+            env: e,
+            timeoutSec: 120,
+            graceSec: 10,
+            onLog,
+          });
+          return { exitCode: p.exitCode ?? 1, stdout: p.stdout ?? "", stderr: p.stderr ?? "" };
+        },
+        log: onLog,
+      });
+    } catch (err) {
+      await onLog("stderr", `[paperclip] delivery hook error (non-fatal): ${(err as Error).message}\n`);
     }
     return toResult(initial, false, false);
   } finally {
+
     if (paperclipBridge) {
       await paperclipBridge.stop();
     }

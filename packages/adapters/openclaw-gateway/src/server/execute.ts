@@ -1049,7 +1049,10 @@ function extractResultText(value: unknown): string | null {
 }
 
 export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
+  // Delivery hook intentionally excluded: openclaw-gateway delegates execution to
+  // a remote gateway/device, not a local Paperclip-managed worktree.
   const urlValue = asString(ctx.config.url, "").trim();
+
   if (!urlValue) {
     return {
       exitCode: 1,

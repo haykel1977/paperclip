@@ -2,9 +2,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AdapterExecutionContext, AdapterExecutionResult } from "@paperclipai/adapter-utils";
+import { executeConfiguredDeliveryHook } from "@paperclipai/adapter-utils/delivery-hook";
 import type { RunProcessResult } from "@paperclipai/adapter-utils/server-utils";
 import {
   adapterExecutionTargetIsRemote,
+
   adapterExecutionTargetRemoteCwd,
   overrideAdapterExecutionTargetRemoteCwd,
   adapterExecutionTargetSessionIdentity,
@@ -958,9 +960,41 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       return toAdapterResult(retry, { fallbackSessionId: null, clearSessionOnMissingSession: true });
     }
 
+    try {
+      const deliveryEnv = Object.fromEntries(
+        Object.entries(ensurePathInEnv({ ...process.env, ...env })).filter(
+          (entry): entry is [string, string] => typeof entry[1] === "string",
+        ),
+      );
+      await executeConfiguredDeliveryHook({
+        runId,
+        worktreeCwd: cwd,
+        branch: workspaceBranch,
+        env: deliveryEnv,
+        config,
+        context,
+        executionTargetIsRemote,
+        exitCode: initial.proc.exitCode,
+        runProc: async (c, a, wd, e) => {
+          const p = await runAdapterExecutionTargetProcess(runId, runtimeExecutionTarget, c, a, {
+            cwd: wd,
+            env: e,
+            timeoutSec: 120,
+            graceSec: 10,
+            onLog,
+          });
+          return { exitCode: p.exitCode ?? 1, stdout: p.stdout ?? "", stderr: p.stderr ?? "" };
+        },
+        log: onLog,
+      });
+    } catch (err) {
+      await onLog("stderr", `[paperclip] delivery hook error (non-fatal): ${(err as Error).message}\n`);
+    }
+
     return toAdapterResult(initial, { fallbackSessionId: runtimeSessionId || runtime.sessionId });
   } finally {
     if (paperclipBridge) {
+
       await paperclipBridge.stop();
     }
     if (restoreRemoteWorkspace) {

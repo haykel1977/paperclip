@@ -4,9 +4,11 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { AdapterExecutionContext, AdapterExecutionResult } from "@paperclipai/adapter-utils";
+import { executeConfiguredDeliveryHook } from "@paperclipai/adapter-utils/delivery-hook";
 import { readAdapterExecutionTarget, adapterExecutionTargetSessionIdentity } from "@paperclipai/adapter-utils/execution-target";
 import {
   DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
+
   applyPaperclipWorkspaceEnv,
   asNumber,
   asString,
@@ -26,8 +28,10 @@ import {
   rewriteWorkspaceCwdEnvVarsForExecution,
   shapePaperclipWorkspaceEnvForExecution,
   stringifyPaperclipWakePayload,
+  runChildProcess,
   type PaperclipSkillEntry,
 } from "@paperclipai/adapter-utils/server-utils";
+
 import { shellQuote } from "@paperclipai/adapter-utils/ssh";
 import {
   createAcpRuntime,
@@ -81,7 +85,10 @@ interface AcpxPreparedRuntime {
   env: Record<string, string>;
   loggedEnv: Record<string, string>;
   stateDir: string;
+  workspaceBranch: string;
+  executionTargetIsRemote: boolean;
   permissionMode: "approve-all" | "approve-reads" | "deny-all";
+
   nonInteractivePermissions: "deny" | "fail";
   requestedModel: string;
   requestedThinkingEffort: string;
@@ -934,8 +941,11 @@ async function buildRuntime(input: {
     env,
     loggedEnv,
     stateDir,
+    workspaceBranch,
+    executionTargetIsRemote,
     permissionMode,
     nonInteractivePermissions,
+
     requestedModel,
     requestedThinkingEffort,
     fastMode,
@@ -1662,7 +1672,7 @@ export function createAcpxLocalExecutor(deps: ExecuteDeps = {}) {
         stopReason: terminalStopReason,
         message: errorMessage,
       });
-      return {
+      const result: AdapterExecutionResult = {
         exitCode: terminal.status === "completed" ? 0 : 1,
         signal: timedOut ? "SIGTERM" : null,
         timedOut,
@@ -1687,7 +1697,34 @@ export function createAcpxLocalExecutor(deps: ExecuteDeps = {}) {
         summary: textParts.join("").trim() || terminalStopReason || terminal.status,
         clearSession,
       };
+      try {
+        await executeConfiguredDeliveryHook({
+          runId: ctx.runId,
+          worktreeCwd: prepared.cwd,
+          branch: prepared.workspaceBranch,
+          env: prepared.env,
+          config: ctx.config,
+          context: ctx.context,
+          executionTargetIsRemote: prepared.executionTargetIsRemote,
+          exitCode: result.exitCode,
+          runProc: async (command, args, cwd, env) => {
+            const proc = await runChildProcess(ctx.runId, command, args, {
+              cwd,
+              env,
+              timeoutSec: 120,
+              graceSec: 10,
+              onLog: ctx.onLog,
+            });
+            return { exitCode: proc.exitCode ?? 1, stdout: proc.stdout ?? "", stderr: proc.stderr ?? "" };
+          },
+          log: ctx.onLog,
+        });
+      } catch (err) {
+        await ctx.onLog("stderr", `[paperclip] delivery hook error (non-fatal): ${(err as Error).message}\n`);
+      }
+      return result;
     } catch (err) {
+
       if (timeout) clearTimeout(timeout);
       const messageOverride = timedOut ? `Timed out after ${prepared.timeoutSec}s` : undefined;
       const cancel = cancelActiveTurn as ((reason: string) => Promise<void>) | null;
