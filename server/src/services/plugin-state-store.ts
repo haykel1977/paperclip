@@ -83,7 +83,6 @@ export function normalizePluginStateListFilter(filter: ListPluginState = {}): Li
 
 /**
  * Build the WHERE clause conditions for a scoped state lookup.
-
  *
  * The five-part composite key is:
  *   `(pluginId, scopeKind, scopeId, namespace, stateKey)`
@@ -93,6 +92,7 @@ export function normalizePluginStateListFilter(filter: ListPluginState = {}): Li
 function scopeConditions(
   pluginId: string,
   scopeKind: PluginStateScopeKind,
+
   scopeId: string | undefined | null,
   namespace: string,
   stateKey: string,
@@ -193,13 +193,13 @@ export function pluginStateStore(db: Db) {
 
     /**
      * Write (create or replace) a state value.
-
      *
      * Uses an upsert so the caller does not need to check for prior existence.
      * On conflict (same composite key) the existing row's `value_json` and
      * `updated_at` are overwritten.
      *
      * Requires `plugin.state.write` capability (enforced by the caller).
+
      *
      * @param pluginId - UUID of the owning plugin
      * @param input - Scope key and value to store
@@ -236,7 +236,6 @@ export function pluginStateStore(db: Db) {
 
     /**
      * Delete a state value.
-
      *
      * No-ops silently if the entry does not exist (idempotent by design).
      *
@@ -244,6 +243,7 @@ export function pluginStateStore(db: Db) {
      *
      * @param pluginId - UUID of the owning plugin
      * @param scopeKind - Granularity of the scope
+
      * @param stateKey - The key to delete
      * @param scopeId - Identifier for the scoped entity (null for `instance` scope)
      * @param namespace - Sub-namespace (defaults to `"default"`)
@@ -271,7 +271,6 @@ export function pluginStateStore(db: Db) {
 
     /**
      * List all state entries for a plugin, optionally filtered by scope.
-
      *
      * Returns all matching rows as `PluginStateRecord`-shaped objects.
      * The `valueJson` field contains the stored value.
@@ -279,6 +278,7 @@ export function pluginStateStore(db: Db) {
      * Requires `plugin.state.read` capability (enforced by the caller).
      *
      * @param pluginId - UUID of the owning plugin
+
      * @param filter - Optional scope filters (scopeKind, scopeId, namespace)
      */
     list: async (pluginId: string, filter: ListPluginState = {}): Promise<typeof pluginState.$inferSelect[]> => {
@@ -303,7 +303,6 @@ export function pluginStateStore(db: Db) {
 
     /**
      * Delete all state entries owned by a plugin.
-
      *
      * Called during plugin uninstall when `removeData = true`. Also useful
      * for resetting a plugin's state during testing.
@@ -311,6 +310,7 @@ export function pluginStateStore(db: Db) {
      * @param pluginId - UUID of the owning plugin
      */
     deleteAll: async (pluginId: string): Promise<void> => {
+
       await db
         .delete(pluginState)
         .where(eq(pluginState.pluginId, pluginId));

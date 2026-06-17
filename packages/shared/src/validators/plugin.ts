@@ -1080,12 +1080,38 @@ export type UninstallPlugin = z.infer<typeof uninstallPluginSchema>;
  *
  * @see PLUGIN_SPEC.md §21.3 `plugin_state`
  */
+const pluginStateIdentifierSchema = z.string().min(1).max(500).refine(
+  (value) => value.trim().length > 0 && !value.includes("\0") && !["__proto__", "prototype", "constructor"].includes(value),
+  { message: "plugin state identifiers must be non-empty, at most 500 characters, and not reserved object keys" },
+);
+
+function validatePluginStateScope(
+  value: { scopeKind?: unknown; scopeId?: unknown },
+  ctx: z.RefinementCtx,
+  exactKey: boolean,
+) {
+  if (value.scopeKind === "instance" && value.scopeId !== undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "instance-scoped plugin state cannot include scopeId",
+      path: ["scopeId"],
+    });
+  }
+  if (exactKey && value.scopeKind !== "instance" && value.scopeId === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "scopeId is required for non-instance plugin state scopes",
+      path: ["scopeId"],
+    });
+  }
+}
+
 export const pluginStateScopeKeySchema = z.object({
   scopeKind: z.enum(PLUGIN_STATE_SCOPE_KINDS),
-  scopeId: z.string().min(1).optional(),
-  namespace: z.string().min(1).optional(),
-  stateKey: z.string().min(1),
-});
+  scopeId: pluginStateIdentifierSchema.optional(),
+  namespace: pluginStateIdentifierSchema.optional(),
+  stateKey: pluginStateIdentifierSchema,
+}).superRefine((value, ctx) => validatePluginStateScope(value, ctx, true));
 
 export type PluginStateScopeKey = z.infer<typeof pluginStateScopeKeySchema>;
 
@@ -1094,12 +1120,12 @@ export type PluginStateScopeKey = z.infer<typeof pluginStateScopeKeySchema>;
  */
 export const setPluginStateSchema = z.object({
   scopeKind: z.enum(PLUGIN_STATE_SCOPE_KINDS),
-  scopeId: z.string().min(1).optional(),
-  namespace: z.string().min(1).optional(),
-  stateKey: z.string().min(1),
+  scopeId: pluginStateIdentifierSchema.optional(),
+  namespace: pluginStateIdentifierSchema.optional(),
+  stateKey: pluginStateIdentifierSchema,
   /** JSON-serializable value to store. */
   value: z.unknown(),
-});
+}).superRefine((value, ctx) => validatePluginStateScope(value, ctx, true));
 
 export type SetPluginState = z.infer<typeof setPluginStateSchema>;
 
@@ -1109,8 +1135,8 @@ export type SetPluginState = z.infer<typeof setPluginStateSchema>;
  */
 export const listPluginStateSchema = z.object({
   scopeKind: z.enum(PLUGIN_STATE_SCOPE_KINDS).optional(),
-  scopeId: z.string().min(1).optional(),
-  namespace: z.string().min(1).optional(),
-});
+  scopeId: pluginStateIdentifierSchema.optional(),
+  namespace: pluginStateIdentifierSchema.optional(),
+}).superRefine((value, ctx) => validatePluginStateScope(value, ctx, false));
 
 export type ListPluginState = z.infer<typeof listPluginStateSchema>;

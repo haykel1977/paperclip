@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { PLUGIN_CAPABILITIES } from "../constants.js";
 import {
+  listPluginStateSchema,
   pluginLocalFolderDeclarationSchema,
   pluginManagedAgentDeclarationSchema,
   pluginManagedRoutineDeclarationSchema,
   pluginManifestV1Schema,
+  pluginStateScopeKeySchema,
   pluginUiSlotDeclarationSchema,
+  setPluginStateSchema,
 } from "./plugin.js";
 
 describe("plugin capability constants", () => {
@@ -125,14 +128,46 @@ describe("plugin local folder validators", () => {
   });
 });
 
+describe("plugin state validators", () => {
+  it("requires exact plugin state scopes to be unambiguous", () => {
+    expect(pluginStateScopeKeySchema.safeParse({
+      scopeKind: "company",
+      stateKey: "cursor",
+    }).success).toBe(false);
+    expect(setPluginStateSchema.safeParse({
+      scopeKind: "instance",
+      scopeId: "company-1",
+      stateKey: "cursor",
+      value: {},
+    }).success).toBe(false);
+  });
+
+  it("rejects reserved or malformed plugin state identifiers", () => {
+    for (const input of [
+      { scopeKind: "company", scopeId: "company-1", stateKey: "__proto__" },
+      { scopeKind: "company", scopeId: "company-1", namespace: "constructor", stateKey: "cursor" },
+      { scopeKind: "company", scopeId: "company-1", stateKey: "bad\0key" },
+    ]) {
+      expect(pluginStateScopeKeySchema.safeParse(input).success).toBe(false);
+    }
+  });
+
+  it("allows broad list filters while validating provided values", () => {
+    expect(listPluginStateSchema.safeParse({ scopeKind: "company" }).success).toBe(true);
+    expect(listPluginStateSchema.safeParse({ scopeId: "company-1" }).success).toBe(true);
+    expect(listPluginStateSchema.safeParse({ scopeKind: "instance", scopeId: "company-1" }).success).toBe(false);
+    expect(listPluginStateSchema.safeParse({ namespace: "prototype" }).success).toBe(false);
+  });
+});
+
 describe("plugin managed skill validators", () => {
   const baseManifest = {
     id: "paperclip.test-managed-skills",
     apiVersion: 1,
-
     version: "0.1.0",
     displayName: "Managed Skills",
     description: "Managed skills test plugin.",
+
     author: "Paperclip",
     categories: ["automation"],
     entrypoints: { worker: "./dist/worker.js" },
