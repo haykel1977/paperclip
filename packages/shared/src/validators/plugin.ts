@@ -136,15 +136,14 @@ export type PluginToolDeclarationInput = z.infer<typeof pluginToolDeclarationSch
 const pluginManagedAgentInstructionFilePathSchema = z.string().min(1).max(200).refine(
   (value) =>
     !value.startsWith("/") &&
-    !/^[A-Za-z]:[\\/]/.test(value) &&
+    !/^[A-Za-z]:/.test(value) &&
     !value.includes("\\") &&
     !value.split("/").some((segment) => segment === "" || segment === "." || segment === "..") &&
     value !== "promptTemplate.legacy.md",
-  { message: "managed agent instruction file paths must be relative paths without traversal, empty segments, dots, backslashes, or reserved names" },
+  { message: "managed agent instruction file paths must be relative paths without traversal, empty segments, dots, drive prefixes, backslashes, or reserved names" },
 );
 
 export const pluginManagedAgentDeclarationSchema = z.object({
-
   agentKey: z.string().min(1).max(100).regex(/^[a-z0-9][a-z0-9._:-]*$/, {
     message: "agentKey must start with a lowercase alphanumeric and contain only lowercase letters, digits, dots, colons, underscores, or hyphens",
   }),

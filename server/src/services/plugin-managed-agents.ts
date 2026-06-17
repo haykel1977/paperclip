@@ -33,11 +33,11 @@ export function normalizeManagedAgentInstructionFilePath(filePath: string): stri
   if (
     filePath.length === 0 ||
     filePath.startsWith("/") ||
-    /^[A-Za-z]:[\\/]/.test(filePath) ||
+    /^[A-Za-z]:/.test(filePath) ||
     filePath.includes("\\") ||
     filePath.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
   ) {
-    throw new Error("Managed agent instruction file paths must be relative paths without traversal, empty segments, dots, or backslashes");
+    throw new Error("Managed agent instruction file paths must be relative paths without traversal, empty segments, dots, drive prefixes, or backslashes");
   }
   if (filePath === LEGACY_PROMPT_TEMPLATE_PATH) {
     throw new Error("Managed agent instruction files cannot use the reserved legacy prompt template path");

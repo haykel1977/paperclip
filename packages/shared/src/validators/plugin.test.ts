@@ -51,6 +51,7 @@ describe("plugin managed agent validators", () => {
       { entryFile: "../AGENTS.md", content: "escape" },
       { entryFile: "/AGENTS.md", content: "absolute" },
       { entryFile: "docs\\\\AGENTS.md", content: "backslash" },
+      { entryFile: "C:Users/plugin/AGENTS.md", content: "drive relative" },
       { entryFile: "promptTemplate.legacy.md", content: "reserved" },
       { files: { "docs/../AGENTS.md": "escape" } },
     ]) {
@@ -63,6 +64,7 @@ describe("plugin managed agent validators", () => {
   });
 
   it("accepts safe managed instruction files", () => {
+
     const parsed = pluginManagedAgentDeclarationSchema.parse({
       agentKey: "wiki-maintainer",
       displayName: "Wiki Maintainer",

@@ -29,6 +29,7 @@ describe("plugin managed agent instruction file paths", () => {
       "docs//README.md",
       "docs/./README.md",
       "docs\\README.md",
+      "C:Users/plugin/AGENTS.md",
       "C:/Users/plugin/AGENTS.md",
       "C:\\Users\\plugin\\AGENTS.md",
       "promptTemplate.legacy.md",
@@ -38,6 +39,7 @@ describe("plugin managed agent instruction file paths", () => {
   });
 
   it("renders declared files into a null-prototype map", () => {
+
     const declared = buildDeclaredInstructionFiles(
       declaration({
         entryFile: "AGENTS.md",
