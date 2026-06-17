@@ -14,6 +14,7 @@ import {
   getEmbeddedPostgresTestSupport,
   startEmbeddedPostgresTestDatabase,
 } from "./helpers/embedded-postgres.js";
+import { buildPackageFiles, normalizeManagedSkillFilePath } from "../services/plugin-managed-skills.js";
 import { buildHostServices } from "../services/plugin-host-services.js";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
@@ -56,6 +57,36 @@ function manifest(): PaperclipPluginManifestV1 {
     }],
   };
 }
+
+describe("plugin-managed skill file path hardening", () => {
+  it("accepts nested relative managed skill file paths", () => {
+    expect(normalizeManagedSkillFilePath("references/wiki-style.md")).toBe("references/wiki-style.md");
+  });
+
+  it.each([
+    "",
+    "/absolute.md",
+    "../outside.md",
+    "references/../outside.md",
+    "references//empty.md",
+    "references/./dot.md",
+    "references\\windows.md",
+    "SKILL.md",
+    "skill.md",
+  ])("rejects unsafe managed skill file path %s", (filePath) => {
+    expect(() => normalizeManagedSkillFilePath(filePath)).toThrow(/Managed skill/);
+  });
+
+  it("fails closed when building package files from a malformed persisted manifest", () => {
+    const pluginManifest = manifest();
+    const declaration = {
+      ...pluginManifest.skills![0]!,
+      files: [{ path: "../escape.md", content: "bad" }],
+    };
+
+    expect(() => buildPackageFiles(pluginManifest.id, declaration)).toThrow(/Managed skill file paths/);
+  });
+});
 
 if (!embeddedPostgresSupport.supported) {
   console.warn(

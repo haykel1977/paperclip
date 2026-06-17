@@ -74,7 +74,22 @@ function withManagedSkillKey(markdown: string, canonicalKey: string) {
   return `---\n${nextBody}\n---${frontmatter[2] ?? ""}${normalized.slice(frontmatter[0].length)}`;
 }
 
-function buildPackageFiles(
+export function normalizeManagedSkillFilePath(filePath: string): string {
+  if (
+    filePath.length === 0 ||
+    filePath.startsWith("/") ||
+    filePath.includes("\\") ||
+    filePath.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    throw new Error("Managed skill file paths must be relative paths without traversal, empty segments, dots, or backslashes");
+  }
+  if (filePath.toLowerCase() === "skill.md") {
+    throw new Error("Managed skill files cannot replace SKILL.md; use markdown for the main skill file");
+  }
+  return filePath;
+}
+
+export function buildPackageFiles(
   pluginKey: string,
   declaration: PluginManagedSkillDeclaration,
 ) {
@@ -86,7 +101,7 @@ function buildPackageFiles(
       : buildDefaultMarkdown(pluginKey, declaration),
   };
   for (const file of declaration.files ?? []) {
-    files[`${root}/${file.path}`] = file.content;
+    files[`${root}/${normalizeManagedSkillFilePath(file.path)}`] = file.content;
   }
   return files;
 }
@@ -117,7 +132,7 @@ function buildSkillDefaults(
     canonicalKey: canonicalSkillKey(pluginKey, declaration.skillKey),
     files: [
       "SKILL.md",
-      ...(declaration.files ?? []).map((file) => file.path),
+      ...(declaration.files ?? []).map((file) => normalizeManagedSkillFilePath(file.path)),
     ],
   };
 }
