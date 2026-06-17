@@ -141,7 +141,6 @@ export function createDeliveryLogRedactor(env: Record<string, string>, log: Deli
 }
 
 function readAllowedEnvValue(env: Record<string, string>, key: string): string | null {
-
   const value = env[key] ?? process.env[key];
   return typeof value === "string" ? value : null;
 }
@@ -162,7 +161,6 @@ async function pathExists(candidate: string): Promise<boolean> {
 }
 
 async function resolvePackageManager(worktreeCwd: string): Promise<string> {
-
   const [hasPnpmLock, hasYarnLock] = await Promise.all([
     pathExists(path.join(worktreeCwd, "pnpm-lock.yaml")),
     pathExists(path.join(worktreeCwd, "yarn.lock")),
@@ -219,7 +217,7 @@ async function runDeliveryQualityGate(input: {
   for (const command of resolved.commands) {
     await input.log(
       "stdout",
-      `[delivery ${input.ts()}] quality gate ${command.step}: ${command.cmd} ${command.args.join(" ")}\n`,
+      `[delivery ${input.ts()}] quality_gate step=${command.step} cmd="${command.cmd} ${command.args.join(" ")}"\n`,
     );
     const result = await input.runProc(command.cmd, command.args, input.worktreeCwd, gateEnv);
     if (result.exitCode !== 0) {
@@ -232,16 +230,101 @@ async function runDeliveryQualityGate(input: {
 }
 
 /**
+ * Resolve existing PR URL for this branch, or null if none.
+ */
+async function findExistingPr(input: {
+  repo: string;
+  branch: string;
+  worktreeCwd: string;
+  env: Record<string, string>;
+  runProc: DeliveryHookRunProcess;
+}): Promise<string | null> {
+  const existing = await input.runProc(
+    "gh",
+    ["pr", "list", "--repo", input.repo, "--head", input.branch, "--json", "url", "--jq", ".[0].url // empty"],
+    input.worktreeCwd,
+    input.env,
+  );
+  if (existing.exitCode === 0 && existing.stdout.trim()) return existing.stdout.trim();
+  return null;
+}
+
+/**
+ * Fetch repo label names, returns [] on failure (non-fatal).
+ */
+async function fetchRepoLabels(input: {
+  repo: string;
+  worktreeCwd: string;
+  env: Record<string, string>;
+  log: DeliveryHookLog;
+  ts: () => string;
+  runProc: DeliveryHookRunProcess;
+}): Promise<string[]> {
+  const result = await input.runProc(
+    "gh",
+    ["label", "list", "--repo", input.repo, "--limit", "200", "--json", "name", "--jq", "[.[].name]"],
+    input.worktreeCwd,
+    input.env,
+  );
+  if (result.exitCode !== 0) {
+    await input.log("stderr", `[delivery ${input.ts()}] gh_label_list_failed: ${result.stderr}\n`);
+    return [];
+  }
+  try {
+    return JSON.parse(result.stdout || "[]") as string[];
+  } catch (err) {
+    await input.log("stderr", `[delivery ${input.ts()}] label_parse_failed: ${(err as Error).message}\n`);
+    return [];
+  }
+}
+
+/**
+ * Push with one retry on transient auth failures (token refresh / rate-limit).
+ */
+async function pushWithRetry(input: {
+  branch: string;
+  worktreeCwd: string;
+  env: Record<string, string>;
+  log: DeliveryHookLog;
+  ts: () => string;
+  runProc: DeliveryHookRunProcess;
+  retryDelayMs?: number;
+}): Promise<{ exitCode: number; stderr: string }> {
+  const { branch, worktreeCwd, env, log, ts, runProc, retryDelayMs = 3000 } = input;
+
+  const tryPush = () => runProc("git", ["push", "-u", "origin", branch], worktreeCwd, env);
+
+  const first = await tryPush();
+  if (first.exitCode === 0) return first;
+
+  const s = (first.stderr || "").toLowerCase();
+  const isTransient = s.includes("429") || s.includes("503") || s.includes("timed out") || s.includes("timeout");
+  if (!isTransient) return first;
+
+  await log("stderr", `[delivery ${ts()}] push_transient_error: retrying in ${retryDelayMs}ms\n`);
+  await new Promise<void>((resolve) => setTimeout(resolve, retryDelayMs));
+
+  return tryPush();
+}
+
+/**
  * Deterministic post-run delivery (quality gate -> commit -> push -> PR).
  *
  * No LLM decisions are made here. Delivery is fail-closed: if the quality gate
  * cannot be resolved or fails, no commit, no push and no PR creation happen.
+ *
+ * Improvements over v1:
+ * - idempotency: existing PR is detected BEFORE commit to avoid orphan commits
+ * - push retry: one retry on transient network/rate-limit errors (429, 503, timeout)
+ * - structured logs: consistent `key=value` format for all delivery events
+ * - label fetch extracted to `fetchRepoLabels` (shared, non-fatal)
+ * - fix: `executeConfiguredDeliveryHook` no longer creates a second redactor
  */
 export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Promise<DeliveryHookResult> {
   const { worktreeCwd, branch, env, runProc } = input;
   const log = createDeliveryLogRedactor(env, input.log);
-
   const ts = () => new Date().toISOString();
+
   const autonomousDelivery = isAutonomousDeliveryEnabled(env);
   const lane = (env.PAPERCLIP_DELIVERY_LANE ?? process.env.PAPERCLIP_DELIVERY_LANE ?? "production").trim();
   const isDevTestLane = !autonomousDelivery && lane === "dev-test";
@@ -251,27 +334,50 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
       ? ["factory-proof", "agent-pr", "automated", "truth-first"]
       : ["factory-proof", "human-gate-required"];
 
+  // ── 1. git status ───────────────────────────────────────────────────────────
   const status = await runProc("git", ["status", "--porcelain"], worktreeCwd, env);
   if (status.exitCode !== 0) {
-    await log("stderr", `[delivery ${ts()}] git status failed: ${status.stderr}\n`);
+    await log("stderr", `[delivery ${ts()}] git_status_failed: ${status.stderr}\n`);
     return { delivered: false, prUrl: null, reason: "git_status_failed" };
   }
   if (!status.stdout.trim()) {
-    await log("stdout", `[delivery ${ts()}] no diff — nothing to deliver (ok).\n`);
+    await log("stdout", `[delivery ${ts()}] result=no_diff reason="nothing to deliver"\n`);
     return { delivered: false, prUrl: null, reason: "no_diff" };
   }
   if (/^(UU|AA|DD) /m.test(status.stdout)) {
-    await log("stderr", `[delivery ${ts()}] merge conflict markers — abort, no force.\n`);
+    await log("stderr", `[delivery ${ts()}] result=conflict reason="merge conflict markers — abort, no force"\n`);
     return { delivered: false, prUrl: null, reason: "conflict" };
   }
 
+  // ── 2. bot token check (autonomous lane only) ────────────────────────────
   const deliveryBotToken = autonomousDelivery ? readDeliveryBotToken(env) : null;
   if (autonomousDelivery && !deliveryBotToken) {
-    await log("stderr", `[delivery ${ts()}] delivery_blocked: missing bot token\n`);
+    await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="missing bot token"\n`);
     return { delivered: false, prUrl: null, reason: "delivery_blocked: missing bot token" };
   }
   const deliveryCommandEnv = deliveryBotToken ? { ...env, GH_TOKEN: deliveryBotToken } : env;
 
+  // ── 3. idempotency: check for existing PR BEFORE committing ──────────────
+  const existingPrUrl = await findExistingPr({ repo: input.repo, branch, worktreeCwd, env: deliveryCommandEnv, runProc });
+  if (existingPrUrl) {
+    // Reconcile labels on the already-open PR (non-fatal)
+    const existingLabels = await fetchRepoLabels({ repo: input.repo, worktreeCwd, env: deliveryCommandEnv, log, ts, runProc });
+    const labelsToReconcile = deliveryLabels.filter((label) => existingLabels.includes(label));
+    if (labelsToReconcile.length > 0) {
+      const editArgs = ["pr", "edit", existingPrUrl];
+      for (const label of labelsToReconcile) editArgs.push("--add-label", label);
+      const lr = await runProc("gh", editArgs, worktreeCwd, deliveryCommandEnv);
+      if (lr.exitCode !== 0) {
+        await log("stderr", `[delivery ${ts()}] relabel_failed (non-fatal): ${lr.stderr}\n`);
+      }
+    } else {
+      await log("stderr", `[delivery ${ts()}] relabel_skipped reason="no matching labels in repo (Phase -1 not done?)"\n`);
+    }
+    await log("stdout", `[delivery ${ts()}] result=pr_exists pr_url=${existingPrUrl}\n`);
+    return { delivered: true, prUrl: existingPrUrl, reason: "pr_exists" };
+  }
+
+  // ── 4. PR body ────────────────────────────────────────────────────────────
   const title = `${input.issueIdentifier ?? "FACTORY"}: factory delivery`;
   const bodyHeader = [
     `Paperclip issue: ${input.issueIdentifier ?? "?"} (${input.issueId ?? "?"})`,
@@ -282,7 +388,6 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     `Factory: sovereign delivery hook (deterministic, no LLM)`,
   ];
   const bodyGate = autonomousDelivery
-
     ? [
         ``,
         `Autonomous delivery enabled: quality gate passed before push; bot merge may proceed via allowlisted label.`,
@@ -302,95 +407,41 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
       : [``, `HAS-46: human review required — never auto-merge.`];
   const body = [...bodyHeader, ...bodyGate].join("\n");
 
+  // ── 5. quality gate ───────────────────────────────────────────────────────
   const qualityGate = await runDeliveryQualityGate({ worktreeCwd, env, runProc, log, ts });
   if (!qualityGate.ok) {
-    await log("stderr", `[delivery ${ts()}] delivery_blocked: quality gate failed (${qualityGate.reason})\n`);
+    await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="quality_gate_failed" detail="${qualityGate.reason}"\n`);
     return { delivered: false, prUrl: null, reason: "delivery_blocked" };
   }
 
+  // ── 6. commit ─────────────────────────────────────────────────────────────
   const add = await runProc("git", ["add", "-A"], worktreeCwd, env);
   if (add.exitCode !== 0) {
-    await log("stderr", `[delivery ${ts()}] git add failed: ${add.stderr}\n`);
+    await log("stderr", `[delivery ${ts()}] git_add_failed: ${add.stderr}\n`);
     return { delivered: false, prUrl: null, reason: "git_add_failed" };
   }
   const commit = await runProc("git", ["commit", "-m", title, "-m", body], worktreeCwd, env);
   if (commit.exitCode !== 0) {
-    await log("stderr", `[delivery ${ts()}] git commit failed: ${commit.stderr}\n`);
+    await log("stderr", `[delivery ${ts()}] git_commit_failed: ${commit.stderr}\n`);
     return { delivered: false, prUrl: null, reason: "git_commit_failed" };
   }
 
-  const push = await runProc("git", ["push", "-u", "origin", branch], worktreeCwd, deliveryCommandEnv);
-
+  // ── 7. push (with retry on transient errors) ──────────────────────────────
+  const push = await pushWithRetry({ branch, worktreeCwd, env: deliveryCommandEnv, log, ts, runProc });
   if (push.exitCode !== 0) {
     const s = (push.stderr || "").toLowerCase();
     const reason =
       s.includes("401") || s.includes("403") || s.includes("denied") ? "push_auth_failed" : "push_failed";
-
-    await log("stderr", `[delivery ${ts()}] push ${reason}: ${push.stderr}\n`);
+    await log("stderr", `[delivery ${ts()}] result=${reason}: ${push.stderr}\n`);
     return { delivered: false, prUrl: null, reason };
   }
 
-  const existing = await runProc(
-    "gh",
-    ["pr", "list", "--repo", input.repo, "--head", branch, "--json", "url", "--jq", ".[0].url // empty"],
-    worktreeCwd,
-    deliveryCommandEnv,
-  );
-  if (existing.exitCode === 0 && existing.stdout.trim()) {
-
-    const existingUrl = existing.stdout.trim();
-    let labelsToReconcile: string[] = [];
-    const labelListReco = await runProc(
-      "gh",
-      ["label", "list", "--repo", input.repo, "--limit", "200", "--json", "name", "--jq", "[.[].name]"],
-      worktreeCwd,
-      deliveryCommandEnv,
-    );
-    if (labelListReco.exitCode === 0) {
-
-      try {
-        const existingLabels: string[] = JSON.parse(labelListReco.stdout || "[]");
-        labelsToReconcile = deliveryLabels.filter((label) => existingLabels.includes(label));
-      } catch (err) {
-        await log("stderr", `[delivery ${ts()}] reco label parse failed: ${(err as Error).message}\n`);
-      }
-    }
-    if (labelsToReconcile.length > 0) {
-      const editArgs = ["pr", "edit", existingUrl];
-      for (const label of labelsToReconcile) editArgs.push("--add-label", label);
-      const lr = await runProc("gh", editArgs, worktreeCwd, deliveryCommandEnv);
-      if (lr.exitCode !== 0) {
-        await log("stderr", `[delivery ${ts()}] relabel existing PR failed (non-fatal): ${lr.stderr}\n`);
-
-      }
-    } else {
-      await log("stderr", `[delivery ${ts()}] reco skipped (no labels exist in repo, Phase -1 not done?)\n`);
-    }
-    await log("stdout", `[delivery ${ts()}] PR already exists (idempotent): ${existingUrl}\n`);
-    return { delivered: true, prUrl: existingUrl, reason: "pr_exists" };
-  }
-
-  let labelsToApply: string[] = [];
-  const labelList = await runProc(
-    "gh",
-    ["label", "list", "--repo", input.repo, "--limit", "200", "--json", "name", "--jq", "[.[].name]"],
-    worktreeCwd,
-    deliveryCommandEnv,
-  );
-  if (labelList.exitCode === 0) {
-
-    try {
-      const existingNames: string[] = JSON.parse(labelList.stdout || "[]");
-      labelsToApply = deliveryLabels.filter((label) => existingNames.includes(label));
-      const missing = deliveryLabels.filter((label) => !existingNames.includes(label));
-      if (missing.length) {
-        await log("stderr", `[delivery ${ts()}] labels missing (Phase -1 not done?): ${missing.join(",")}\n`);
-      }
-    } catch (err) {
-      await log("stderr", `[delivery ${ts()}] label parse failed: ${(err as Error).message}\n`);
-    }
-  } else {
-    await log("stderr", `[delivery ${ts()}] gh label list failed, no labels: ${labelList.stderr}\n`);
+  // ── 8. create PR ──────────────────────────────────────────────────────────
+  const repoLabels = await fetchRepoLabels({ repo: input.repo, worktreeCwd, env: deliveryCommandEnv, log, ts, runProc });
+  const labelsToApply = deliveryLabels.filter((label) => repoLabels.includes(label));
+  const missing = deliveryLabels.filter((label) => !repoLabels.includes(label));
+  if (missing.length) {
+    await log("stderr", `[delivery ${ts()}] labels_missing (Phase -1 not done?): ${missing.join(",")}\n`);
   }
 
   const prArgs = [
@@ -411,7 +462,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
 
   const pr = await runProc("gh", prArgs, worktreeCwd, deliveryCommandEnv);
   if (pr.exitCode !== 0) {
-    await log("stderr", `[delivery ${ts()}] gh pr create failed: ${pr.stderr}\n`);
+    await log("stderr", `[delivery ${ts()}] gh_pr_create_failed: ${pr.stderr}\n`);
     return { delivered: false, prUrl: null, reason: "pr_create_failed" };
   }
   const url = (pr.stdout.match(/https:\/\/github\.com\/\S+\/pull\/\d+/) || [null])[0];
@@ -419,10 +470,10 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
   if (url && !autonomousDelivery) {
     const rev = await runProc("gh", ["pr", "edit", url, "--add-reviewer", "haykel1977"], worktreeCwd, env);
     if (rev.exitCode !== 0) {
-      await log("stderr", `[delivery ${ts()}] add-reviewer failed (non-fatal): ${rev.stderr}\n`);
+      await log("stderr", `[delivery ${ts()}] add_reviewer_failed (non-fatal): ${rev.stderr}\n`);
     }
   }
-  await log("stdout", `[delivery ${ts()}] PR created: ${url}\n`);
+  await log("stdout", `[delivery ${ts()}] result=created pr_url=${url}\n`);
   return { delivered: true, prUrl: url, reason: "created" };
 }
 
@@ -435,6 +486,7 @@ export async function executeConfiguredDeliveryHook(
   const branch = input.branch?.trim();
   if (!branch) return null;
 
+  // NOTE: createDeliveryLogRedactor is called inside executeDeliveryHook — do NOT wrap log here.
   const delivery = await executeDeliveryHook({
     runId: input.runId,
     worktreeCwd: input.worktreeCwd,
@@ -450,8 +502,7 @@ export async function executeConfiguredDeliveryHook(
     runProc: input.runProc,
     log: input.log,
   });
-  const log = createDeliveryLogRedactor(input.env, input.log);
-  await log(
+  await input.log(
     "stdout",
     `[paperclip] delivery: ${delivery.reason}${delivery.prUrl ? " -> " + delivery.prUrl : ""}\n`,
   );

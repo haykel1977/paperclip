@@ -100,6 +100,7 @@ describe("executeDeliveryHook", () => {
       calls.push([cmd, ...args]);
       const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
       if (key === "pnpm run lint") return { exitCode: 1, stdout: "", stderr: "lint failed" };
       return { exitCode: 0, stdout: "", stderr: "" };
     });
@@ -141,7 +142,6 @@ describe("executeDeliveryHook", () => {
   });
 
   it("flag OFF -> human-gate-required et reviewer humain", async () => {
-
     const worktreeCwd = mkWorktree();
     const calls: string[][] = [];
     const runProc = vi.fn(async (cmd: string, args: string[]) => {
@@ -162,13 +162,11 @@ describe("executeDeliveryHook", () => {
     expect(body).toContain("Adapter: codex_local");
     expect(body).toContain("Agent: agent-1");
     expect(body).toContain("Model: gpt-5");
-
     expect(body).not.toContain("Model: sovereign (qwen3-coder:30b @ Bifrost CCX43)");
     expect(calls.find((call) => call.includes("--add-reviewer"))).toContain("haykel1977");
   });
 
   it("flag ON + bot token absent -> delivery_blocked et aucun push", async () => {
-
     const worktreeCwd = mkWorktree();
     const calls: string[][] = [];
     const runProc = vi.fn(async (cmd: string, args: string[]) => {
@@ -218,7 +216,6 @@ describe("executeDeliveryHook", () => {
   });
 
   it("dev-test lane keeps existing no-human lane labels when autonomous flag is off", async () => {
-
     const worktreeCwd = mkWorktree();
     const calls: string[][] = [];
     const runProc = vi.fn(async (cmd: string, args: string[]) => {
@@ -236,5 +233,67 @@ describe("executeDeliveryHook", () => {
     expect(createCall).toContain("automated");
     expect(createCall).toContain("truth-first");
     expect(createCall).not.toContain("human-gate-required");
+  });
+
+  it("idempotency: PR existante detectee avant commit -> aucun commit, aucun push", async () => {
+    const worktreeCwd = mkWorktree();
+    const calls: string[][] = [];
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      // PR already exists — return URL on first pr list call
+      if (key === "gh pr list") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/99\n", stderr: "" };
+      if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "human-gate-required"]), stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
+    expect(result.reason).toBe("pr_exists");
+    expect(result.prUrl).toBe("https://github.com/Beyn-SOLIDUS/quantum/pull/99");
+    expect(result.delivered).toBe(true);
+    // Must NOT have committed or pushed
+    expect(calls.some((call) => call[0] === "git" && call[1] === "commit")).toBe(false);
+    expect(calls.some((call) => call[0] === "git" && call[1] === "push")).toBe(false);
+    // Must NOT have run quality gate
+    expect(calls.some((call) => call[0] === "pnpm")).toBe(false);
+  });
+
+  it("push retry: transient 429 -> retries once, succeeds on second attempt", async () => {
+    const worktreeCwd = mkWorktree();
+    let pushAttempts = 0;
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
+      if (key === "gh label list") return { exitCode: 0, stdout: "[]", stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "", stderr: "" };
+      if (cmd === "git" && args[0] === "push") {
+        pushAttempts++;
+        if (pushAttempts === 1) return { exitCode: 1, stdout: "", stderr: "error: 429 Too Many Requests — timeout" };
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
+    expect(result.reason).toBe("created");
+    expect(pushAttempts).toBe(2);
+  }, 10000); // allow retry delay
+
+  it("push auth failure (403): no retry, returns push_auth_failed", async () => {
+    const worktreeCwd = mkWorktree();
+    let pushAttempts = 0;
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
+      if (cmd === "git" && args[0] === "push") {
+        pushAttempts++;
+        return { exitCode: 1, stdout: "", stderr: "error: 403 Forbidden — access denied" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
+    expect(result.reason).toBe("push_auth_failed");
+    expect(pushAttempts).toBe(1); // no retry on auth failure
   });
 });
