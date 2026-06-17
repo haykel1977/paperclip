@@ -327,12 +327,44 @@ export async function executeDeliveryHook(input: {
     return { delivered: false, prUrl: null, reason: "conflict" };
   }
 
+  // Reject placeholder diffs: a dirty worktree may still carry no substantive
+  // change (e.g. whitespace-only edits or a re-touched file with identical
+  // content that `git status` reports as modified). Pushing such a diff opens a
+  // PR with nothing to review. `git diff --ignore-all-space` against HEAD,
+  // staged and unstaged, reports zero patch lines when the only changes are
+  // whitespace/no-op; new files (status "??") are real content, so we only
+  // apply this gate when every porcelain entry is a tracked modification.
+  const onlyTrackedModifications = status.stdout
+    .split(/\r?\n/)
+    .filter((line) => line.trim().length > 0)
+    .every((line) => !line.startsWith("??"));
+  if (onlyTrackedModifications) {
+    const substantiveDiff = await runProc(
+      "git",
+      ["diff", "--ignore-all-space", "--no-color", "HEAD"],
+      worktreeCwd,
+      env,
+    );
+    if (substantiveDiff.exitCode === 0 && !substantiveDiff.stdout.trim()) {
+      await log(
+        "stderr",
+        `[delivery ${ts()}] placeholder diff — only whitespace/no-op changes, refusing to open PR.\n`,
+      );
+      return { delivered: false, prUrl: null, reason: "placeholder_diff" };
+    }
+  }
+
   const title = `${input.issueIdentifier ?? "FACTORY"}: factory delivery`;
   const body = [
     `Paperclip issue: ${input.issueIdentifier ?? "?"} (${input.issueId ?? "?"})`,
     `Run: ${input.runId}`,
     `Model: sovereign (qwen3-coder:30b @ Bifrost CCX43)`,
     `Factory: sovereign delivery hook (deterministic, no LLM)`,
+    ``,
+    `## Truthfulness Boundary`,
+    `This PR is produced by a deterministic delivery hook with no LLM in the delivery`,
+    `path. Claims in this body are limited to factory metadata (issue, run, model) that`,
+    `the hook can verify; it makes no assertions about the correctness of the diff.`,
     ``,
     `HAS-46: human review required — never auto-merge.`,
   ].join("\n");
@@ -361,9 +393,13 @@ export async function executeDeliveryHook(input: {
   }
 
   // Idempotence: existing PR on this head -> reconcile labels (filtered), no duplicate.
+  // `--state all` so a previously closed-but-unmerged PR on the same head is still
+  // detected; the open-only default would let a closed PR slip through and the hook
+  // would open a duplicate. A merged PR is likewise treated as "exists" — re-opening
+  // delivered work is never correct here.
   const existing = await runProc(
     "gh",
-    ["pr", "list", "--repo", input.repo, "--head", branch, "--json", "url", "--jq", ".[0].url // empty"],
+    ["pr", "list", "--repo", input.repo, "--head", branch, "--state", "all", "--json", "url", "--jq", ".[0].url // empty"],
     worktreeCwd,
     env,
   );
