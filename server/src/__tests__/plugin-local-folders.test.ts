@@ -60,8 +60,8 @@ describe("plugin local folders", () => {
   it("filters unsafe persisted local folder maps", () => {
     const localFolders = Object.create(null) as Record<string, { path: string }>;
     localFolders["content-root"] = { path: "/tmp/content" };
-    localFolders.constructor = { path: "/tmp/constructor" };
-    localFolders.prototype = { path: "/tmp/prototype" };
+    localFolders["constructor"] = { path: "/tmp/constructor" };
+    localFolders["prototype"] = { path: "/tmp/prototype" };
 
     const stored = getStoredLocalFolders({ localFolders });
 
@@ -72,7 +72,6 @@ describe("plugin local folders", () => {
   });
 
   it("reports missing required folders and files without using product-specific branches", async () => {
-
     const root = await makeRoot();
 
     const status = await inspectPluginLocalFolder({
@@ -231,10 +230,10 @@ describe("plugin local folders", () => {
   });
 
   it("detects required symlinks that escape the configured folder", async () => {
-
     const root = await makeRoot();
     const outside = await makeRoot();
     await fs.writeFile(path.join(outside, "secret.txt"), "nope", "utf8");
+
     await fs.symlink(path.join(outside, "secret.txt"), path.join(root, "linked.txt"));
 
     const status = await inspectPluginLocalFolder({

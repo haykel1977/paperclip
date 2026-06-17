@@ -240,7 +240,6 @@ export const pluginLocalFolderDeclarationSchema = z.object({
     message: "folderKey cannot use reserved object property names",
   }),
   displayName: z.string().min(1).max(100),
-
   description: z.string().max(500).optional(),
   access: z.enum(["read", "readWrite"]).optional(),
   requiredDirectories: z.array(pluginLocalFolderRelativePathSchema).optional(),

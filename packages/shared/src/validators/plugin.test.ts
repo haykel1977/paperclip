@@ -9,7 +9,6 @@ import {
 } from "./plugin.js";
 
 describe("plugin capability constants", () => {
-
   it("exposes each capability once", () => {
     expect(new Set(PLUGIN_CAPABILITIES).size).toBe(PLUGIN_CAPABILITIES.length);
   });
@@ -65,7 +64,6 @@ describe("plugin managed agent validators", () => {
   });
 
   it("accepts safe managed instruction files", () => {
-
     const parsed = pluginManagedAgentDeclarationSchema.parse({
       agentKey: "wiki-maintainer",
       displayName: "Wiki Maintainer",
@@ -81,7 +79,6 @@ describe("plugin managed agent validators", () => {
 });
 
 describe("plugin managed routine validators", () => {
-
   it("accepts core issue surface visibility values in routine templates", () => {
     const parsed = pluginManagedRoutineDeclarationSchema.parse({
       routineKey: "wiki.refresh",
@@ -103,10 +100,36 @@ describe("plugin managed routine validators", () => {
   });
 });
 
+describe("plugin local folder validators", () => {
+  it("rejects reserved folder keys and drive-prefixed required paths", () => {
+    for (const input of [
+      { folderKey: "constructor", displayName: "Constructor" },
+      { folderKey: "prototype", displayName: "Prototype" },
+      { folderKey: "content-root", displayName: "Content", requiredFiles: ["C:secrets.txt"] },
+      { folderKey: "content-root", displayName: "Content", requiredDirectories: ["C:/secrets"] },
+    ]) {
+      expect(pluginLocalFolderDeclarationSchema.safeParse(input).success).toBe(false);
+    }
+  });
+
+  it("accepts safe local folder declarations", () => {
+    const parsed = pluginLocalFolderDeclarationSchema.parse({
+      folderKey: "content-root",
+      displayName: "Content",
+      requiredDirectories: ["sources"],
+      requiredFiles: ["schema.md"],
+    });
+
+    expect(parsed.requiredDirectories).toEqual(["sources"]);
+    expect(parsed.requiredFiles).toEqual(["schema.md"]);
+  });
+});
+
 describe("plugin managed skill validators", () => {
   const baseManifest = {
     id: "paperclip.test-managed-skills",
     apiVersion: 1,
+
     version: "0.1.0",
     displayName: "Managed Skills",
     description: "Managed skills test plugin.",
