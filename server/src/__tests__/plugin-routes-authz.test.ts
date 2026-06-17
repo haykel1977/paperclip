@@ -177,6 +177,30 @@ describe.sequential("plugin install and upgrade authz", () => {
     expect(loader.installPlugin).not.toHaveBeenCalled();
   }, 20_000);
 
+  it("rejects unsafe plugin install input before calling the loader", async () => {
+    const { app, loader } = await createApp({
+      type: "board",
+      userId: "admin-1",
+      source: "session",
+      isInstanceAdmin: true,
+      companyIds: [],
+    });
+
+    const optionLike = await request(app)
+      .post("/api/plugins/install")
+      .send({ packageName: "--ignore-scripts" });
+    expect(optionLike.status, JSON.stringify(optionLike.body)).toBe(400);
+    expect(optionLike.body.error).toContain("valid npm package name");
+
+    const badVersion = await request(app)
+      .post("/api/plugins/install")
+      .send({ packageName: "paperclip-plugin-example", version: "--ignore-scripts" });
+    expect(badVersion.status, JSON.stringify(badVersion.body)).toBe(400);
+    expect(badVersion.body.error).toContain("version contains invalid characters");
+
+    expect(loader.installPlugin).not.toHaveBeenCalled();
+  }, 20_000);
+
   it("allows instance admins to install plugins", async () => {
     const pluginId = "11111111-1111-4111-8111-111111111111";
     const pluginKey = "paperclip.example";
@@ -329,6 +353,32 @@ describe.sequential("plugin install and upgrade authz", () => {
     expect(res.status).toBe(422);
     expect(res.body.error).toMatch(/secret references are disabled/i);
     expect(mockRegistry.upsertConfig).not.toHaveBeenCalled();
+  }, 20_000);
+
+  it("rejects unsafe plugin upgrade versions before resolving the plugin", async () => {
+    const pluginId = "11111111-1111-4111-8111-111111111111";
+    const { app } = await createApp({
+      type: "board",
+      userId: "admin-1",
+      source: "session",
+      isInstanceAdmin: true,
+      companyIds: [],
+    });
+
+    const optionLike = await request(app)
+      .post(`/api/plugins/${pluginId}/upgrade`)
+      .send({ version: "--ignore-scripts" });
+    expect(optionLike.status, JSON.stringify(optionLike.body)).toBe(400);
+    expect(optionLike.body.error).toContain("version contains invalid characters");
+
+    const wrongType = await request(app)
+      .post(`/api/plugins/${pluginId}/upgrade`)
+      .send({ version: 123 });
+    expect(wrongType.status, JSON.stringify(wrongType.body)).toBe(400);
+    expect(wrongType.body.error).toContain("version must be a string");
+
+    expect(mockRegistry.getById).not.toHaveBeenCalled();
+    expect(mockLifecycle.upgrade).not.toHaveBeenCalled();
   }, 20_000);
 
   it("allows instance admins to upgrade plugins", async () => {
