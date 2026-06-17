@@ -36,6 +36,14 @@ jobs:
           PAPERCLIP_PLAYWRIGHT_CHANNEL: "chrome"
         run: pnpm run test:e2e
 
+      # Multi-user collaboration suite (dedicated local_trusted instance on :3104).
+      # Currently 13/20 green; non-blocking while the remaining cases are stabilized.
+      - name: Run multi-user e2e tests
+        continue-on-error: true
+        env:
+          PAPERCLIP_PLAYWRIGHT_CHANNEL: "chrome"
+        run: pnpm run test:e2e:multiuser
+
       - uses: actions/upload-artifact@v7
         if: always()
         with:

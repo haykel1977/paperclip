@@ -52,6 +52,8 @@ diagnostics/
 .doc-review-cursor
 
 # Playwright
+/test-results/
+/playwright-report/
 tests/e2e/test-results/
 tests/e2e/playwright-report/
 tests/release-smoke/test-results/
