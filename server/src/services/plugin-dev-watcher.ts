@@ -14,7 +14,7 @@
  * @see PLUGIN_SPEC.md §27.2 — Local Development Workflow
  */
 import chokidar, { type FSWatcher } from "chokidar";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { logger } from "../middleware/logger.js";
 import type { PluginLifecycleManager } from "./plugin-lifecycle.js";
@@ -70,6 +70,35 @@ function shouldIgnorePath(filename: string | null | undefined): boolean {
       segment === ".paperclip-sdk" ||
       segment.startsWith("."),
   );
+}
+
+function isPathInsideDir(candidatePath: string, parentDir: string): boolean {
+  const relative = path.relative(parentDir, candidatePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function realpathIfExists(targetPath: string): string | null {
+  try {
+    return realpathSync(targetPath);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeRelativePackagePath(relativePath: string): string | null {
+  if (
+    path.isAbsolute(relativePath) ||
+    relativePath.includes("\\") ||
+    relativePath.split("/").some((segment) => segment === "..")
+  ) {
+    return null;
+  }
+
+  const normalized = path.posix.normalize(relativePath);
+  if (normalized === "." || normalized === ".." || normalized.startsWith("../")) {
+    return null;
+  }
+  return normalized;
 }
 
 export function resolvePluginWatchTargets(
