@@ -42,10 +42,14 @@ const base = {
   issueId: "uuid",
   repo: "Beyn-SOLIDUS/quantum",
   baseBranch: "main",
+  adapterType: "codex_local",
+  agentId: "agent-1",
+  model: "gpt-5",
   log: vi.fn(async () => {}),
 };
 
 describe("executeDeliveryHook", () => {
+
   const savedLane = process.env.PAPERCLIP_DELIVERY_LANE;
   const savedAutonomous = process.env.PAPERCLIP_AUTONOMOUS_DELIVERY;
   const savedBotToken = process.env.PAPERCLIP_DELIVERY_BOT_TOKEN;
@@ -101,10 +105,43 @@ describe("executeDeliveryHook", () => {
     });
     const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
     expect(result.reason).toBe("delivery_blocked");
+    expect(calls.some((call) => call[0] === "git" && call[1] === "commit")).toBe(false);
     expect(calls.some((call) => call[0] === "git" && call[1] === "push")).toBe(false);
   });
 
+  it("quality gate receives a minimal env without tokens or keys", async () => {
+    const worktreeCwd = mkWorktree();
+    const envCalls: Array<{ cmd: string; args: string[]; env: Record<string, string> }> = [];
+    const runProc = vi.fn(async (cmd: string, args: string[], _cwd: string, callEnv: Record<string, string>) => {
+      envCalls.push({ cmd, args, env: callEnv });
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
+      if (key === "gh label list") return { exitCode: 0, stdout: "[]", stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "", stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    await executeDeliveryHook({
+      ...base,
+      worktreeCwd,
+      env: {
+        PAPERCLIP_DELIVERY_BOT_TOKEN: "bot-token",
+        GH_TOKEN: "personal-token",
+        OPENAI_API_KEY: "openai-token",
+        PAPERCLIP_API_KEY: "paperclip-token",
+      },
+      runProc,
+    });
+    const gateEnv = envCalls.find((call) => call.cmd === "pnpm" && call.args[1] === "typecheck")?.env;
+    expect(gateEnv?.CI).toBe("true");
+    expect(gateEnv?.PAPERCLIP_DELIVERY_BOT_TOKEN).toBeUndefined();
+    expect(gateEnv?.GH_TOKEN).toBeUndefined();
+    expect(gateEnv?.OPENAI_API_KEY).toBeUndefined();
+    expect(gateEnv?.PAPERCLIP_API_KEY).toBeUndefined();
+  });
+
   it("flag OFF -> human-gate-required et reviewer humain", async () => {
+
     const worktreeCwd = mkWorktree();
     const calls: string[][] = [];
     const runProc = vi.fn(async (cmd: string, args: string[]) => {
@@ -120,10 +157,18 @@ describe("executeDeliveryHook", () => {
     const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
     expect(createCall).toContain("human-gate-required");
     expect(createCall).not.toContain("bot-merge-ready");
+    const bodyIndex = createCall?.indexOf("--body") ?? -1;
+    const body = bodyIndex >= 0 ? createCall?.[bodyIndex + 1] ?? "" : "";
+    expect(body).toContain("Adapter: codex_local");
+    expect(body).toContain("Agent: agent-1");
+    expect(body).toContain("Model: gpt-5");
+
+    expect(body).not.toContain("Model: sovereign (qwen3-coder:30b @ Bifrost CCX43)");
     expect(calls.find((call) => call.includes("--add-reviewer"))).toContain("haykel1977");
   });
 
   it("flag ON + bot token absent -> delivery_blocked et aucun push", async () => {
+
     const worktreeCwd = mkWorktree();
     const calls: string[][] = [];
     const runProc = vi.fn(async (cmd: string, args: string[]) => {
@@ -168,10 +213,12 @@ describe("executeDeliveryHook", () => {
     expect(ghEnvs.length).toBeGreaterThan(0);
     expect(ghEnvs.every((token) => token === "bot-token")).toBe(true);
     const gateEnv = envCalls.find((call) => call.cmd === "pnpm" && call.args[1] === "typecheck")?.env;
-    expect(gateEnv?.GH_TOKEN).toBe("personal-token");
+    expect(gateEnv?.GH_TOKEN).toBeUndefined();
+    expect(gateEnv?.PAPERCLIP_DELIVERY_BOT_TOKEN).toBeUndefined();
   });
 
   it("dev-test lane keeps existing no-human lane labels when autonomous flag is off", async () => {
+
     const worktreeCwd = mkWorktree();
     const calls: string[][] = [];
     const runProc = vi.fn(async (cmd: string, args: string[]) => {

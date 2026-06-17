@@ -25,6 +25,9 @@ export type ExecuteDeliveryHookInput = {
   issueId: string | null;
   repo: string;
   baseBranch: string;
+  adapterType?: string | null;
+  agentId?: string | null;
+  model?: string | null;
   runProc: DeliveryHookRunProcess;
   log: DeliveryHookLog;
 };
@@ -38,6 +41,9 @@ export type ExecuteConfiguredDeliveryHookInput = {
   context: Record<string, unknown>;
   executionTargetIsRemote: boolean;
   exitCode: number | null;
+  adapterType?: string | null;
+  agentId?: string | null;
+  model?: string | null;
   runProc: DeliveryHookRunProcess;
   log: DeliveryHookLog;
 };
@@ -85,6 +91,70 @@ function isAutonomousDeliveryEnabled(env: Record<string, string>): boolean {
 
 function readDeliveryBotToken(env: Record<string, string>): string | null {
   return nonEmpty(env.PAPERCLIP_DELIVERY_BOT_TOKEN ?? process.env.PAPERCLIP_DELIVERY_BOT_TOKEN);
+}
+
+const SECRET_ENV_KEY_RE = /(?:^|_)(?:TOKEN|KEY|SECRET|PASSWORD|PASS|AUTH)(?:_|$)/i;
+const QUALITY_GATE_ENV_ALLOWLIST = [
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "TMPDIR",
+  "TEMP",
+  "TMP",
+  "CI",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "TERM",
+] as const;
+
+function collectSecretValues(env: Record<string, string>): string[] {
+  return Array.from(
+    new Set(
+      Object.entries(env)
+        .filter(([key, value]) => SECRET_ENV_KEY_RE.test(key) && value.trim().length >= 4)
+        .map(([, value]) => value.trim()),
+    ),
+  ).sort((a, b) => b.length - a.length);
+}
+
+function redactSecretValues(text: string, secrets: string[]): string {
+  let redacted = text;
+  for (const secret of secrets) redacted = redacted.split(secret).join("[REDACTED]");
+  return redacted;
+}
+
+function readProcessEnvStrings(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (typeof value === "string") env[key] = value;
+  }
+  return env;
+}
+
+export function createDeliveryLogRedactor(env: Record<string, string>, log: DeliveryHookLog): DeliveryHookLog {
+  const secrets = collectSecretValues({ ...readProcessEnvStrings(), ...env });
+  if (secrets.length === 0) return log;
+  return async (stream, chunk) => log(stream, redactSecretValues(chunk, secrets));
+}
+
+function readAllowedEnvValue(env: Record<string, string>, key: string): string | null {
+
+  const value = env[key] ?? process.env[key];
+  return typeof value === "string" ? value : null;
+}
+
+function buildQualityGateEnv(env: Record<string, string>): Record<string, string> {
+  const gateEnv: Record<string, string> = {};
+  for (const key of QUALITY_GATE_ENV_ALLOWLIST) {
+    if (SECRET_ENV_KEY_RE.test(key)) continue;
+    const value = key === "CI" ? env.CI ?? "true" : readAllowedEnvValue(env, key);
+    if (value !== null) gateEnv[key] = value;
+  }
+  gateEnv.CI = gateEnv.CI ?? "true";
+  return gateEnv;
 }
 
 async function pathExists(candidate: string): Promise<boolean> {
@@ -145,7 +215,7 @@ async function runDeliveryQualityGate(input: {
   const resolved = await resolveDeliveryQualityGateCommands(input.worktreeCwd);
   if (!resolved.ok) return resolved;
 
-  const gateEnv = { ...input.env, CI: input.env.CI ?? "true" };
+  const gateEnv = buildQualityGateEnv(input.env);
   for (const command of resolved.commands) {
     await input.log(
       "stdout",
@@ -162,13 +232,15 @@ async function runDeliveryQualityGate(input: {
 }
 
 /**
- * Deterministic post-run delivery (commit -> quality gate -> push -> PR).
+ * Deterministic post-run delivery (quality gate -> commit -> push -> PR).
  *
  * No LLM decisions are made here. Delivery is fail-closed: if the quality gate
- * cannot be resolved or fails, no push and no PR creation happen.
+ * cannot be resolved or fails, no commit, no push and no PR creation happen.
  */
 export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Promise<DeliveryHookResult> {
-  const { worktreeCwd, branch, env, runProc, log } = input;
+  const { worktreeCwd, branch, env, runProc } = input;
+  const log = createDeliveryLogRedactor(env, input.log);
+
   const ts = () => new Date().toISOString();
   const autonomousDelivery = isAutonomousDeliveryEnabled(env);
   const lane = (env.PAPERCLIP_DELIVERY_LANE ?? process.env.PAPERCLIP_DELIVERY_LANE ?? "production").trim();
@@ -203,12 +275,14 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
   const title = `${input.issueIdentifier ?? "FACTORY"}: factory delivery`;
   const bodyHeader = [
     `Paperclip issue: ${input.issueIdentifier ?? "?"} (${input.issueId ?? "?"})`,
-
     `Run: ${input.runId}`,
-    `Model: sovereign (qwen3-coder:30b @ Bifrost CCX43)`,
+    `Adapter: ${input.adapterType ?? "unknown"}`,
+    `Agent: ${input.agentId ?? "unknown"}`,
+    `Model: ${input.model ?? "unknown"}`,
     `Factory: sovereign delivery hook (deterministic, no LLM)`,
   ];
   const bodyGate = autonomousDelivery
+
     ? [
         ``,
         `Autonomous delivery enabled: quality gate passed before push; bot merge may proceed via allowlisted label.`,
@@ -228,6 +302,12 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
       : [``, `HAS-46: human review required — never auto-merge.`];
   const body = [...bodyHeader, ...bodyGate].join("\n");
 
+  const qualityGate = await runDeliveryQualityGate({ worktreeCwd, env, runProc, log, ts });
+  if (!qualityGate.ok) {
+    await log("stderr", `[delivery ${ts()}] delivery_blocked: quality gate failed (${qualityGate.reason})\n`);
+    return { delivered: false, prUrl: null, reason: "delivery_blocked" };
+  }
+
   const add = await runProc("git", ["add", "-A"], worktreeCwd, env);
   if (add.exitCode !== 0) {
     await log("stderr", `[delivery ${ts()}] git add failed: ${add.stderr}\n`);
@@ -239,13 +319,8 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     return { delivered: false, prUrl: null, reason: "git_commit_failed" };
   }
 
-  const qualityGate = await runDeliveryQualityGate({ worktreeCwd, env, runProc, log, ts });
-  if (!qualityGate.ok) {
-    await log("stderr", `[delivery ${ts()}] delivery_blocked: quality gate failed (${qualityGate.reason})\n`);
-    return { delivered: false, prUrl: null, reason: "delivery_blocked" };
-  }
-
   const push = await runProc("git", ["push", "-u", "origin", branch], worktreeCwd, deliveryCommandEnv);
+
   if (push.exitCode !== 0) {
     const s = (push.stderr || "").toLowerCase();
     const reason =
@@ -369,10 +444,14 @@ export async function executeConfiguredDeliveryHook(
     issueId: nonEmpty(input.context.issueId),
     repo: asString(input.config.deliveryRepo, "Beyn-SOLIDUS/quantum"),
     baseBranch: asString(input.config.deliveryBaseBranch, "main"),
+    adapterType: nonEmpty(input.adapterType) ?? nonEmpty(input.context.adapterType),
+    agentId: nonEmpty(input.agentId) ?? nonEmpty(input.context.agentId),
+    model: nonEmpty(input.model) ?? nonEmpty(input.context.model) ?? nonEmpty(input.config.model),
     runProc: input.runProc,
     log: input.log,
   });
-  await input.log(
+  const log = createDeliveryLogRedactor(input.env, input.log);
+  await log(
     "stdout",
     `[paperclip] delivery: ${delivery.reason}${delivery.prUrl ? " -> " + delivery.prUrl : ""}\n`,
   );

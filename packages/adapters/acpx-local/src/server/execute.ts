@@ -4,7 +4,7 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { AdapterExecutionContext, AdapterExecutionResult } from "@paperclipai/adapter-utils";
-import { executeConfiguredDeliveryHook } from "@paperclipai/adapter-utils/delivery-hook";
+import { createDeliveryLogRedactor, executeConfiguredDeliveryHook } from "@paperclipai/adapter-utils/delivery-hook";
 import { readAdapterExecutionTarget, adapterExecutionTargetSessionIdentity } from "@paperclipai/adapter-utils/execution-target";
 import {
   DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
@@ -1698,6 +1698,7 @@ export function createAcpxLocalExecutor(deps: ExecuteDeps = {}) {
         clearSession,
       };
       try {
+        const deliveryLog = createDeliveryLogRedactor(prepared.env, ctx.onLog);
         await executeConfiguredDeliveryHook({
           runId: ctx.runId,
           worktreeCwd: prepared.cwd,
@@ -1707,17 +1708,20 @@ export function createAcpxLocalExecutor(deps: ExecuteDeps = {}) {
           context: ctx.context,
           executionTargetIsRemote: prepared.executionTargetIsRemote,
           exitCode: result.exitCode,
+          adapterType: "acpx_local",
+          agentId: ctx.agent.id,
+          model: prepared.requestedModel || null,
           runProc: async (command, args, cwd, env) => {
             const proc = await runChildProcess(ctx.runId, command, args, {
               cwd,
               env,
               timeoutSec: 120,
               graceSec: 10,
-              onLog: ctx.onLog,
+              onLog: deliveryLog,
             });
             return { exitCode: proc.exitCode ?? 1, stdout: proc.stdout ?? "", stderr: proc.stderr ?? "" };
           },
-          log: ctx.onLog,
+          log: deliveryLog,
         });
       } catch (err) {
         await ctx.onLog("stderr", `[paperclip] delivery hook error (non-fatal): ${(err as Error).message}\n`);

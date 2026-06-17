@@ -121,6 +121,7 @@ describe("claude-local delivery hook", () => {
     expect(ghEnvs.length).toBeGreaterThan(0);
     expect(ghEnvs.every((token) => token === "bot-token")).toBe(true);
     const gateEnv = envCalls.find((call) => call.cmd === "pnpm" && call.args[1] === "typecheck")?.env;
-    expect(gateEnv?.GH_TOKEN).toBe("personal-token");
+    expect(gateEnv?.GH_TOKEN).toBeUndefined();
+    expect(gateEnv?.PAPERCLIP_DELIVERY_BOT_TOKEN).toBeUndefined();
   });
 });

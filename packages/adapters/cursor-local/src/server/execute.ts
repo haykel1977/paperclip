@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { inferOpenAiCompatibleBiller, type AdapterExecutionContext, type AdapterExecutionResult } from "@paperclipai/adapter-utils";
-import { executeConfiguredDeliveryHook } from "@paperclipai/adapter-utils/delivery-hook";
+import { createDeliveryLogRedactor, executeConfiguredDeliveryHook } from "@paperclipai/adapter-utils/delivery-hook";
 import {
   adapterExecutionTargetIsRemote,
 
@@ -750,6 +750,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       const deliveryEnv = Object.fromEntries(
         Object.entries(runtimeEnv).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
       );
+      const deliveryLog = createDeliveryLogRedactor(deliveryEnv, onLog);
       await executeConfiguredDeliveryHook({
         runId,
         worktreeCwd: cwd,
@@ -759,17 +760,20 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         context,
         executionTargetIsRemote,
         exitCode: initial.proc.exitCode,
+        adapterType: "cursor",
+        agentId: agent.id,
+        model: model || null,
         runProc: async (c, a, wd, e) => {
           const p = await runAdapterExecutionTargetProcess(runId, runtimeExecutionTarget, c, a, {
             cwd: wd,
             env: e,
             timeoutSec: 120,
             graceSec: 10,
-            onLog,
+            onLog: deliveryLog,
           });
           return { exitCode: p.exitCode ?? 1, stdout: p.stdout ?? "", stderr: p.stderr ?? "" };
         },
-        log: onLog,
+        log: deliveryLog,
       });
     } catch (err) {
       await onLog("stderr", `[paperclip] delivery hook error (non-fatal): ${(err as Error).message}\n`);
