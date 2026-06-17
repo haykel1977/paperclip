@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { PLUGIN_CAPABILITIES } from "../constants.js";
-import { pluginManagedRoutineDeclarationSchema, pluginManifestV1Schema, pluginUiSlotDeclarationSchema } from "./plugin.js";
+import {
+  pluginManagedAgentDeclarationSchema,
+  pluginManagedRoutineDeclarationSchema,
+  pluginManifestV1Schema,
+  pluginUiSlotDeclarationSchema,
+} from "./plugin.js";
 
 describe("plugin capability constants", () => {
+
   it("exposes each capability once", () => {
     expect(new Set(PLUGIN_CAPABILITIES).size).toBe(PLUGIN_CAPABILITIES.length);
   });
@@ -39,7 +45,40 @@ describe("plugin manifest validators", () => {
   });
 });
 
+describe("plugin managed agent validators", () => {
+  it("rejects unsafe managed instruction file paths", () => {
+    for (const instructions of [
+      { entryFile: "../AGENTS.md", content: "escape" },
+      { entryFile: "/AGENTS.md", content: "absolute" },
+      { entryFile: "docs\\\\AGENTS.md", content: "backslash" },
+      { entryFile: "promptTemplate.legacy.md", content: "reserved" },
+      { files: { "docs/../AGENTS.md": "escape" } },
+    ]) {
+      expect(pluginManagedAgentDeclarationSchema.safeParse({
+        agentKey: "wiki-maintainer",
+        displayName: "Wiki Maintainer",
+        instructions,
+      }).success).toBe(false);
+    }
+  });
+
+  it("accepts safe managed instruction files", () => {
+    const parsed = pluginManagedAgentDeclarationSchema.parse({
+      agentKey: "wiki-maintainer",
+      displayName: "Wiki Maintainer",
+      instructions: {
+        entryFile: "AGENTS.md",
+        content: "Maintain the wiki.",
+        files: { "docs/README.md": "Use the docs." },
+      },
+    });
+
+    expect(parsed.instructions?.files?.["docs/README.md"]).toBe("Use the docs.");
+  });
+});
+
 describe("plugin managed routine validators", () => {
+
   it("accepts core issue surface visibility values in routine templates", () => {
     const parsed = pluginManagedRoutineDeclarationSchema.parse({
       routineKey: "wiki.refresh",

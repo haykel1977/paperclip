@@ -20,12 +20,29 @@ import { agentInstructionsService } from "./agent-instructions.js";
 
 const MANAGED_AGENT_ENTITY_TYPE = "managed_agent";
 const DEFAULT_MANAGED_AGENT_ADAPTER_TYPE = "process";
+const LEGACY_PROMPT_TEMPLATE_PATH = "promptTemplate.legacy.md";
 
 interface PluginManagedAgentServiceOptions {
   pluginId: string;
   pluginKey: string;
   manifest?: PaperclipPluginManifestV1 | null;
   instructionTemplateVariables?: (companyId: string) => Promise<Record<string, string | null | undefined>>;
+}
+
+export function normalizeManagedAgentInstructionFilePath(filePath: string): string {
+  if (
+    filePath.length === 0 ||
+    filePath.startsWith("/") ||
+    /^[A-Za-z]:[\\/]/.test(filePath) ||
+    filePath.includes("\\") ||
+    filePath.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    throw new Error("Managed agent instruction file paths must be relative paths without traversal, empty segments, dots, or backslashes");
+  }
+  if (filePath === LEGACY_PROMPT_TEMPLATE_PATH) {
+    throw new Error("Managed agent instruction files cannot use the reserved legacy prompt template path");
+  }
+  return filePath;
 }
 
 function bindingExternalId(companyId: string, agentKey: string) {
@@ -126,15 +143,18 @@ function applyInstructionTemplateVariables(
   return next;
 }
 
-function declaredInstructionFiles(
+export function buildDeclaredInstructionFiles(
   declaration: PluginManagedAgentDeclaration,
   variables: Record<string, string | null | undefined>,
 ) {
   const instructionDeclaration = declaration.instructions;
   if (!instructionDeclaration?.content && !instructionDeclaration?.files) return null;
 
-  const entryFile = instructionDeclaration.entryFile ?? "AGENTS.md";
-  const files = { ...(instructionDeclaration.files ?? {}) };
+  const entryFile = normalizeManagedAgentInstructionFilePath(instructionDeclaration.entryFile ?? "AGENTS.md");
+  const files: Record<string, string> = Object.create(null);
+  for (const [filePath, content] of Object.entries(instructionDeclaration.files ?? {})) {
+    files[normalizeManagedAgentInstructionFilePath(filePath)] = content;
+  }
   if (instructionDeclaration.content !== undefined) {
     files[entryFile] = instructionDeclaration.content;
   }
@@ -142,14 +162,14 @@ function declaredInstructionFiles(
     files[entryFile] = "";
   }
 
+  const renderedFiles: Record<string, string> = Object.create(null);
+  for (const [filePath, content] of Object.entries(files)) {
+    renderedFiles[filePath] = applyInstructionTemplateVariables(content, variables);
+  }
+
   return {
     entryFile,
-    files: Object.fromEntries(
-      Object.entries(files).map(([filePath, content]) => [
-        filePath,
-        applyInstructionTemplateVariables(content, variables),
-      ]),
-    ),
+    files: renderedFiles,
   };
 }
 
@@ -158,6 +178,7 @@ function rowIsManagedAgent(
   pluginKey: string,
   agentKey: string,
 ) {
+
   const metadata = row.metadata;
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return false;
   const marker = (metadata as Record<string, unknown>).paperclipManagedResource;
@@ -329,7 +350,7 @@ export function pluginManagedAgentService(
     materializeOptions: { replaceExisting: boolean },
   ): Promise<Agent> {
     const variables = await optionsForInstructionVariables(companyId);
-    const declared = declaredInstructionFiles(declaration, variables);
+    const declared = buildDeclaredInstructionFiles(declaration, variables);
     if (!declared) return agent;
 
     const materialized = await instructions.materializeManagedBundle(
@@ -341,6 +362,7 @@ export function pluginManagedAgentService(
         clearLegacyPromptTemplate: true,
       },
     );
+
     const updated = await agentSvc.update(agent.id, {
       adapterConfig: materialized.adapterConfig,
     }, {
@@ -358,7 +380,7 @@ export function pluginManagedAgentService(
   ): Promise<PluginManagedAgentResolution["defaultDrift"]> {
     if (!agent) return null;
     const variables = await optionsForInstructionVariables(companyId);
-    const declared = declaredInstructionFiles(declaration, variables);
+    const declared = buildDeclaredInstructionFiles(declaration, variables);
     if (!declared) return null;
 
     let exported: Awaited<ReturnType<typeof instructions.exportFiles>>;

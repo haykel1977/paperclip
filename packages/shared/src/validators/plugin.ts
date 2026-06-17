@@ -133,7 +133,18 @@ export type PluginEnvironmentDriverDeclarationInput = z.infer<
 
 export type PluginToolDeclarationInput = z.infer<typeof pluginToolDeclarationSchema>;
 
+const pluginManagedAgentInstructionFilePathSchema = z.string().min(1).max(200).refine(
+  (value) =>
+    !value.startsWith("/") &&
+    !/^[A-Za-z]:[\\/]/.test(value) &&
+    !value.includes("\\") &&
+    !value.split("/").some((segment) => segment === "" || segment === "." || segment === "..") &&
+    value !== "promptTemplate.legacy.md",
+  { message: "managed agent instruction file paths must be relative paths without traversal, empty segments, dots, backslashes, or reserved names" },
+);
+
 export const pluginManagedAgentDeclarationSchema = z.object({
+
   agentKey: z.string().min(1).max(100).regex(/^[a-z0-9][a-z0-9._:-]*$/, {
     message: "agentKey must start with a lowercase alphanumeric and contain only lowercase letters, digits, dots, colons, underscores, or hyphens",
   }),
@@ -150,9 +161,9 @@ export const pluginManagedAgentDeclarationSchema = z.object({
   status: z.enum(["idle", "paused"]).optional(),
   budgetMonthlyCents: z.number().int().min(0).optional(),
   instructions: z.object({
-    entryFile: z.string().min(1).max(200).optional(),
+    entryFile: pluginManagedAgentInstructionFilePathSchema.optional(),
     content: z.string().max(200_000).optional(),
-    files: z.record(z.string().max(200_000)).optional(),
+    files: z.record(pluginManagedAgentInstructionFilePathSchema, z.string().max(200_000)).optional(),
     assetPath: z.string().min(1).max(500).optional(),
   }).optional(),
 });
@@ -160,6 +171,7 @@ export const pluginManagedAgentDeclarationSchema = z.object({
 export type PluginManagedAgentDeclarationInput = z.infer<typeof pluginManagedAgentDeclarationSchema>;
 
 export const pluginManagedProjectDeclarationSchema = z.object({
+
   projectKey: z.string().min(1).max(100).regex(/^[a-z0-9][a-z0-9._:-]*$/, {
     message: "projectKey must start with a lowercase alphanumeric and contain only lowercase letters, digits, dots, colons, underscores, or hyphens",
   }),
