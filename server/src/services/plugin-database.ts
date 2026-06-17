@@ -339,6 +339,14 @@ function isPathInsideDir(candidatePath: string, parentDir: string): boolean {
 }
 
 export async function resolveMigrationsDir(packageRoot: string, migrationsDir: string): Promise<string> {
+  if (
+    path.isAbsolute(migrationsDir) ||
+    migrationsDir.includes("\\") ||
+    migrationsDir.split("/").some((segment) => segment === "..")
+  ) {
+    throw new Error(`Plugin migrationsDir escapes package root: ${migrationsDir}`);
+  }
+
   const resolvedRoot = path.resolve(packageRoot);
   const resolvedDir = path.resolve(resolvedRoot, migrationsDir);
   if (!isPathInsideDir(resolvedDir, resolvedRoot)) {
