@@ -38,7 +38,7 @@ interface Task {
   dueDate: string;
 }
 
-export function Dashboard() {
+export function SampleDashboard() {
   const [agents] = useState<Agent[]>([
     { id: "1", name: "Code Assistant", status: "active", lastActive: "2 mins ago", tasksCompleted: 12 },
     { id: "2", name: "Research Bot", status: "active", lastActive: "5 mins ago", tasksCompleted: 8 },
