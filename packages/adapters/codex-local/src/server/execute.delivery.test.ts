@@ -181,7 +181,7 @@ describe("executeDeliveryHook", () => {
     expect(calls.some((call) => call[0] === "gh")).toBe(false);
   });
 
-  it("flag ON + gate vert -> bot-merge-ready sans reviewer humain", async () => {
+  it("flag ON + gate vert -> PR Quantum truth-first avec token bot", async () => {
     const worktreeCwd = mkWorktree();
     const calls: string[][] = [];
     const envCalls: Array<{ cmd: string; args: string[]; env: Record<string, string> }> = [];
@@ -191,7 +191,13 @@ describe("executeDeliveryHook", () => {
       const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
       if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
-      if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "human-gate-required", "bot-merge-ready"]), stderr: "" };
+      if (key === "gh label list") {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify(["factory-proof", "agent-pr", "truth-first", "bot-merge-ready", "prod-gate-required"]),
+          stderr: "",
+        };
+      }
       if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/45\n", stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     });
@@ -202,8 +208,21 @@ describe("executeDeliveryHook", () => {
       runProc,
     });
     const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
+    expect(createCall).toContain("agent-pr");
+    expect(createCall).toContain("truth-first");
     expect(createCall).toContain("bot-merge-ready");
+    expect(createCall).toContain("prod-gate-required");
     expect(createCall).not.toContain("human-gate-required");
+    const bodyIndex = createCall?.indexOf("--body") ?? -1;
+    const body = bodyIndex >= 0 ? createCall?.[bodyIndex + 1] ?? "" : "";
+    expect(body).toContain("## Description");
+    expect(body).toContain("ADR: ADR-GOV-007");
+    expect(body).toContain("TRUTHFULNESS: BACKEND-WIRED");
+    expect(body).toContain("## Truthfulness Boundary");
+    expect(body).toContain("| Claim | Evidence | Boundary |");
+    expect(body).toContain("## Quality Gate Evidence");
+    expect(body).toContain("`pnpm run typecheck`");
+    expect(body).toContain("- `f`");
     expect(calls.some((call) => call.includes("--add-reviewer"))).toBe(false);
     const pushEnv = envCalls.find((call) => call.cmd === "git" && call.args[0] === "push")?.env;
     expect(pushEnv?.GH_TOKEN).toBe("bot-token");
@@ -233,9 +252,11 @@ describe("executeDeliveryHook", () => {
     expect(createCall).toContain("automated");
     expect(createCall).toContain("truth-first");
     expect(createCall).not.toContain("human-gate-required");
+    expect(calls.some((call) => call.includes("--add-reviewer"))).toBe(false);
   });
 
   it("idempotency: PR existante detectee avant commit -> aucun commit, aucun push", async () => {
+
     const worktreeCwd = mkWorktree();
     const calls: string[][] = [];
     const runProc = vi.fn(async (cmd: string, args: string[]) => {

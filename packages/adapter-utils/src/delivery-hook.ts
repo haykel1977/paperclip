@@ -307,6 +307,88 @@ async function pushWithRetry(input: {
   return tryPush();
 }
 
+function formatPrValue(value: string | null | undefined): string {
+  return value?.trim() || "unknown";
+}
+
+function formatCommand(command: DeliveryQualityGateCommand): string {
+  return `${command.cmd} ${command.args.join(" ")}`.trim();
+}
+
+function formatChangedFiles(statusStdout: string): string[] {
+  return statusStdout
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .map((line) => line.slice(3).trim() || line.trim())
+    .slice(0, 50);
+}
+
+function buildQuantumPrBody(input: {
+  issueIdentifier: string | null;
+  issueId: string | null;
+  runId: string;
+  adapterType?: string | null;
+  agentId?: string | null;
+  model?: string | null;
+  branch: string;
+  baseBranch: string;
+  lane: string;
+  adrRef: string;
+  autonomousDelivery: boolean;
+  isDevTestLane: boolean;
+  statusStdout: string;
+  qualityGateCommands: DeliveryQualityGateCommand[];
+}): string {
+  const issue = formatPrValue(input.issueIdentifier);
+  const changedFiles = formatChangedFiles(input.statusStdout);
+  const changedFileRows = changedFiles.length > 0 ? changedFiles.map((file) => `- \`${file}\``) : ["- No changed path reported"];
+  const gateRows = input.qualityGateCommands.map(
+    (command) => `| ${command.step} | \`${formatCommand(command)}\` | passed before commit/push |`,
+  );
+  const mergePolicy = input.autonomousDelivery
+    ? "Autonomous production delivery: bot merge is only eligible after repository gates stay green and allowlisted labels are present."
+    : input.isDevTestLane
+      ? "Dev/test no-human lane: eligible agent PRs may merge only after functional and security checks are green."
+      : "Human-gated production delivery: this PR requires human review and must not self-merge.";
+
+  return [
+    "## Description",
+    `Paperclip deterministic delivery for ${issue}.`,
+    "",
+    "TRUTHFULNESS: BACKEND-WIRED",
+    `ADR: ${input.adrRef}`,
+    "",
+    "## Delivery Metadata",
+    `- Paperclip issue: ${issue} (${formatPrValue(input.issueId)})`,
+    `- Run: ${input.runId}`,
+    `- Adapter: ${formatPrValue(input.adapterType)}`,
+    `- Agent: ${formatPrValue(input.agentId)}`,
+    `- Model: ${formatPrValue(input.model)}`,
+    `- Source branch: ${input.branch}`,
+    `- Base branch: ${input.baseBranch}`,
+    `- Lane: ${input.lane}`,
+    `- Merge policy: ${mergePolicy}`,
+    "- Factory: sovereign delivery hook (deterministic, no LLM in delivery path)",
+    "",
+    "## Changed Paths",
+    ...changedFileRows,
+    "",
+    "## Quality Gate Evidence",
+    "| Gate | Command | Result |",
+    "| --- | --- | --- |",
+    ...gateRows,
+    "",
+    "## Truthfulness Boundary",
+    "| Claim | Evidence | Boundary |",
+    "| --- | --- | --- |",
+    `| Delivery metadata above is accurate | Values were supplied to this deterministic hook at run time | Does not claim the diff is semantically complete beyond these inputs |`,
+    `| Quality gates passed locally before push | Commands listed in the Quality Gate Evidence table exited 0 | Does not claim GitHub-hosted checks or deployment checks have passed |`,
+    `| Changed paths are listed | Derived from \`git status --porcelain\` before commit | Does not summarize the intent of each code change |`,
+    `| ${mergePolicy} | Derived from PAPERCLIP_AUTONOMOUS_DELIVERY and PAPERCLIP_DELIVERY_LANE | Repository governance remains authoritative |`,
+  ].join("\n");
+}
+
 /**
  * Deterministic post-run delivery (quality gate -> commit -> push -> PR).
  *
@@ -323,16 +405,18 @@ async function pushWithRetry(input: {
 export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Promise<DeliveryHookResult> {
   const { worktreeCwd, branch, env, runProc } = input;
   const log = createDeliveryLogRedactor(env, input.log);
+
   const ts = () => new Date().toISOString();
 
   const autonomousDelivery = isAutonomousDeliveryEnabled(env);
   const lane = (env.PAPERCLIP_DELIVERY_LANE ?? process.env.PAPERCLIP_DELIVERY_LANE ?? "production").trim();
+  const adrRef = nonEmpty(env.PAPERCLIP_DELIVERY_ADR_REF ?? process.env.PAPERCLIP_DELIVERY_ADR_REF) ?? "ADR-GOV-007";
   const isDevTestLane = !autonomousDelivery && lane === "dev-test";
   const deliveryLabels = autonomousDelivery
-    ? ["factory-proof", "bot-merge-ready"]
+    ? ["factory-proof", "agent-pr", "truth-first", "bot-merge-ready", "prod-gate-required"]
     : isDevTestLane
       ? ["factory-proof", "agent-pr", "automated", "truth-first"]
-      : ["factory-proof", "human-gate-required"];
+      : ["factory-proof", "agent-pr", "truth-first", "human-gate-required", "prod-gate-required"];
 
   // ── 1. git status ───────────────────────────────────────────────────────────
   const status = await runProc("git", ["status", "--porcelain"], worktreeCwd, env);
@@ -355,6 +439,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="missing bot token"\n`);
     return { delivered: false, prUrl: null, reason: "delivery_blocked: missing bot token" };
   }
+
   const deliveryCommandEnv = deliveryBotToken ? { ...env, GH_TOKEN: deliveryBotToken } : env;
 
   // ── 3. idempotency: check for existing PR BEFORE committing ──────────────
@@ -377,42 +462,31 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     return { delivered: true, prUrl: existingPrUrl, reason: "pr_exists" };
   }
 
-  // ── 4. PR body ────────────────────────────────────────────────────────────
-  const title = `${input.issueIdentifier ?? "FACTORY"}: factory delivery`;
-  const bodyHeader = [
-    `Paperclip issue: ${input.issueIdentifier ?? "?"} (${input.issueId ?? "?"})`,
-    `Run: ${input.runId}`,
-    `Adapter: ${input.adapterType ?? "unknown"}`,
-    `Agent: ${input.agentId ?? "unknown"}`,
-    `Model: ${input.model ?? "unknown"}`,
-    `Factory: sovereign delivery hook (deterministic, no LLM)`,
-  ];
-  const bodyGate = autonomousDelivery
-    ? [
-        ``,
-        `Autonomous delivery enabled: quality gate passed before push; bot merge may proceed via allowlisted label.`,
-      ]
-    : isDevTestLane
-      ? [
-          ``,
-          `ADR: ADR-GOV-007 (dev/test no-human lane — eligible agent-pr/automated PRs may`,
-          `auto-merge once functional and security checks are green; production stays gated).`,
-          ``,
-          `## Truthfulness Boundary`,
-          `This PR is produced by a deterministic delivery hook with no LLM in the delivery`,
-          `path. Claims in this body are limited to factory metadata (issue, run, lane) that`,
-          `the hook can verify; it makes no assertions about correctness of the diff beyond`,
-          `the configured functional and security gates.`,
-        ]
-      : [``, `HAS-46: human review required — never auto-merge.`];
-  const body = [...bodyHeader, ...bodyGate].join("\n");
-
-  // ── 5. quality gate ───────────────────────────────────────────────────────
+  // ── 4. quality gate ───────────────────────────────────────────────────────
   const qualityGate = await runDeliveryQualityGate({ worktreeCwd, env, runProc, log, ts });
   if (!qualityGate.ok) {
     await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="quality_gate_failed" detail="${qualityGate.reason}"\n`);
     return { delivered: false, prUrl: null, reason: "delivery_blocked" };
   }
+
+  // ── 5. PR body ────────────────────────────────────────────────────────────
+  const title = `${input.issueIdentifier ?? "FACTORY"}: factory delivery`;
+  const body = buildQuantumPrBody({
+    issueIdentifier: input.issueIdentifier,
+    issueId: input.issueId,
+    runId: input.runId,
+    adapterType: input.adapterType,
+    agentId: input.agentId,
+    model: input.model,
+    branch,
+    baseBranch: input.baseBranch,
+    lane,
+    adrRef,
+    autonomousDelivery,
+    isDevTestLane,
+    statusStdout: status.stdout,
+    qualityGateCommands: qualityGate.commands,
+  });
 
   // ── 6. commit ─────────────────────────────────────────────────────────────
   const add = await runProc("git", ["add", "-A"], worktreeCwd, env);
@@ -420,6 +494,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     await log("stderr", `[delivery ${ts()}] git_add_failed: ${add.stderr}\n`);
     return { delivered: false, prUrl: null, reason: "git_add_failed" };
   }
+
   const commit = await runProc("git", ["commit", "-m", title, "-m", body], worktreeCwd, env);
   if (commit.exitCode !== 0) {
     await log("stderr", `[delivery ${ts()}] git_commit_failed: ${commit.stderr}\n`);
@@ -467,7 +542,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
   }
   const url = (pr.stdout.match(/https:\/\/github\.com\/\S+\/pull\/\d+/) || [null])[0];
 
-  if (url && !autonomousDelivery) {
+  if (url && !autonomousDelivery && !isDevTestLane) {
     const rev = await runProc("gh", ["pr", "edit", url, "--add-reviewer", "haykel1977"], worktreeCwd, env);
     if (rev.exitCode !== 0) {
       await log("stderr", `[delivery ${ts()}] add_reviewer_failed (non-fatal): ${rev.stderr}\n`);
