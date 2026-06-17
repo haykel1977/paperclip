@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { EventEmitter } from "node:events";
 import os from "node:os";
 import path from "node:path";
@@ -103,6 +103,55 @@ describe("resolvePluginWatchTargets", () => {
       { path: path.join(pluginDir, "package.json"), recursive: false, kind: "file" },
       { path: path.join(pluginDir, "dist", "manifest.js"), recursive: false, kind: "file" },
       { path: path.join(pluginDir, "dist", "nested", "chunk.js"), recursive: false, kind: "file" },
+    ]);
+  });
+
+  it("ignores package-declared entrypoints that escape the plugin directory", () => {
+    const rootDir = makeTempPluginDir();
+    const pluginDir = path.join(rootDir, "plugin");
+    const outsideDir = path.join(rootDir, "outside");
+    mkdirSync(pluginDir, { recursive: true });
+    mkdirSync(outsideDir, { recursive: true });
+    writeFileSync(path.join(outsideDir, "worker.js"), "export default {};\n");
+    writeFileSync(
+      path.join(pluginDir, "package.json"),
+      JSON.stringify({
+        name: "@acme/example",
+        paperclipPlugin: {
+          worker: "../outside/worker.js",
+        },
+      }),
+    );
+
+    const targets = resolvePluginWatchTargets(pluginDir);
+
+    expect(targets).toEqual([
+      { path: path.join(pluginDir, "package.json"), recursive: false, kind: "file" },
+    ]);
+  });
+
+  it.skipIf(process.platform === "win32")("ignores package-declared entrypoints that escape through symlinks", () => {
+    const rootDir = makeTempPluginDir();
+    const pluginDir = path.join(rootDir, "plugin");
+    const outsideDir = path.join(rootDir, "outside-ui");
+    mkdirSync(path.join(pluginDir, "dist"), { recursive: true });
+    mkdirSync(outsideDir, { recursive: true });
+    writeFileSync(path.join(outsideDir, "index.js"), "export default {};\n");
+    symlinkSync(outsideDir, path.join(pluginDir, "dist", "ui"), "dir");
+    writeFileSync(
+      path.join(pluginDir, "package.json"),
+      JSON.stringify({
+        name: "@acme/example",
+        paperclipPlugin: {
+          ui: "./dist/ui",
+        },
+      }),
+    );
+
+    const targets = resolvePluginWatchTargets(pluginDir);
+
+    expect(targets).toEqual([
+      { path: path.join(pluginDir, "package.json"), recursive: false, kind: "file" },
     ]);
   });
 });

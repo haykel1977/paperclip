@@ -110,11 +110,21 @@ export function resolvePluginWatchTargets(
   const readDir = fsDeps?.readdirSync ?? readdirSync;
   const statFile = fsDeps?.statSync ?? statSync;
   const absPath = path.resolve(packagePath);
+  const realAbsPath = realpathIfExists(absPath) ?? absPath;
   const targets = new Map<string, PluginWatchTarget>();
 
-  function addWatchTarget(targetPath: string, recursive: boolean, kind?: "file" | "dir"): void {
+  function resolveExistingInsidePackage(targetPath: string): string | null {
     const resolved = path.resolve(targetPath);
-    if (!fileExists(resolved)) return;
+    if (!isPathInsideDir(resolved, absPath) || !fileExists(resolved)) return null;
+
+    const realTarget = realpathIfExists(resolved);
+    if (!realTarget || !isPathInsideDir(realTarget, realAbsPath)) return null;
+    return resolved;
+  }
+
+  function addWatchTarget(targetPath: string, recursive: boolean, kind?: "file" | "dir"): void {
+    const resolved = resolveExistingInsidePackage(targetPath);
+    if (!resolved) return;
     const inferredKind = kind ?? (statFile(resolved).isDirectory() ? "dir" : "file");
 
     const existing = targets.get(resolved);
@@ -127,10 +137,11 @@ export function resolvePluginWatchTargets(
   }
 
   function addRuntimeFilesFromDir(dirPath: string): void {
-    if (!fileExists(dirPath)) return;
+    const resolvedDir = resolveExistingInsidePackage(dirPath);
+    if (!resolvedDir) return;
 
-    for (const entry of readDir(dirPath, { withFileTypes: true })) {
-      const entryPath = path.join(dirPath, entry.name);
+    for (const entry of readDir(resolvedDir, { withFileTypes: true })) {
+      const entryPath = path.join(resolvedDir, entry.name);
       if (entry.isDirectory()) {
         addRuntimeFilesFromDir(entryPath);
         continue;
@@ -167,8 +178,11 @@ export function resolvePluginWatchTargets(
   }
 
   for (const relativeEntrypoint of entrypointPaths) {
-    const resolvedEntrypoint = path.resolve(absPath, relativeEntrypoint);
-    if (!fileExists(resolvedEntrypoint)) continue;
+    const normalizedEntrypoint = normalizeRelativePackagePath(relativeEntrypoint);
+    if (!normalizedEntrypoint) continue;
+
+    const resolvedEntrypoint = resolveExistingInsidePackage(path.resolve(absPath, normalizedEntrypoint));
+    if (!resolvedEntrypoint) continue;
 
     const stat = statFile(resolvedEntrypoint);
     if (stat.isDirectory()) {
@@ -231,14 +245,14 @@ export function createPluginDevWatcher(
           },
           ignored: (watchedPath) => {
             const relativePath = path.relative(absPath, watchedPath);
-            return shouldIgnorePath(relativePath);
+            return path.isAbsolute(relativePath) || relativePath.startsWith("..") || shouldIgnorePath(relativePath);
           },
         },
       );
 
       watcher.on("all", (_eventName, changedPath) => {
         const relativePath = path.relative(absPath, changedPath);
-        if (shouldIgnorePath(relativePath)) return;
+        if (path.isAbsolute(relativePath) || relativePath.startsWith("..") || shouldIgnorePath(relativePath)) return;
 
         const existing = debounceTimers.get(pluginId);
         if (existing) clearTimeout(existing);
