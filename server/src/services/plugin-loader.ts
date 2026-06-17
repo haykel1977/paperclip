@@ -609,24 +609,26 @@ function resolveManifestPath(
       "manifest"
     ];
     if (typeof manifestRelPath === "string") {
-      // NOTE: the resolved path is returned as-is even if the file does not yet
-      // exist on disk (e.g. the package has not been built).  Callers MUST guard
-      // with existsSync() before passing the path to loadManifestFromPath().
-      return path.resolve(packageRoot, manifestRelPath);
+      const normalized = normalizeRelativePluginPackagePath(
+        manifestRelPath,
+        "Plugin manifest path",
+      );
+      const resolvedPath = path.resolve(packageRoot, normalized);
+      if (!existsSync(resolvedPath)) return resolvedPath;
+
+      const containedPath = resolveExistingFileInsideRoot(packageRoot, normalized);
+      if (!containedPath) {
+        throw new Error("Plugin manifest path must stay inside the package root");
+      }
+      return containedPath;
     }
   }
 
-  // Fallback: look for dist/manifest.js as a convention
-  const conventionalPath = path.join(packageRoot, "dist", "manifest.js");
-  if (existsSync(conventionalPath)) {
-    return conventionalPath;
-  }
+  const conventionalPath = resolveExistingFileInsideRoot(packageRoot, "dist/manifest.js");
+  if (conventionalPath) return conventionalPath;
 
-  // Fallback: look for manifest.js at package root
-  const rootManifestPath = path.join(packageRoot, "manifest.js");
-  if (existsSync(rootManifestPath)) {
-    return rootManifestPath;
-  }
+  const rootManifestPath = resolveExistingFileInsideRoot(packageRoot, "manifest.js");
+  if (rootManifestPath) return rootManifestPath;
 
   return null;
 }
@@ -2135,17 +2137,24 @@ function realpathIfExists(targetPath: string): string | null {
 }
 
 function normalizeRelativePluginEntrypoint(entrypointPath: string): string {
+  return normalizeRelativePluginPackagePath(
+    entrypointPath,
+    "Plugin worker entrypoint",
+  );
+}
+
+function normalizeRelativePluginPackagePath(relativePath: string, label: string): string {
   if (
-    path.isAbsolute(entrypointPath) ||
-    entrypointPath.includes("\\") ||
-    entrypointPath.split("/").some((segment) => segment === "..")
+    path.isAbsolute(relativePath) ||
+    relativePath.includes("\\") ||
+    relativePath.split("/").some((segment) => segment === "..")
   ) {
-    throw new Error("Plugin worker entrypoint must be a relative path inside the package root");
+    throw new Error(`${label} must be a relative path inside the package root`);
   }
 
-  const normalized = path.posix.normalize(entrypointPath);
+  const normalized = path.posix.normalize(relativePath);
   if (normalized === "." || normalized.startsWith("../") || normalized === "..") {
-    throw new Error("Plugin worker entrypoint must be a relative path inside the package root");
+    throw new Error(`${label} must be a relative path inside the package root`);
   }
   return normalized;
 }

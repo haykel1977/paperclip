@@ -110,6 +110,7 @@ async function writePluginPackage(packageRoot: string, pluginManifest: Paperclip
   await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({
     name: packageName,
     version: pluginManifest.version,
+    type: "module",
     paperclipPlugin: { manifest: "./manifest.js" },
   }), "utf8");
   await writeFile(
