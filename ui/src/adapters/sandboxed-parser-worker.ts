@@ -74,10 +74,16 @@ if (self.navigator) {
 
 // Service worker / broadcast channel
 self.BroadcastChannel = _undefined;
+self.MessageChannel = _undefined;
+self.MessagePort = _undefined;
 
 // IndexedDB (prevents persistent state exfiltration)
 self.indexedDB = _undefined;
 self.IDBFactory = _undefined;
+
+function hasDynamicImport(source) {
+  return /(^|[^A-Za-z0-9_$\.])import\s*\(/.test(source);
+}
 
 // ── 2. Parser state ─────────────────────────────────────────────────────────
 
@@ -92,6 +98,11 @@ self.onmessage = function (e) {
 
   if (msg.type === "init") {
     try {
+      if (hasDynamicImport(String(msg.source || ""))) {
+        self.postMessage({ type: "error", message: "Parser source must be self-contained and cannot use dynamic import()" });
+        return;
+      }
+
       // Evaluate the parser source in a constrained scope.
       // We use a Function constructor to avoid giving the source access to
       // our local variables.  The only value we inject is a module-like
@@ -104,13 +115,20 @@ self.onmessage = function (e) {
       const module = { exports };
 
       // Build a function that receives common CJS shims.
-      // \`self\` is shadowed to prevent the parser from un-deleting globals.
+      // Browser and worker globals are shadowed so parser code cannot spoof
+      // protocol messages or reach obvious network/import APIs directly.
       const factory = new Function(
-        "exports", "module", "self", "globalThis",
+        "exports", "module", "self", "globalThis", "postMessage", "close",
+        "fetch", "XMLHttpRequest", "WebSocket", "EventSource", "importScripts",
+        "Worker", "SharedWorker", "MessageChannel", "MessagePort", "eval", "Function",
         // Wrap in a block to prevent hoisted declarations from leaking.
         "\\"use strict\\";\\n{\\n" + msg.source + "\\n}"
       );
-      factory(exports, module, _undefined, _undefined);
+      factory(
+        exports, module, _undefined, _undefined, _undefined, _undefined,
+        _undefined, _undefined, _undefined, _undefined, _undefined,
+        _undefined, _undefined, _undefined, _undefined, _undefined, _undefined,
+      );
 
       // Resolve exports — try module.exports first (CJS), then named exports.
       const resolved = module.exports && typeof module.exports === "object" && Object.keys(module.exports).length > 0

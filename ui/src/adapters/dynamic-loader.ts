@@ -84,6 +84,118 @@ function notifyResultReady(): void {
   resultNotifier?.();
 }
 
+const MAX_WORKER_ENTRIES_PER_LINE = 50;
+const MAX_WORKER_STRING_LENGTH = 20_000;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readWorkerString(value: unknown, fallback = ""): string {
+  if (typeof value !== "string") return fallback;
+  return value.length > MAX_WORKER_STRING_LENGTH ? value.slice(0, MAX_WORKER_STRING_LENGTH) : value;
+}
+
+function readWorkerBoolean(value: unknown, fallback = false): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function readWorkerNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function sanitizeWorkerEntry(value: unknown): TranscriptEntry | null {
+  if (!isRecord(value) || typeof value.kind !== "string") return null;
+  const ts = readWorkerString(value.ts);
+  switch (value.kind) {
+    case "assistant":
+    case "thinking": {
+      return {
+        kind: value.kind,
+        ts,
+        text: readWorkerString(value.text),
+        ...(typeof value.delta === "boolean" ? { delta: value.delta } : {}),
+      };
+    }
+    case "user":
+    case "stderr":
+    case "system":
+    case "stdout": {
+      return { kind: value.kind, ts, text: readWorkerString(value.text) };
+    }
+    case "tool_call": {
+      return {
+        kind: "tool_call",
+        ts,
+        name: readWorkerString(value.name),
+        input: value.input,
+        ...(typeof value.toolUseId === "string" ? { toolUseId: readWorkerString(value.toolUseId) } : {}),
+      };
+    }
+    case "tool_result": {
+      return {
+        kind: "tool_result",
+        ts,
+        toolUseId: readWorkerString(value.toolUseId),
+        ...(typeof value.toolName === "string" ? { toolName: readWorkerString(value.toolName) } : {}),
+        content: readWorkerString(value.content),
+        isError: readWorkerBoolean(value.isError),
+      };
+    }
+    case "init": {
+      return {
+        kind: "init",
+        ts,
+        model: readWorkerString(value.model),
+        sessionId: readWorkerString(value.sessionId),
+      };
+    }
+    case "result": {
+      const errors = Array.isArray(value.errors)
+        ? value.errors.slice(0, MAX_WORKER_ENTRIES_PER_LINE).map((entry) => readWorkerString(entry))
+        : [];
+      return {
+        kind: "result",
+        ts,
+        text: readWorkerString(value.text),
+        inputTokens: readWorkerNumber(value.inputTokens),
+        outputTokens: readWorkerNumber(value.outputTokens),
+        cachedTokens: readWorkerNumber(value.cachedTokens),
+        costUsd: readWorkerNumber(value.costUsd),
+        subtype: readWorkerString(value.subtype),
+        isError: readWorkerBoolean(value.isError),
+        errors,
+      };
+    }
+    case "diff": {
+      const changeType = value.changeType;
+      if (
+        changeType !== "add" &&
+        changeType !== "remove" &&
+        changeType !== "context" &&
+        changeType !== "hunk" &&
+        changeType !== "file_header" &&
+        changeType !== "truncation"
+      ) {
+        return null;
+      }
+      return { kind: "diff", ts, changeType, text: readWorkerString(value.text) };
+    }
+    default:
+      return null;
+  }
+}
+
+function sanitizeWorkerEntries(entries: unknown): TranscriptEntry[] {
+  if (!Array.isArray(entries)) return [];
+  const sanitized: TranscriptEntry[] = [];
+  for (const entry of entries.slice(0, MAX_WORKER_ENTRIES_PER_LINE)) {
+    const next = sanitizeWorkerEntry(entry);
+    if (next) sanitized.push(next);
+  }
+  return sanitized;
+}
+
 /**
  * Parse a single line synchronously by delegating to the worker.
  * Returns a Promise that resolves with the TranscriptEntry[] from the worker.
@@ -137,7 +249,7 @@ function initSandboxedWorker(source: string): Promise<SandboxedParser> {
             const resolver = sandbox.pendingResolves.get(resp.id);
             if (resolver) {
               sandbox.pendingResolves.delete(resp.id);
-              resolver(resp.entries as TranscriptEntry[]);
+              resolver(sanitizeWorkerEntries(resp.entries));
             }
           } else if (resp.type === "error") {
             console.error("[adapter-ui-loader] Worker reported error:", resp.message);

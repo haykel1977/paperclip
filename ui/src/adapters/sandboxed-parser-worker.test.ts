@@ -11,8 +11,25 @@ describe("sandboxed parser worker bootstrap", () => {
     expect(source).toContain("self.Blob = _undefined");
     expect(source).toContain("self.RTCPeerConnection = _undefined");
     expect(source).toContain("self.RTCDataChannel = _undefined");
+    expect(source).toContain("self.MessageChannel = _undefined");
+    expect(source).toContain("self.MessagePort = _undefined");
     expect(source).toContain('"createObjectURL"');
     expect(source).toContain('"revokeObjectURL"');
+  });
+
+  it("shadows direct message, network, import, and eval globals during parser evaluation", () => {
+    const source = getWorkerBootstrapSource();
+
+    expect(source).toContain('"postMessage", "close"');
+    expect(source).toContain('"fetch", "XMLHttpRequest", "WebSocket", "EventSource", "importScripts"');
+    expect(source).toContain('"Worker", "SharedWorker", "MessageChannel", "MessagePort", "eval", "Function"');
+  });
+
+  it("rejects dynamic import syntax before evaluating parser source", () => {
+    const source = getWorkerBootstrapSource();
+
+    expect(source).toContain("hasDynamicImport");
+    expect(source).toContain("cannot use dynamic import()");
   });
 
   it("evaluates parser source in strict mode", () => {

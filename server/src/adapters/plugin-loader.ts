@@ -80,6 +80,7 @@ function resolvePackageEntryPoint(packageDir: string): string {
 // ---------------------------------------------------------------------------
 
 const SUPPORTED_PARSER_CONTRACT = "1";
+const MAX_UI_PARSER_BYTES = 512 * 1024;
 
 function extractUiParserSource(
   packageDir: string,
@@ -113,6 +114,13 @@ function extractUiParserSource(
   const uiParserFile = typeof uiParserExp === "string"
     ? uiParserExp
     : (uiParserExp.import ?? uiParserExp.default);
+  if (typeof uiParserFile !== "string" || uiParserFile.trim().length === 0) {
+    logger.warn(
+      { packageName, uiParserExport: uiParserExp },
+      "UI parser export does not resolve to a file path — skipping",
+    );
+    return undefined;
+  }
   const uiParserPath = path.resolve(packageDir, uiParserFile);
 
   if (!uiParserPath.startsWith(packageDir + path.sep) && uiParserPath !== packageDir) {
@@ -128,6 +136,15 @@ function extractUiParserSource(
   }
 
   try {
+    const stat = fs.statSync(uiParserPath);
+    if (stat.size > MAX_UI_PARSER_BYTES) {
+      logger.warn(
+        { packageName, uiParserFile, size: stat.size, maxSize: MAX_UI_PARSER_BYTES },
+        "UI parser exceeds maximum allowed size — skipping",
+      );
+      return undefined;
+    }
+
     const source = fs.readFileSync(uiParserPath, "utf-8");
     logger.info(
       { packageName, uiParserFile, size: source.length },
