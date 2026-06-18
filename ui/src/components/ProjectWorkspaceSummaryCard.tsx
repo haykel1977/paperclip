@@ -208,7 +208,7 @@ export function ProjectWorkspaceSummaryCard({
                   <a
                     href={summary.primaryServiceUrl}
                     target="_blank"
-                    rel="noreferrer"
+                    rel="noopener noreferrer"
                     className={cn(
                       "break-all font-mono text-xs hover:underline",
                       summary.primaryServiceUrlRunning

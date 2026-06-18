@@ -680,7 +680,7 @@ export function ProjectWorkspaceDetail() {
             </DetailRow>
             <DetailRow label="Repo">
               {workspace.repoUrl && isSafeExternalUrl(workspace.repoUrl) ? (
-                <a href={workspace.repoUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:underline">
+                <a href={workspace.repoUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 hover:underline">
                   {workspace.repoUrl}
                   <ExternalLink className="h-3 w-3" />
                 </a>

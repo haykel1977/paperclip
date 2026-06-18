@@ -1013,7 +1013,7 @@ function RequestConfirmationTargetChip({
   if (!href) return <span className={className}>{content}</span>;
   if (/^https?:\/\//i.test(href)) {
     return (
-      <a href={href} target="_blank" rel="noreferrer" className={className}>
+      <a href={href} target="_blank" rel="noopener noreferrer" className={className}>
         {content}
       </a>
     );

@@ -1768,7 +1768,7 @@ function IssueChatAssistantMessage({
                       : null}
                     {runHref ? (
                       <DropdownMenuItem asChild>
-                        <Link to={runHref} target="_blank" rel="noreferrer noopener">
+                        <Link to={runHref} target="_blank" rel="noopener noreferrer">
                           <Search className="mr-2 h-3.5 w-3.5" />
                           View run
                         </Link>
@@ -1963,7 +1963,7 @@ function IssueChatFeedbackButtons({
               <a
                 href={termsUrl}
                 target="_blank"
-                rel="noreferrer"
+                rel="noopener noreferrer"
                 className="inline-flex text-sm text-foreground underline underline-offset-4"
               >
                 Read our terms of service

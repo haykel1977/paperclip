@@ -81,7 +81,7 @@ function MenuAction({ label, description, icon: Icon, onClick, href, external = 
   if (href) {
     if (external) {
       return (
-        <a href={href} target="_blank" rel="noreferrer" className={className} onClick={onClick}>
+        <a href={href} target="_blank" rel="noopener noreferrer" className={className} onClick={onClick}>
           {content}
         </a>
       );

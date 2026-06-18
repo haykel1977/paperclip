@@ -2304,7 +2304,7 @@ export function CompanySkills() {
             <a
               href="https://skills.sh"
               target="_blank"
-              rel="noreferrer"
+              rel="noopener noreferrer"
               className="flex items-start justify-between rounded-md border border-border px-3 py-3 text-foreground no-underline transition-colors hover:bg-accent/40"
             >
               <span>
@@ -2318,7 +2318,7 @@ export function CompanySkills() {
             <a
               href="https://github.com/search?q=SKILL.md&type=code"
               target="_blank"
-              rel="noreferrer"
+              rel="noopener noreferrer"
               className="flex items-start justify-between rounded-md border border-border px-3 py-3 text-foreground no-underline transition-colors hover:bg-accent/40"
             >
               <span>

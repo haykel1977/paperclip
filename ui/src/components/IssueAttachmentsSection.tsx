@@ -19,6 +19,8 @@ import {
 import { queryKeys } from "@/lib/queryKeys";
 import { cn } from "@/lib/utils";
 
+const MAX_MARKDOWN_ATTACHMENT_PREVIEW_BYTES = 256 * 1024;
+
 interface IssueAttachmentsSectionProps {
   attachments: IssueAttachment[];
   uploadButton?: ReactNode;
@@ -35,12 +37,27 @@ interface IssueAttachmentsSectionProps {
 
 async function fetchAttachmentText(attachment: IssueAttachment) {
   const response = await fetch(attachment.contentPath, {
-    headers: { Accept: "text/markdown,text/plain;q=0.9,*/*;q=0.1" },
+    headers: {
+      Accept: "text/markdown,text/plain;q=0.9,*/*;q=0.1",
+      Range: `bytes=0-${MAX_MARKDOWN_ATTACHMENT_PREVIEW_BYTES - 1}`,
+    },
   });
   if (!response.ok) {
     throw new Error(`Unable to load attachment preview (${response.status})`);
   }
-  return response.text();
+
+  const text = await response.text();
+  const contentRange = typeof response.headers?.get === "function" ? response.headers.get("Content-Range") : null;
+  const totalBytes = contentRange?.match(/\/(\d+)$/)?.[1];
+  const rangeTruncated = response.status === 206 && totalBytes
+    ? Number.parseInt(totalBytes, 10) > MAX_MARKDOWN_ATTACHMENT_PREVIEW_BYTES
+    : false;
+  const textTruncated = text.length > MAX_MARKDOWN_ATTACHMENT_PREVIEW_BYTES;
+
+  return {
+    text: textTruncated ? text.slice(0, MAX_MARKDOWN_ATTACHMENT_PREVIEW_BYTES) : text,
+    truncated: rangeTruncated || textTruncated,
+  };
 }
 
 function AttachmentActions({
@@ -120,11 +137,18 @@ function MarkdownAttachmentCard({
         ) : error ? (
           <p className="px-1 py-2 text-xs text-destructive">Could not load markdown preview.</p>
         ) : (
-          <FoldCurtain>
-            <MarkdownBody className="paperclip-edit-in-place-content min-h-[220px] text-[15px] leading-7" softBreaks={false}>
-              {data ?? ""}
-            </MarkdownBody>
-          </FoldCurtain>
+          <>
+            {data?.truncated ? (
+              <p className="mb-2 rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
+                Preview truncated. Open or download the attachment to view the full file.
+              </p>
+            ) : null}
+            <FoldCurtain>
+              <MarkdownBody className="paperclip-edit-in-place-content min-h-[220px] text-[15px] leading-7" softBreaks={false}>
+                {data?.text ?? ""}
+              </MarkdownBody>
+            </FoldCurtain>
+          </>
         )}
       </div>
     </div>

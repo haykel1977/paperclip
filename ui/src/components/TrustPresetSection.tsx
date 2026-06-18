@@ -215,7 +215,7 @@ export function TrustPresetSection({
                   className="underline underline-offset-2 hover:text-foreground"
                   href="https://paperclip.ing/ee"
                   target="_blank"
-                  rel="noreferrer"
+                  rel="noopener noreferrer"
                 >
                   Get Paperclip EE.
                 </a>

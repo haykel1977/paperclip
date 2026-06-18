@@ -1140,7 +1140,7 @@ function PreviewErrorBanner({ error, onRetry }: { error: unknown; onRetry: () =>
             <a
               href="https://docs.aws.amazon.com/service-authorization/latest/reference/list_awssecretsmanager.html"
               target="_blank"
-              rel="noreferrer"
+              rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-xs font-medium underline"
             >
               IAM reference <ExternalLink className="h-3 w-3" />

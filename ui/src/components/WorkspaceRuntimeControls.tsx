@@ -334,7 +334,7 @@ function CommandSection({
                 </div>
                 <div className="space-y-1 text-xs text-muted-foreground">
                   {item.url ? (
-                    <a href={item.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:underline">
+                    <a href={item.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 hover:underline">
                       {item.url}
                       <ExternalLink className="h-3.5 w-3.5" />
                     </a>
@@ -502,7 +502,7 @@ export function WorkspaceRuntimeQuickControls({
         <a
           href={serviceUrl}
           target="_blank"
-          rel="noreferrer"
+          rel="noopener noreferrer"
           className="inline-flex min-w-0 items-center gap-1 self-start break-all text-xs text-muted-foreground hover:text-foreground hover:underline sm:self-end"
         >
           {serviceUrl}

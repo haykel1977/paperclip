@@ -214,7 +214,7 @@ export function OutputFeedbackButtons({
               <a
                 href={termsUrl}
                 target="_blank"
-                rel="noreferrer"
+                rel="noopener noreferrer"
                 className="inline-flex text-sm text-foreground underline underline-offset-4"
               >
                 Read our terms of service

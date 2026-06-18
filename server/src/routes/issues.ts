@@ -99,6 +99,7 @@ import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
 import {
   isInlineAttachmentContentType,
   isAllowedContentType,
+  isAttachmentContentCompatible,
   normalizeIssueAttachmentMaxBytes,
   normalizeContentType,
   SVG_CONTENT_TYPE,
@@ -208,6 +209,13 @@ function applyCreateIssueStatusDefault(req: Request, res: Response, next: () => 
 
 function buildAttachmentContentPath(attachmentId: string): string {
   return `/api/attachments/${attachmentId}/content`;
+}
+
+function attachmentContentDisposition(disposition: "inline" | "attachment", filename: string): string {
+  const safeFilename = filename
+    .replace(/[\u0000-\u001f\u007f"\\]/g, "_")
+    .slice(0, 180) || "attachment";
+  return `${disposition}; filename="${safeFilename}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 }
 
 const GENERIC_ATTACHMENT_CONTENT_TYPES = new Set([
@@ -6878,6 +6886,10 @@ export function issueRoutes(
       res.status(422).json({ error: `Unsupported attachment content type: ${contentType}` });
       return;
     }
+    if (!isAttachmentContentCompatible(contentType, file.buffer)) {
+      res.status(422).json({ error: `Attachment content does not match declared content type: ${contentType}` });
+      return;
+    }
 
     const parsedMeta = createIssueAttachmentMetadataSchema.safeParse(req.body ?? {});
     if (!parsedMeta.success) {
@@ -6968,7 +6980,7 @@ export function issueRoutes(
     const disposition = parseBooleanQuery(req.query.download)
       ? "attachment"
       : isInlineAttachmentContentType(responseContentType) ? "inline" : "attachment";
-    res.setHeader("Content-Disposition", `${disposition}; filename=\"${filename.replaceAll("\"", "")}\"`);
+    res.setHeader("Content-Disposition", attachmentContentDisposition(disposition, filename));
 
     object.stream.on("error", (err) => {
       next(err);

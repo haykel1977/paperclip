@@ -243,7 +243,7 @@ export function CloudUpstream() {
         </div>
         {connection?.target.origin ? (
           <Button variant="outline" size="sm" asChild>
-            <a href={connection.target.origin} target="_blank" rel="noreferrer">
+            <a href={connection.target.origin} target="_blank" rel="noopener noreferrer">
               <ExternalLink className="h-4 w-4" />
               Open cloud
             </a>

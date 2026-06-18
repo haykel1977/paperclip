@@ -10,6 +10,7 @@ const mockIssueService = vi.hoisted(() => ({
   getByIdentifier: vi.fn(),
   createAttachment: vi.fn(),
   getAttachmentById: vi.fn(),
+  removeAttachment: vi.fn(),
 }));
 const mockCompanyService = vi.hoisted(() => ({
   getById: vi.fn(),
@@ -237,6 +238,7 @@ describe("issue attachment routes", () => {
       id: "company-1",
       attachmentMaxBytes: 1024 * 1024 * 1024,
     });
+    mockIssueService.removeAttachment.mockReset();
     mockWorkProductService.createForIssue.mockReset();
     mockWorkProductService.getById.mockReset();
     mockWorkProductService.update.mockReset();
@@ -254,7 +256,7 @@ describe("issue attachment routes", () => {
     const app = await createApp(storage);
     const res = await request(app)
       .post("/api/companies/company-1/issues/11111111-1111-4111-8111-111111111111/attachments")
-      .attach("file", Buffer.from("zip"), { filename: "bundle.zip", contentType: "application/zip" });
+      .attach("file", Buffer.from([0x50, 0x4b, 0x03, 0x04]), { filename: "bundle.zip", contentType: "application/zip" });
 
     expect([200, 201]).toContain(res.status);
     const putFileCall = storage.__calls.putFile;
@@ -321,6 +323,28 @@ describe("issue attachment routes", () => {
     expect(mockIssueService.createAttachment).not.toHaveBeenCalled();
   });
 
+  it("rejects uploads whose bytes do not match the declared content type", async () => {
+    const storage = createStorageService();
+    mockIssueService.getById.mockResolvedValue({
+      id: "11111111-1111-4111-8111-111111111111",
+      companyId: "company-1",
+      identifier: "PAP-1",
+    });
+
+    const app = await createApp(storage);
+    const res = await request(app)
+      .post("/api/companies/company-1/issues/11111111-1111-4111-8111-111111111111/attachments")
+      .attach("file", Buffer.from("<!doctype html><script>alert(1)</script>"), {
+        filename: "preview.png",
+        contentType: "image/png",
+      });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error).toBe("Attachment content does not match declared content type: image/png");
+    expect(storage.__calls.putFile).toBeUndefined();
+    expect(mockIssueService.createAttachment).not.toHaveBeenCalled();
+  });
+
   it("enforces the process-level issue attachment limit even when the company limit allows more", async () => {
     const storage = createStorageService();
     mockIssueService.getById.mockResolvedValue({
@@ -376,10 +400,8 @@ describe("issue attachment routes", () => {
       .parse(parseBinaryResponse);
 
     expect(res.status).toBe(200);
-    expect([
-      undefined,
-      'attachment; filename="report.html"',
-    ]).toContain(res.headers["content-disposition"]);
+    expect(res.headers["content-disposition"]).toContain('attachment; filename="report.html"');
+    expect(res.headers["content-disposition"]).toContain("filename*=UTF-8''report.html");
     expect(res.headers["x-content-type-options"]).toBe("nosniff");
   });
 
@@ -391,10 +413,7 @@ describe("issue attachment routes", () => {
     const res = await request(app).get("/api/attachments/attachment-1/content");
 
     expect(res.status).toBe(200);
-    expect([
-      undefined,
-      'inline; filename="preview.png"',
-    ]).toContain(res.headers["content-disposition"]);
+    expect(res.headers["content-disposition"]).toContain('inline; filename="preview.png"');
   });
 
   it("serves video attachments inline with byte-range support", async () => {
@@ -414,7 +433,7 @@ describe("issue attachment routes", () => {
     expect(res.headers["accept-ranges"]).toBe("bytes");
     expect(res.headers["content-range"]).toBe("bytes 1-3/6");
     expect(res.headers["content-length"]).toBe("3");
-    expect(res.headers["content-disposition"]).toBe('inline; filename="clip.mp4"');
+    expect(res.headers["content-disposition"]).toContain('inline; filename="clip.mp4"');
     expect(Buffer.from(res.body).toString("utf8")).toBe("bcd");
     expect(storage.getObject).toHaveBeenCalledWith(
       "company-1",
@@ -437,7 +456,7 @@ describe("issue attachment routes", () => {
 
     expect(res.status).toBe(206);
     expect(res.headers["content-type"]).toContain("video/mp4");
-    expect(res.headers["content-disposition"]).toBe('inline; filename="clip.mp4"');
+    expect(res.headers["content-disposition"]).toContain('inline; filename="clip.mp4"');
     expect(res.headers["content-range"]).toBe("bytes 1-3/6");
     expect(Buffer.from(res.body).toString("utf8")).toBe("bcd");
   });
@@ -450,7 +469,7 @@ describe("issue attachment routes", () => {
     const res = await request(app).get("/api/attachments/attachment-1/content?download=1");
 
     expect(res.status).toBe(200);
-    expect(res.headers["content-disposition"]).toBe('attachment; filename="clip.webm"');
+    expect(res.headers["content-disposition"]).toContain('attachment; filename="clip.webm"');
   });
 
   it("rejects invalid byte ranges without streaming the object", async () => {
@@ -476,6 +495,38 @@ describe("issue attachment routes", () => {
 
     expect(res.status).toBe(403);
     expect(storage.getObject).not.toHaveBeenCalled();
+  });
+
+  it("deletes attachments after company access and issue mutation checks", async () => {
+    const attachment = makeAttachment("image/png", "preview.png");
+    const storage = createStorageService();
+    mockIssueService.getAttachmentById.mockResolvedValue(attachment);
+    mockIssueService.getById.mockResolvedValue({
+      id: attachment.issueId,
+      companyId: attachment.companyId,
+      identifier: "PAP-1",
+    });
+    mockIssueService.removeAttachment.mockResolvedValue(attachment);
+
+    const app = await createApp(storage);
+    const res = await request(app).delete("/api/attachments/attachment-1");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+    expect(storage.deleteObject).toHaveBeenCalledWith("company-1", "issues/issue-1/preview.png");
+    expect(mockIssueService.removeAttachment).toHaveBeenCalledWith("attachment-1");
+  });
+
+  it("rejects cross-company attachment deletes before deleting storage", async () => {
+    const storage = createStorageService();
+    mockIssueService.getAttachmentById.mockResolvedValue(makeAttachment("image/png", "preview.png"));
+
+    const app = await createApp(storage, { companyIds: ["company-2"], source: "session" });
+    const res = await request(app).delete("/api/attachments/attachment-1");
+
+    expect(res.status).toBe(403);
+    expect(storage.deleteObject).not.toHaveBeenCalled();
+    expect(mockIssueService.removeAttachment).not.toHaveBeenCalled();
   });
 
   it("canonicalizes paperclip artifact metadata before creating a work product", async () => {

@@ -2031,7 +2031,7 @@ export function IssueProperties({
                 <a
                   href={liveWorkspaceService.url}
                   target="_blank"
-                  rel="noreferrer"
+                  rel="noopener noreferrer"
                   className="inline-flex min-w-0 items-start gap-1 text-sm font-mono text-emerald-700 hover:text-emerald-800 hover:underline dark:text-emerald-300 dark:hover:text-emerald-200"
                 >
                   <span className="min-w-0 break-all">{liveWorkspaceService.url}</span>

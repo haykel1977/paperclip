@@ -3386,7 +3386,7 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }
                       href={claudeLoginResult.loginUrl}
                       className="text-blue-600 underline underline-offset-2 ml-1 break-all dark:text-blue-400"
                       target="_blank"
-                      rel="noreferrer"
+                      rel="noopener noreferrer"
                     >
                       {claudeLoginResult.loginUrl}
                     </a>

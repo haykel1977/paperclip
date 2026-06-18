@@ -140,7 +140,10 @@ describe("IssueAttachmentsSection", () => {
     expect(fetchSpy).toHaveBeenCalledWith(
       "/api/attachments/markdown-attachment/content",
       expect.objectContaining({
-        headers: expect.objectContaining({ Accept: expect.stringContaining("text/markdown") }),
+        headers: expect.objectContaining({
+          Accept: expect.stringContaining("text/markdown"),
+          Range: expect.stringMatching(/^bytes=0-\d+$/),
+        }),
       }),
     );
     await waitForAssertion(() => {
@@ -148,6 +151,39 @@ describe("IssueAttachmentsSection", () => {
       const markdownBody = container.querySelector('[data-testid="markdown-body"]');
       expect(markdownBody?.textContent).toContain("Imported plan");
       expect(markdownBody?.className).toContain("paperclip-edit-in-place-content");
+    });
+  });
+
+  it("marks range-limited markdown previews as truncated", async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 206,
+      headers: { get: (name: string) => name.toLowerCase() === "content-range" ? "bytes 0-262143/262200" : null },
+      text: () => Promise.resolve("# Partial preview"),
+    });
+    const attachment = makeAttachment({
+      id: "large-markdown-attachment",
+      originalFilename: "large-plan.md",
+      contentType: "text/markdown",
+      contentPath: "/api/attachments/large-markdown-attachment/content",
+    });
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <IssueAttachmentsSection
+            attachments={[attachment]}
+            onDelete={vi.fn()}
+            onImageClick={vi.fn()}
+          />
+        </QueryClientProvider>,
+      );
+    });
+    await flushReact();
+
+    await waitForAssertion(() => {
+      expect(container.textContent).toContain("Preview truncated");
+      expect(container.querySelector('[data-testid="markdown-body"]')?.textContent).toContain("Partial preview");
     });
   });
 
@@ -178,6 +214,35 @@ describe("IssueAttachmentsSection", () => {
     expect(container.textContent).toContain("report.md");
     expect(container.textContent).toContain("application/zip");
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("renders image attachments with accessible preview and delete controls", async () => {
+    const onImageClick = vi.fn();
+    const attachment = makeAttachment({
+      id: "image-attachment",
+      originalFilename: "diagram.png",
+      contentType: "image/png",
+      contentPath: "/api/attachments/image-attachment/content",
+    });
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <IssueAttachmentsSection
+            attachments={[attachment]}
+            onDelete={vi.fn()}
+            onImageClick={onImageClick}
+          />
+        </QueryClientProvider>,
+      );
+    });
+    await flushReact();
+
+    const previewButton = container.querySelector('button[aria-label="Open diagram.png preview"]') as HTMLButtonElement | null;
+    expect(previewButton).toBeTruthy();
+    previewButton?.click();
+    expect(onImageClick).toHaveBeenCalledWith(attachment);
+    expect(container.querySelector('button[aria-label="Delete diagram.png"]')).toBeTruthy();
   });
 
   it("renders video attachments through the same player used for artifact outputs", async () => {

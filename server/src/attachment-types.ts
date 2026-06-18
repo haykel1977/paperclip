@@ -88,6 +88,60 @@ export function normalizeContentType(contentType: string | null | undefined): st
   return normalized || DEFAULT_ATTACHMENT_CONTENT_TYPE;
 }
 
+function bytesStartWith(body: Uint8Array, signature: readonly number[]): boolean {
+  if (body.length < signature.length) return false;
+  return signature.every((byte, index) => body[index] === byte);
+}
+
+function bufferAscii(body: Uint8Array, start: number, length: number): string {
+  return Buffer.from(body.subarray(start, start + length)).toString("ascii");
+}
+
+export function detectAttachmentContentType(body: Uint8Array): string | null {
+  if (bytesStartWith(body, [0x4d, 0x5a])) return "application/x-msdownload";
+  if (bytesStartWith(body, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return "image/png";
+  if (bytesStartWith(body, [0xff, 0xd8, 0xff])) return "image/jpeg";
+  if (bufferAscii(body, 0, 6) === "GIF87a" || bufferAscii(body, 0, 6) === "GIF89a") return "image/gif";
+  if (bufferAscii(body, 0, 4) === "RIFF" && bufferAscii(body, 8, 4) === "WEBP") return "image/webp";
+  if (bytesStartWith(body, [0x25, 0x50, 0x44, 0x46, 0x2d])) return "application/pdf";
+  if (
+    bytesStartWith(body, [0x50, 0x4b, 0x03, 0x04]) ||
+    bytesStartWith(body, [0x50, 0x4b, 0x05, 0x06]) ||
+    bytesStartWith(body, [0x50, 0x4b, 0x07, 0x08])
+  ) {
+    return "application/zip";
+  }
+  if (bytesStartWith(body, [0x1a, 0x45, 0xdf, 0xa3])) return "video/webm";
+  if (body.length >= 12 && bufferAscii(body, 4, 4) === "ftyp") return "video/mp4";
+
+  const prefix = Buffer.from(body.subarray(0, 512)).toString("utf8").trimStart().toLowerCase();
+  if (prefix.startsWith("<svg") || (prefix.startsWith("<?xml") && prefix.includes("<svg"))) return SVG_CONTENT_TYPE;
+  if (
+    prefix.startsWith("<!doctype html") ||
+    prefix.startsWith("<html") ||
+    prefix.startsWith("<head") ||
+    prefix.startsWith("<body") ||
+    prefix.startsWith("<script")
+  ) {
+    return "text/html";
+  }
+
+  return null;
+}
+
+export function isAttachmentContentCompatible(contentType: string, body: Uint8Array): boolean {
+  const declared = normalizeContentType(contentType);
+  const detected = detectAttachmentContentType(body);
+  if (!detected) return true;
+  if (detected === "application/x-msdownload") return false;
+  if (declared === DEFAULT_ATTACHMENT_CONTENT_TYPE) return true;
+  if (detected === "image/jpeg") return declared === "image/jpeg" || declared === "image/jpg";
+  if (detected === "application/zip") {
+    return declared === "application/zip" || declared.startsWith("application/vnd.openxmlformats-officedocument.");
+  }
+  return declared === detected;
+}
+
 export function isInlineAttachmentContentType(contentType: string): boolean {
   return matchesContentType(contentType, [...INLINE_ATTACHMENT_TYPES]);
 }

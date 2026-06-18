@@ -314,7 +314,7 @@ export function CompanyInvites() {
                 Copy link
               </Button>
               <Button size="sm" variant="outline" asChild>
-                <a href={latestInviteUrl} target="_blank" rel="noreferrer">
+                <a href={latestInviteUrl} target="_blank" rel="noopener noreferrer">
                   <ExternalLink className="h-4 w-4" />
                   Open invite
                 </a>
