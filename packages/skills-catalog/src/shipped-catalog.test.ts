@@ -61,10 +61,26 @@ describe("shipped skills catalog", () => {
     expect(issues).toEqual([]);
   });
 
+  it("keeps PR-green workflow skills discoverable by CI-related metadata", () => {
+    const requiredCiSkills = [
+      "paperclipai/bundled/paperclip-operations/issue-triage",
+      "paperclipai/bundled/paperclip-operations/task-planning",
+      "paperclipai/bundled/software-development/github-pr-workflow",
+    ];
+
+    for (const key of requiredCiSkills) {
+      const skill = catalogSkills.find((entry) => entry.key === key);
+      expect(skill, `expected ${key} to ship`).toBeDefined();
+      expect(skill?.tags).toContain("ci");
+      expect(skill?.description.toLowerCase()).toMatch(/ci|pr/);
+    }
+  });
+
   it("uses canonical paperclipai keys derived from kind/category/slug", () => {
     const violations: string[] = [];
     for (const skill of catalogSkills) {
       const expectedKey = `paperclipai/${skill.kind}/${skill.category}/${skill.slug}`;
+
       const expectedId = `paperclipai:${skill.kind}:${skill.category}:${skill.slug}`;
       if (skill.key !== expectedKey) violations.push(`${skill.key} should be ${expectedKey}`);
       if (skill.id !== expectedId) violations.push(`${skill.id} should be ${expectedId}`);
