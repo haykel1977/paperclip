@@ -192,6 +192,22 @@ describe("cursor_cloud execute", () => {
       expect.stringContaining("Do not open a pull request unless the task explicitly asks for one"),
       expect.any(Object),
     );
+    expect(sdkAgent.send).toHaveBeenCalledWith(
+      expect.stringContaining("Do the work for Cursor Cloud Agent"),
+      expect.any(Object),
+    );
+    expect(sdkAgent.send).toHaveBeenCalledWith(
+      expect.stringContaining("Source control contract"),
+      expect.any(Object),
+    );
+    expect(sdkAgent.send).toHaveBeenCalledWith(
+      expect.stringContaining("PR creation is a review handoff rather than completion"),
+      expect.any(Object),
+    );
+    expect(sdkAgent.send).toHaveBeenCalledWith(
+      expect.stringContaining("PR checks/CI when available"),
+      expect.any(Object),
+    );
 
     expect(result).toMatchObject({
       exitCode: 0,
@@ -199,6 +215,7 @@ describe("cursor_cloud execute", () => {
 
       sessionId: "agent-fresh",
       model: "gpt-5.4",
+
       summary: "Done",
       sessionParams: {
         cursorAgentId: "agent-fresh",
