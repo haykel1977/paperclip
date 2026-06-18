@@ -97,10 +97,26 @@ async function runExecutor(
 }
 
 describe("acpx_local runtime skill isolation", () => {
+  it("adds the source control contract to custom prompt templates", async () => {
+    const root = await makeTempRoot();
+    const { meta } = await runExecutor({
+      agent: "codex",
+      stateDir: path.join(root, "state"),
+      promptTemplate: "Custom ACPX heartbeat instructions.",
+    });
+
+    const prompt = String(meta[0]?.prompt ?? "");
+    expect(prompt).toContain("Custom ACPX heartbeat instructions.");
+    expect(prompt).toContain("Source control contract");
+    expect(prompt).toContain("PR creation is a review handoff rather than completion");
+    expect(prompt).toContain("PR checks/CI when available");
+  });
+
   it.skipIf(process.platform === "win32")("materializes ACPX Claude skills without symlinked descendants", async () => {
     const root = await makeTempRoot();
     const skillRoot = path.join(root, "skills");
     const outsideRoot = path.join(root, "outside");
+
     await fs.mkdir(outsideRoot, { recursive: true });
     await fs.writeFile(path.join(outsideRoot, "secret.txt"), "do not expose", "utf8");
     const skill = await createSkill(skillRoot, "danger");
