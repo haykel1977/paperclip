@@ -374,6 +374,10 @@ async function resolveDeliveryCommitSigningPlan(input: {
   };
 }
 
+function isAcceptableLocalGitSignatureStatus(signatureStatus: string): boolean {
+  return signatureStatus === "G" || signatureStatus === "U";
+}
+
 async function verifyLatestCommitIsSigned(input: {
   worktreeCwd: string;
   env: Record<string, string>;
@@ -381,8 +385,7 @@ async function verifyLatestCommitIsSigned(input: {
 }): Promise<boolean> {
   const result = await input.runProc("git", ["log", "-1", "--format=%G?"], input.worktreeCwd, input.env);
   if (result.exitCode !== 0) return false;
-  const signatureStatus = result.stdout.trim();
-  return signatureStatus.length > 0 && signatureStatus !== "N";
+  return isAcceptableLocalGitSignatureStatus(result.stdout.trim());
 }
 
 function formatChangedFiles(statusStdout: string): string[] {
@@ -671,11 +674,27 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
 export async function executeConfiguredDeliveryHook(
   input: ExecuteConfiguredDeliveryHookInput,
 ): Promise<DeliveryHookResult | null> {
-  if (input.config.deliveryHookEnabled === false) return null;
-  if (input.executionTargetIsRemote) return null;
-  if ((input.exitCode ?? 1) !== 0) return null;
+  if (input.config.deliveryHookEnabled === false) {
+    await input.log("stdout", "[paperclip] delivery: skipped reason=delivery_hook_disabled\n");
+    return null;
+  }
+  const remoteDeliveryEnabled =
+    input.config.deliveryHookRemoteEnabled === true ||
+    asString(input.config.deliveryHookRemoteEnabled).trim().toLowerCase() === "true" ||
+    readBooleanEnv(input.env, "PAPERCLIP_DELIVERY_REMOTE_ENABLED");
+  if (input.executionTargetIsRemote && !remoteDeliveryEnabled) {
+    await input.log("stdout", "[paperclip] delivery: skipped reason=remote_delivery_not_enabled\n");
+    return null;
+  }
+  if ((input.exitCode ?? 1) !== 0) {
+    await input.log("stdout", "[paperclip] delivery: skipped reason=adapter_exit_nonzero\n");
+    return null;
+  }
   const branch = input.branch?.trim();
-  if (!branch) return null;
+  if (!branch) {
+    await input.log("stdout", "[paperclip] delivery: skipped reason=missing_branch\n");
+    return null;
+  }
 
   // NOTE: createDeliveryLogRedactor is called inside executeDeliveryHook — do NOT wrap log here.
   const delivery = await executeDeliveryHook({

@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { executeConfiguredDeliveryHook } from "@paperclipai/adapter-utils/delivery-hook";
 import { executeDeliveryHook } from "./execute.js";
 
 const tmpDirs: string[] = [];
@@ -53,11 +54,13 @@ describe("executeDeliveryHook", () => {
   const savedLane = process.env.PAPERCLIP_DELIVERY_LANE;
   const savedAutonomous = process.env.PAPERCLIP_AUTONOMOUS_DELIVERY;
   const savedBotToken = process.env.PAPERCLIP_DELIVERY_BOT_TOKEN;
+  const savedRemoteDelivery = process.env.PAPERCLIP_DELIVERY_REMOTE_ENABLED;
 
   beforeEach(() => {
     delete process.env.PAPERCLIP_DELIVERY_LANE;
     delete process.env.PAPERCLIP_AUTONOMOUS_DELIVERY;
     delete process.env.PAPERCLIP_DELIVERY_BOT_TOKEN;
+    delete process.env.PAPERCLIP_DELIVERY_REMOTE_ENABLED;
   });
 
   afterEach(() => {
@@ -67,6 +70,8 @@ describe("executeDeliveryHook", () => {
     else process.env.PAPERCLIP_AUTONOMOUS_DELIVERY = savedAutonomous;
     if (savedBotToken === undefined) delete process.env.PAPERCLIP_DELIVERY_BOT_TOKEN;
     else process.env.PAPERCLIP_DELIVERY_BOT_TOKEN = savedBotToken;
+    if (savedRemoteDelivery === undefined) delete process.env.PAPERCLIP_DELIVERY_REMOTE_ENABLED;
+    else process.env.PAPERCLIP_DELIVERY_REMOTE_ENABLED = savedRemoteDelivery;
     for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
@@ -297,6 +302,56 @@ describe("executeDeliveryHook", () => {
     expect(result.reason).toBe("delivery_blocked: unsigned commit");
     expect(calls).toContainEqual(expect.arrayContaining(["git", "commit", "-S"]));
     expect(calls.some((call) => call[0] === "git" && call[1] === "push")).toBe(false);
+  });
+
+  it("autonomous delivery blocks bad signature statuses instead of treating every non-N status as signed", async () => {
+    const worktreeCwd = mkWorktree();
+    const calls: string[][] = [];
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      if (key === "git log -1") return { exitCode: 0, stdout: "B\n", stderr: "" };
+      if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const result = await executeDeliveryHook({
+      ...base,
+      worktreeCwd,
+      env: {
+        PAPERCLIP_AUTONOMOUS_DELIVERY: "1",
+        PAPERCLIP_DELIVERY_BOT_TOKEN: "bot-token",
+        PAPERCLIP_DELIVERY_SIGN_COMMITS: "1",
+      },
+      runProc,
+    });
+
+    expect(result.reason).toBe("delivery_blocked: unsigned commit");
+    expect(calls).toContainEqual(expect.arrayContaining(["git", "commit", "-S"]));
+    expect(calls.some((call) => call[0] === "git" && call[1] === "push")).toBe(false);
+  });
+
+  it("configured delivery reports remote skip unless remote delivery is explicitly enabled", async () => {
+    const worktreeCwd = mkWorktree();
+    const log = vi.fn(async () => {});
+    const runProc = vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" }));
+
+    const result = await executeConfiguredDeliveryHook({
+      ...base,
+      worktreeCwd,
+      branch: base.branch,
+      config: {},
+      context: {},
+      executionTargetIsRemote: true,
+      exitCode: 0,
+      runProc,
+      log,
+    });
+
+    expect(result).toBeNull();
+    expect(runProc).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith("stdout", "[paperclip] delivery: skipped reason=remote_delivery_not_enabled\n");
   });
 
   it("dev-test lane keeps existing no-human lane labels when autonomous flag is off", async () => {
