@@ -49,7 +49,18 @@ PRs that follow this path are **much** more likely to be accepted, even when the
 
 ### Use the PR Template
 
-Every pull request **must** follow the PR template at [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md). If you create a PR via the GitHub API or other tooling that bypasses the template, copy its contents into your PR description manually. The template includes required sections: Thinking Path, What Changed, Verification, Risks, Model Used, and a Checklist.
+Every pull request **must** follow the PR template at [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md). If you create a PR via the GitHub API or other tooling that bypasses the template, copy its contents into your PR description manually. The template includes required sections: Thinking Path, What Changed, Verification, PR Readiness Gate, Risks, Model Used, and a Checklist.
+
+### PR Readiness Gate
+
+Before opening or presenting a PR as ready for review, all of these must be true:
+
+- The diff is focused on the requested task. Split unrelated cleanup, refactors, formatting sweeps, or dependency bumps into follow-up issues/PRs.
+- The PR template is filled out, including verification, risks, model used, and checklist items.
+- Verification evidence is concrete and matches the current diff.
+- Required/relevant CI checks are green, or an external blocker is named with the missing prerequisite and owner/action.
+
+If any item is missing, do not ask for review or call the work done. Push the branch if useful, but state exactly what is missing and treat the work as blocked or still in review.
 
 ### Link Issues or Describe Them In-PR
 

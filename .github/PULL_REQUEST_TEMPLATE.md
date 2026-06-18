@@ -44,9 +44,25 @@
 <!--
   How can a reviewer confirm this works? Include test commands, manual
   steps, or both. For UI changes, include before/after screenshots.
+  Name required/relevant CI checks and their current status when available.
 -->
 
 -
+
+## PR Readiness Gate
+
+<!--
+  Required before requesting review:
+  - Keep the diff focused on this task. Split unrelated cleanup/refactors into follow-ups.
+  - Fill this PR template completely.
+  - Include verification evidence that matches the current diff.
+  - Confirm required/relevant CI is green, or name the external blocker.
+-->
+
+- Diff scope:
+- Template status:
+- Verification evidence:
+- CI status:
 
 ## Risks
 
@@ -86,6 +102,7 @@
 - [ ] If this change affects the UI, I have included before/after screenshots
 - [ ] I have updated relevant documentation to reflect my changes
 - [ ] I have considered and documented any risks above
+- [ ] The PR readiness gate is satisfied: focused diff, completed template, verification evidence, and green required/relevant CI or documented external blocker
 - [ ] All Paperclip CI gates are green
 - [ ] Greptile is 5/5 with no open P2s, recommendations, or follow-ups
 - [ ] I will address all Greptile and reviewer comments before requesting merge

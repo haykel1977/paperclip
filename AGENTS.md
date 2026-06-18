@@ -160,11 +160,23 @@ When adding endpoints:
 
 ## 10. Pull Request Requirements
 
-When creating a pull request (via `gh pr create` or any other method), you **must** read and fill in every section of [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md). Do not craft ad-hoc PR bodies — use the template as the structure for your PR description. Required sections:
+When creating a pull request (via `gh pr create` or any other method), you **must** read and fill in every section of [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md). Do not craft ad-hoc PR bodies — use the template as the structure for your PR description.
+
+Before opening or presenting a PR as review-ready, apply this PR readiness gate:
+
+- The diff is focused on the requested task; unrelated cleanup, refactors, formatting sweeps, and dependency bumps are split into follow-up issues.
+- The repository PR template is filled when one exists.
+- Verification evidence is included and matches the current diff.
+- Required/relevant CI checks are green, or the external blocker is explicitly documented.
+
+If any gate item is missing, do not present the PR as ready for review and do not call the task `done`; state exactly what is missing and leave the issue `in_review` or `blocked`.
+
+Required PR sections:
 
 - **Thinking Path** — trace reasoning from project context to this change (see `CONTRIBUTING.md` for examples)
 - **What Changed** — bullet list of concrete changes
 - **Verification** — how a reviewer can confirm it works
+- **PR Readiness Gate** — diff scope, template status, verification evidence, and CI status
 - **Risks** — what could go wrong
 - **Model Used** — the AI model that produced or assisted with the change (provider, exact model ID, context window, capabilities). Write "None — human-authored" if no AI was used.
 - **Checklist** — all items checked
@@ -177,9 +189,10 @@ A change is done when all are true:
 2. Typecheck, tests, and build pass
 3. Contracts are synced across db/shared/server/ui
 4. Docs updated when behavior or commands change
-5. PR description follows the [PR template](.github/PULL_REQUEST_TEMPLATE.md) with all sections filled in (including Model Used)
+5. PR readiness gate is satisfied: focused diff, template filled, verification evidence recorded, and required/relevant CI green or explicitly blocked
+6. PR description follows the [PR template](.github/PULL_REQUEST_TEMPLATE.md) with all sections filled in (including Model Used)
 
-## 11. Fork-Specific: HenkDz/paperclip
+## 12. Fork-Specific: HenkDz/paperclip
 
 This is a fork of `paperclipai/paperclip` with QoL patches and an **external-only** Hermes adapter story on branch `feat/externalize-hermes-adapter` ([tree](https://github.com/HenkDz/paperclip/tree/feat/externalize-hermes-adapter)).
 
