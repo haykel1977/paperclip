@@ -10,6 +10,7 @@ const REQUIRED_SECTIONS = [
   { heading: '## Thinking Path', minSentences: 3 },
   { heading: '## What Changed', minSentences: 1 },
   { heading: '## Verification', minSentences: 1 },
+  { heading: '## PR Readiness Gate', minSentences: 1 },
   { heading: '## Risks', minSentences: 1 },
   { heading: '## Model Used', minSentences: 1 },
 ];
@@ -18,6 +19,13 @@ const MODEL_PLACEHOLDERS = [
   'provider, model id',
   'your model',
   '<model>',
+];
+
+const PR_READINESS_FIELDS = [
+  'Diff scope',
+  'Template status',
+  'Verification evidence',
+  'CI status',
 ];
 
 function extractSectionContent(body, heading) {
@@ -33,6 +41,22 @@ function countSentences(text) {
   // blank lines so non-prose Thinking Paths (bullet lists, blockquotes) are
   // counted by item rather than as a single sentence.
   return text.split(/[.!?]+\s+|\n\s*[-*>]+\s+|\n{2,}/).filter(s => s.trim().length > 5).length;
+}
+
+function readReadinessField(content, field) {
+  const normalizedField = field.toLowerCase();
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim().replace(/^[-*]\s*/, '');
+    const colonIndex = trimmed.indexOf(':');
+    if (colonIndex === -1) continue;
+    const key = trimmed.slice(0, colonIndex).trim().toLowerCase();
+    if (key === normalizedField) return trimmed.slice(colonIndex + 1).trim();
+  }
+  return '';
+}
+
+function isPlaceholderReadinessValue(value) {
+  return !value || /^[-_—–]+$/.test(value) || /^todo$/i.test(value) || /^tbd$/i.test(value);
 }
 
 export function checkTemplate(body) {
@@ -64,6 +88,15 @@ export function checkTemplate(body) {
         failures.push(
           `**Thinking Path** needs more detail (${n} sentence${n === 1 ? '' : 's'} — aim for 3+)`
         );
+      }
+    }
+
+    if (heading === '## PR Readiness Gate') {
+      for (const field of PR_READINESS_FIELDS) {
+        const value = readReadinessField(content, field);
+        if (isPlaceholderReadinessValue(value)) {
+          failures.push(`**PR Readiness Gate** missing value for ${field}`);
+        }
       }
     }
 

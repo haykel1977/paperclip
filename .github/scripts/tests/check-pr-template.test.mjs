@@ -12,6 +12,12 @@ First I considered the root cause of the bug in the cursor logic. Then I traced 
 ## Verification
 Run pnpm test:run:general and verify the cursor pagination tests pass.
 
+## PR Readiness Gate
+- Diff scope: Focused on the cursor pagination query fix only.
+- Template status: All required sections completed.
+- Verification evidence: pnpm test:run:general passed locally for cursor pagination coverage.
+- CI status: Required checks are green.
+
 ## Risks
 Low risk — isolated change to one query parameter.
 
@@ -87,6 +93,31 @@ Third paragraph explaining the tradeoffs in detail
   const result = checkTemplate(body);
   assert.equal(result.passed, true);
   assert.deepEqual(result.failures, []);
+});
+
+test('fails when PR Readiness Gate section is missing', () => {
+  const body = VALID_BODY.replace('## PR Readiness Gate', '## Removed');
+  const result = checkTemplate(body);
+  assert.equal(result.passed, false);
+  assert.ok(result.failures.some(f => f.includes('PR Readiness Gate')));
+});
+
+test('fails when PR Readiness Gate fields are empty', () => {
+  const body = VALID_BODY.replace(
+    /## PR Readiness Gate\n[\s\S]*?\n## Risks/,
+    `## PR Readiness Gate
+- Diff scope:
+- Template status: completed
+- Verification evidence:
+- CI status: TBD
+
+## Risks`
+  );
+  const result = checkTemplate(body);
+  assert.equal(result.passed, false);
+  assert.ok(result.failures.some(f => f.includes('Diff scope')));
+  assert.ok(result.failures.some(f => f.includes('Verification evidence')));
+  assert.ok(result.failures.some(f => f.includes('CI status')));
 });
 
 test('fails when Model Used section is missing', () => {

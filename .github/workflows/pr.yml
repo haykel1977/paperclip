@@ -55,6 +55,9 @@ jobs:
       - name: Test no-git-push check
         run: node --test ./scripts/check-no-git-push.test.mjs
 
+      - name: Test PR template quality gate
+        run: node --test ./.github/scripts/tests/check-pr-template.test.mjs
+
       - name: Validate release package manifest
         run: node ./scripts/release-package-map.mjs check
 
