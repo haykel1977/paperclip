@@ -1032,6 +1032,7 @@ export function agentRoutes(
     adapterType: string | null | undefined;
     adapterConfig: Record<string, unknown>;
     constraintAdapterConfig?: Record<string, unknown>;
+    pathLabel?: string;
   }): Promise<Record<string, unknown>> {
     const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
       input.companyId,
@@ -1043,6 +1044,7 @@ export function agentRoutes(
       input.constraintAdapterConfig
         ? { ...input.constraintAdapterConfig, ...normalizedAdapterConfig }
         : normalizedAdapterConfig,
+      input.pathLabel,
     );
     return normalizedAdapterConfig;
   }
@@ -1073,8 +1075,8 @@ export function agentRoutes(
           ...baseAdapterConfig,
           ...adapterDefaultConfig,
         },
+        pathLabel: `${entry.path}.model`,
       });
-      await assertSovereignAgentModel(adapterType, normalizedAdapterConfig, `${entry.path}.model`);
       normalizedModelProfiles[entry.profileKey] = {
         ...entry.profile,
         adapterConfig: normalizedAdapterConfig,
@@ -1087,6 +1089,7 @@ export function agentRoutes(
 
   function generateEd25519PrivateKeyPem(): string {
     const { privateKey } = generateKeyPairSync("ed25519");
+
     return privateKey.export({ type: "pkcs8", format: "pem" }).toString();
   }
 

@@ -615,7 +615,6 @@ describe.sequential("agent permission routes", () => {
     });
 
     const app = await createApp({
-
       type: "board",
       userId: "board-user",
       source: "local_implicit",
@@ -627,7 +626,6 @@ describe.sequential("agent permission routes", () => {
       modelProfiles: {
         cheap: {
           adapterConfig: {
-            model: "sovereign-codex-cheap",
             workspaceStrategy: {
               type: "git_worktree",
               provisionCommand: "bash ./scripts/provision-worktree.sh",
@@ -638,7 +636,6 @@ describe.sequential("agent permission routes", () => {
     };
 
     const res = await requestApp(app, (baseUrl) => request(baseUrl)
-
       .patch(`/api/agents/${agentId}`)
       .send({ runtimeConfig }));
 

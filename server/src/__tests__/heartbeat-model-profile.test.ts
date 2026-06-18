@@ -21,7 +21,6 @@ const cheapProfile: AdapterModelProfileDefinition = {
 
 describe("heartbeat model profile application", () => {
   it("applies sovereign-safe adapter cheap defaults without changing the model", async () => {
-
     const modelProfile = resolveModelProfileApplication({
       adapterModelProfiles: await listAdapterModelProfiles("codex_local"),
       agentRuntimeConfig: {},
@@ -37,15 +36,44 @@ describe("heartbeat model profile application", () => {
       fallbackReason: null,
       adapterConfig: { modelReasoningEffort: "low" },
     });
+
+    expect(mergeModelProfileAdapterConfig({
+      baseConfig: {
+        model: "primary-sovereign",
+        modelReasoningEffort: "high",
+      },
+      modelProfile,
+      issueAdapterConfig: null,
+    })).toEqual({
+      model: "primary-sovereign",
+      modelReasoningEffort: "low",
+    });
+  });
+
+  it("drops empty issue model overrides before merging", () => {
+    const merged = mergeModelProfileAdapterConfig({
+      baseConfig: { model: "primary-sovereign" },
+      modelProfile: {
+        requested: null,
+        requestedBy: null,
+        applied: null,
+        configSource: null,
+        fallbackReason: null,
+        adapterConfig: null,
+      },
+      issueAdapterConfig: { model: "" },
+    });
+
+    expect(merged).toEqual({ model: "primary-sovereign" });
   });
 
   it("applies cheap profile patches before explicit sovereign issue adapter config overrides", () => {
-
     const modelProfile = resolveModelProfileApplication({
       adapterModelProfiles: [cheapProfile],
       agentRuntimeConfig: {},
       issueModelProfile: "cheap",
       contextSnapshot: {},
+
     });
 
     const merged = mergeModelProfileAdapterConfig({

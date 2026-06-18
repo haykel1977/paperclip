@@ -1603,8 +1603,7 @@ export function mergeModelProfileAdapterConfig(input: {
   issueAdapterConfig: Record<string, unknown> | null | undefined;
 }): Record<string, unknown> {
   const issueAdapterConfig = { ...(input.issueAdapterConfig ?? {}) };
-  const issueModel = readNonEmptyString(issueAdapterConfig.model);
-  if (issueModel && !isSovereignAgentModelValue(issueModel)) {
+  if ("model" in issueAdapterConfig && !isSovereignAgentModelValue(issueAdapterConfig.model)) {
     delete issueAdapterConfig.model;
   }
 
@@ -1618,6 +1617,7 @@ export function mergeModelProfileAdapterConfig(input: {
 function modelProfileRunMetadata(
   modelProfile: ModelProfileApplication,
 ): Record<string, unknown> | null {
+
   if (!modelProfile.requested) return null;
   return {
     requested: modelProfile.requested,
