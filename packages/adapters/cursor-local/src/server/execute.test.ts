@@ -205,6 +205,9 @@ describe("cursor execute", () => {
       expect(command).toBe(agentPath);
       expect(runtimePath.split(path.delimiter)).toContain(path.join(homeDir, ".local", "bin"));
       expect(prompt).toContain("Follow the paperclip heartbeat.");
+      expect(prompt).toContain("Source control contract");
+      expect(prompt).toContain("PR creation is a review handoff rather than completion");
+      expect(prompt).toContain("PR checks/CI when available");
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
@@ -213,6 +216,7 @@ describe("cursor execute", () => {
   });
 
   it("reruns sandbox command resolution after managed runtime setup and keeps the original sandbox home", async () => {
+
     setPrepareCursorSandboxCommand.mockReset();
     const prepareInputs: PrepareCursorSandboxCommandInput[] = [];
     let finalPreparedCommand: string | null = null;
