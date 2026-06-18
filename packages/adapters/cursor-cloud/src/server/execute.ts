@@ -200,8 +200,34 @@ function renderPaperclipEnvNote(env: Record<string, string>): string {
   ].join("\n");
 }
 
+function renderPaperclipGitHandoffNote(input: {
+  repoUrl: string;
+  repoStartingRef?: string;
+  repoPullRequestUrl?: string;
+  workOnCurrentBranch: boolean;
+  autoCreatePR: boolean;
+}): string {
+  const branchInstruction = input.workOnCurrentBranch
+    ? "Continue on the current branch because Paperclip is attaching you to existing branch work."
+    : "Use a Cursor-managed feature branch for task changes; do not change the protected/base branch directly.";
+  const prInstruction = input.repoPullRequestUrl
+    ? `Existing PR: ${input.repoPullRequestUrl}. Keep using its branch and mention this PR URL in your Paperclip update.`
+    : input.autoCreatePR
+      ? "If the change is complete and ready for review, open a pull request for the feature branch."
+      : "Do not open a pull request unless the task explicitly asks for one; report the branch name instead.";
+
+  return [
+    "Paperclip git handoff note:",
+    `Repository: ${input.repoUrl}${input.repoStartingRef ? ` @ ${input.repoStartingRef}` : ""}`,
+    branchInstruction,
+    prInstruction,
+    "In your final Paperclip update, include the branch name, base branch, PR URL if one exists, and verification evidence. If the work is incomplete or blocked, state what remains instead of presenting it as ready for review.",
+  ].join("\n");
+}
+
 function readSession(params: Record<string, unknown> | null): CursorCloudSession | null {
   if (!params) return null;
+
   const record = asRecord(params);
   if (!record) return null;
   const cursorAgentId =
@@ -402,17 +428,26 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       ? ""
       : renderTemplate(promptTemplate, templateData).trim();
   const paperclipEnvNote = renderPaperclipEnvNote(remoteEnv);
+  const gitHandoffNote = renderPaperclipGitHandoffNote({
+    repoUrl,
+    repoStartingRef,
+    repoPullRequestUrl,
+    workOnCurrentBranch,
+    autoCreatePR,
+  });
   const prompt = joinPromptSections([
     instructions.prefix,
     renderedBootstrapPrompt,
     wakePrompt,
     paperclipEnvNote,
+    gitHandoffNote,
     renderedPrompt,
   ]);
   const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
   const finalPrompt = joinPromptSections([prompt, sessionHandoffNote]);
 
   const agentOptions = buildAgentOptions({
+
     apiKey,
     name: `Paperclip ${agent.name}`,
     model,

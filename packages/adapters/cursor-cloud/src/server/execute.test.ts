@@ -180,10 +180,23 @@ describe("cursor_cloud execute", () => {
       PAPERCLIP_API_KEY: "paperclip-run-jwt",
     });
     expect(createMock.mock.calls[0]?.[0]?.cloud?.envVars).not.toHaveProperty("CURSOR_API_KEY");
+    expect(sdkAgent.send).toHaveBeenCalledWith(
+      expect.stringContaining("Paperclip git handoff note:"),
+      expect.any(Object),
+    );
+    expect(sdkAgent.send).toHaveBeenCalledWith(
+      expect.stringContaining("Use a Cursor-managed feature branch for task changes"),
+      expect.any(Object),
+    );
+    expect(sdkAgent.send).toHaveBeenCalledWith(
+      expect.stringContaining("Do not open a pull request unless the task explicitly asks for one"),
+      expect.any(Object),
+    );
 
     expect(result).toMatchObject({
       exitCode: 0,
       errorMessage: null,
+
       sessionId: "agent-fresh",
       model: "gpt-5.4",
       summary: "Done",
@@ -215,10 +228,45 @@ describe("cursor_cloud execute", () => {
     });
   });
 
+  it("tells the agent how to handle an existing PR branch", async () => {
+    const run = createMockRun({ agentId: "agent-pr" });
+    const sdkAgent = createMockSdkAgent({ agentId: "agent-pr", sendRun: run });
+    createMock.mockResolvedValue(sdkAgent);
+    const ctx = createContext({
+      config: {
+        env: { CURSOR_API_KEY: "cursor-secret" },
+        repoUrl: "https://github.com/paperclipai/paperclip.git",
+        repoStartingRef: "review/pap-123",
+        repoPullRequestUrl: "https://github.com/paperclipai/paperclip/pull/123",
+        runtimeEnvType: "cloud",
+        workOnCurrentBranch: true,
+        autoCreatePR: true,
+        promptTemplate: "Do the work",
+      },
+    });
+
+    await execute(ctx);
+
+    expect(sdkAgent.send).toHaveBeenCalledWith(
+      expect.stringContaining("Continue on the current branch because Paperclip is attaching you to existing branch work."),
+      expect.any(Object),
+    );
+    expect(sdkAgent.send).toHaveBeenCalledWith(
+      expect.stringContaining("Existing PR: https://github.com/paperclipai/paperclip/pull/123"),
+      expect.any(Object),
+    );
+    expect(ctx.meta[0]?.commandNotes).toEqual(expect.arrayContaining([
+      "Branch mode: continue on current branch",
+      "Pull request: auto-create enabled",
+      "Attached PR: https://github.com/paperclipai/paperclip/pull/123",
+    ]));
+  });
+
   it("resumes a matching saved session when no active run can be reattached", async () => {
     getRunMock.mockResolvedValue(createMockRun({ status: "finished" }));
 
     const resumedRun = createMockRun({ id: "run-resumed", agentId: "agent-resumed" });
+
     const sdkAgent = createMockSdkAgent({ agentId: "agent-resumed", sendRun: resumedRun });
     resumeMock.mockResolvedValue(sdkAgent);
     const ctx = createContext({
