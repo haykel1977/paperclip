@@ -208,6 +208,18 @@ describe("cursor_cloud execute", () => {
       expect.stringContaining("PR checks/CI when available"),
       expect.any(Object),
     );
+    expect(sdkAgent.send).toHaveBeenCalledWith(
+      expect.stringContaining("PR readiness gate"),
+      expect.any(Object),
+    );
+    expect(sdkAgent.send).toHaveBeenCalledWith(
+      expect.stringContaining("keep the diff focused on the requested task"),
+      expect.any(Object),
+    );
+    expect(sdkAgent.send).toHaveBeenCalledWith(
+      expect.stringContaining("PR/CI status"),
+      expect.any(Object),
+    );
 
     expect(result).toMatchObject({
       exitCode: 0,
@@ -272,8 +284,17 @@ describe("cursor_cloud execute", () => {
       expect.stringContaining("Existing PR: https://github.com/paperclipai/paperclip/pull/123"),
       expect.any(Object),
     );
+    expect(sdkAgent.send).toHaveBeenCalledWith(
+      expect.stringContaining("fill the repository PR template when one exists"),
+      expect.any(Object),
+    );
+    expect(sdkAgent.send).toHaveBeenCalledWith(
+      expect.stringContaining("state exactly what remains instead of presenting it as ready for review or done"),
+      expect.any(Object),
+    );
     expect(ctx.meta[0]?.commandNotes).toEqual(expect.arrayContaining([
       "Branch mode: continue on current branch",
+
       "Pull request: auto-create enabled",
       "Attached PR: https://github.com/paperclipai/paperclip/pull/123",
     ]));

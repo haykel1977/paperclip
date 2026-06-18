@@ -215,13 +215,16 @@ function renderPaperclipGitHandoffNote(input: {
     : input.autoCreatePR
       ? "If the change is complete and ready for review, open a pull request for the feature branch."
       : "Do not open a pull request unless the task explicitly asks for one; report the branch name instead.";
+  const readinessGate =
+    "PR readiness gate: before opening or presenting a PR as review-ready, keep the diff focused on the requested task, fill the repository PR template when one exists, include verification evidence, and confirm required/relevant CI is green.";
 
   return [
     "Paperclip git handoff note:",
     `Repository: ${input.repoUrl}${input.repoStartingRef ? ` @ ${input.repoStartingRef}` : ""}`,
     branchInstruction,
     prInstruction,
-    "In your final Paperclip update, include the branch name, base branch, PR URL if one exists, and verification evidence. If the work is incomplete or blocked, state what remains instead of presenting it as ready for review.",
+    readinessGate,
+    "In your final Paperclip update, include the branch name, base branch, PR URL if one exists, verification evidence, and PR/CI status. If the work is incomplete, blocked, not green, or missing any readiness-gate item, state exactly what remains instead of presenting it as ready for review or done.",
   ].join("\n");
 }
 

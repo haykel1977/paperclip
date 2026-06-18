@@ -149,7 +149,18 @@ You MUST read all three of these files before creating a PR:
 2. **`CONTRIBUTING.md`** — contribution conventions, PR requirements, and thinking-path examples
 3. **`.github/workflows/pr.yml`** — CI checks that gate merge
 
-### Step 2 — Validate your PR body against this checklist
+### Step 2 — Validate PR readiness
+
+Before opening or presenting a PR as review-ready, verify all of these are true:
+
+- [ ] The diff is focused on the requested task; unrelated cleanup, refactors, formatting sweeps, and dependency bumps are split into follow-up issues.
+- [ ] Local verification evidence exists and is appropriate for the touched area.
+- [ ] Required/relevant CI checks are green, or the missing external prerequisite is explicitly documented.
+- [ ] The branch, base branch, PR URL if one exists, verification evidence, and CI status will be included in the Paperclip update.
+
+If any item is missing, do NOT mark the task `done`; state exactly what is missing and leave the issue `in_review` or `blocked`.
+
+### Step 3 — Validate your PR body against this checklist
 
 After reading the template, verify your `--body` includes every one of these sections (names must match exactly):
 
@@ -162,9 +173,9 @@ After reading the template, verify your `--body` includes every one of these sec
 
 If any section is missing or empty, do NOT submit the PR. Go back and fill it in.
 
-### Step 3 — Create the PR
+### Step 4 — Create the PR
 
-Only after completing Steps 1 and 2, run `gh pr create`. Use the template contents as the structure for `--body` — do not write a freeform summary.
+Only after completing Steps 1, 2, and 3, run `gh pr create`. Use the template contents as the structure for `--body` — do not write a freeform summary.
 
 ## Hard Rules — Do NOT Bypass
 
