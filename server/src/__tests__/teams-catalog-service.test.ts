@@ -257,9 +257,9 @@ describe("teamsCatalogService", () => {
 
     const [importInput] = mockCompanyPortabilityService.importBundle.mock.calls.at(-1)!;
     expect(importInput.adapterOverrides).toEqual({
-      ceo: { adapterType: "claude_local" },
-      cto: { adapterType: "claude_local" },
-      qa: { adapterType: "claude_local" },
+      ceo: { adapterType: "claude_local", adapterConfig: { model: "sovereign-catalog-claude" } },
+      cto: { adapterType: "claude_local", adapterConfig: { model: "sovereign-catalog-claude" } },
+      qa: { adapterType: "claude_local", adapterConfig: { model: "sovereign-catalog-claude" } },
     });
   });
 
@@ -273,9 +273,9 @@ describe("teamsCatalogService", () => {
 
       const [importInput] = mockCompanyPortabilityService.importBundle.mock.calls.at(-1)!;
       expect(importInput.adapterOverrides).toEqual({
-        ceo: { adapterType: "opencode_local" },
-        cto: { adapterType: "opencode_local" },
-        qa: { adapterType: "opencode_local" },
+        ceo: { adapterType: "opencode_local", adapterConfig: { model: "openai/sovereign-catalog-opencode" } },
+        cto: { adapterType: "opencode_local", adapterConfig: { model: "openai/sovereign-catalog-opencode" } },
+        qa: { adapterType: "opencode_local", adapterConfig: { model: "openai/sovereign-catalog-opencode" } },
       });
     } finally {
       if (previousDefault === undefined) {
@@ -292,15 +292,15 @@ describe("teamsCatalogService", () => {
     await svc.installCatalogTeam("company-1", "product-design");
     const [designInput] = mockCompanyPortabilityService.importBundle.mock.calls.at(-1)!;
     expect(designInput.adapterOverrides).toEqual({
-      "ux-designer": { adapterType: "claude_local" },
+      "ux-designer": { adapterType: "claude_local", adapterConfig: { model: "sovereign-catalog-claude" } },
     });
 
     await svc.installCatalogTeam("company-1", "product-engineering");
     const [engineeringInput] = mockCompanyPortabilityService.importBundle.mock.calls.at(-1)!;
     expect(engineeringInput.adapterOverrides).toEqual({
-      cto: { adapterType: "claude_local" },
-      qa: { adapterType: "claude_local" },
-      "senior-coder": { adapterType: "claude_local" },
+      cto: { adapterType: "claude_local", adapterConfig: { model: "sovereign-catalog-claude" } },
+      qa: { adapterType: "claude_local", adapterConfig: { model: "sovereign-catalog-claude" } },
+      "senior-coder": { adapterType: "claude_local", adapterConfig: { model: "sovereign-catalog-claude" } },
     });
   });
 
@@ -328,15 +328,14 @@ describe("teamsCatalogService", () => {
 
     const [importInput] = mockCompanyPortabilityService.importBundle.mock.calls.at(-1)!;
     expect(importInput.adapterOverrides).toEqual({
-      ceo: { adapterType: "claude_local" },
+      ceo: { adapterType: "claude_local", adapterConfig: { model: "sovereign-catalog-claude" } },
       cto: { adapterType: "opencode_local", adapterConfig: { model: "anthropic/sovereign-claude-opus-4" } },
-      qa: { adapterType: "claude_local" },
+      qa: { adapterType: "claude_local", adapterConfig: { model: "sovereign-catalog-claude" } },
     });
     // Caller-supplied object must not be mutated in place.
     expect(callerOverrides).toEqual({
       cto: { adapterType: "opencode_local", adapterConfig: { model: "anthropic/sovereign-claude-opus-4" } },
     });
-
   });
 
   it("omits the default-adapter warning when every agent has an explicit override", async () => {
@@ -344,9 +343,9 @@ describe("teamsCatalogService", () => {
 
     const result = await svc.installCatalogTeam("company-1", "core-exec-team", {
       adapterOverrides: {
-        ceo: { adapterType: "opencode_local" },
-        cto: { adapterType: "opencode_local" },
-        qa: { adapterType: "opencode_local" },
+        ceo: { adapterType: "opencode_local", adapterConfig: { model: "openai/sovereign-ceo" } },
+        cto: { adapterType: "opencode_local", adapterConfig: { model: "openai/sovereign-cto" } },
+        qa: { adapterType: "opencode_local", adapterConfig: { model: "openai/sovereign-qa" } },
       },
     });
 

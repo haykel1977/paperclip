@@ -683,8 +683,24 @@ async function readCatalogTeamSourceFiles(team: CatalogTeam): Promise<Record<str
  */
 const FALLBACK_SAFE_CATALOG_ADAPTER_TYPE = "claude_local";
 
+const SOVEREIGN_CATALOG_MODEL_BY_ADAPTER_TYPE: Record<string, string> = {
+  acpx_local: "sovereign-catalog-acpx",
+  claude_local: "sovereign-catalog-claude",
+  codex_local: "sovereign-catalog-codex",
+  cursor: "sovereign-catalog-cursor",
+  gemini_local: "sovereign-catalog-gemini",
+  grok_local: "sovereign-catalog-grok",
+  opencode_local: "openai/sovereign-catalog-opencode",
+  pi_local: "openai/sovereign-catalog-pi",
+};
+
 function defaultSafeCatalogAdapterType() {
   return process.env.PAPERCLIP_TEAMS_CATALOG_DEFAULT_ADAPTER_TYPE?.trim() || FALLBACK_SAFE_CATALOG_ADAPTER_TYPE;
+}
+
+function defaultSafeCatalogAdapterConfig(adapterType: string): Record<string, unknown> {
+  const model = SOVEREIGN_CATALOG_MODEL_BY_ADAPTER_TYPE[adapterType];
+  return model ? { model } : {};
 }
 
 /**
@@ -692,6 +708,7 @@ function defaultSafeCatalogAdapterType() {
  * `parsePortableAgentFrontmatter` defaults them to `process` — which the
  * `agent_safe` importer rejects (see `IMPORT_FORBIDDEN_ADAPTER_TYPES` in
  * `company-portability`). Inject a safe per-agent adapter default for every
+
  * catalog agent the caller did not explicitly override so default-trust teams
  * install without manual adapter flags. Explicit caller overrides win and are
  * left untouched (both `adapterType` and `adapterConfig`). This is scoped to the
@@ -705,12 +722,16 @@ function withSafeCatalogAdapterDefaults(
   const merged: Record<string, CompanyPortabilityAdapterOverride> = { ...(callerOverrides ?? {}) };
   for (const slug of agentSlugs) {
     if (merged[slug]) continue;
-    merged[slug] = { adapterType: defaultAdapterType };
+    const adapterConfig = defaultSafeCatalogAdapterConfig(defaultAdapterType);
+    merged[slug] = Object.keys(adapterConfig).length > 0
+      ? { adapterType: defaultAdapterType, adapterConfig }
+      : { adapterType: defaultAdapterType };
   }
   return merged;
 }
 
 function buildPortabilityInput(
+
   companyId: string,
   source: CompanyPortabilitySource,
   options: CatalogTeamImportOptions,
