@@ -36,6 +36,13 @@ describe("company routes", () => {
     expect(toCompanyRelativePath("/PAP/search?q=foo")).toBe("/search?q=foo");
   });
 
+  it("does not prefix public lab and test routes", () => {
+    expect(isBoardPathWithoutPrefix("/ux-lab/cloud-upstream")).toBe(false);
+    expect(extractCompanyPrefixFromPath("/ux-lab/cloud-upstream")).toBeNull();
+    expect(applyCompanyPrefix("/ux-lab/cloud-upstream", "PAP")).toBe("/ux-lab/cloud-upstream");
+    expect(applyCompanyPrefix("/tests/perf/long-thread", "PAP")).toBe("/tests/perf/long-thread");
+  });
+
   // Regression for PAP-10257: Team Catalog navigation (auto-select + row/file
   // clicks) produces company-relative `/teams-catalog/<key>` paths. Without
   // `teams-catalog` in the board-route allowlist, `extractCompanyPrefixFromPath`
@@ -45,6 +52,7 @@ describe("company routes", () => {
     expect(isBoardPathWithoutPrefix("/teams")).toBe(false);
     expect(isBoardPathWithoutPrefix("/teams-catalog")).toBe(true);
     expect(isBoardPathWithoutPrefix("/teams-catalog/core-exec-team")).toBe(true);
+
     expect(extractCompanyPrefixFromPath("/teams-catalog/core-exec-team")).toBeNull();
 
     // Auto-select effect: `/teams-catalog/<first-key>` must gain the `/PAP/` prefix.
