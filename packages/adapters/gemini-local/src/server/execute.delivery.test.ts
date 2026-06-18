@@ -102,6 +102,7 @@ describe("gemini-local delivery hook", () => {
       envCalls.push({ cmd, args, env: callEnv });
       const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      if (key === "git log -1") return { exitCode: 0, stdout: "G\n", stderr: "" };
       if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
       if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "human-gate-required", "bot-merge-ready"]), stderr: "" };
       if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/45\n", stderr: "" };
@@ -110,7 +111,12 @@ describe("gemini-local delivery hook", () => {
     await executeDeliveryHook({
       ...base,
       worktreeCwd,
-      env: { PAPERCLIP_AUTONOMOUS_DELIVERY: "1", PAPERCLIP_DELIVERY_BOT_TOKEN: "bot-token", GH_TOKEN: "personal-token" },
+      env: {
+        PAPERCLIP_AUTONOMOUS_DELIVERY: "1",
+        PAPERCLIP_DELIVERY_BOT_TOKEN: "bot-token",
+        PAPERCLIP_DELIVERY_SIGN_COMMITS: "1",
+        GH_TOKEN: "personal-token",
+      },
       runProc,
     });
     const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");

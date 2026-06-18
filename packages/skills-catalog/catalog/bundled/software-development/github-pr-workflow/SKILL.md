@@ -33,8 +33,9 @@ Ship a PR a reviewer can land without follow-up clarifying questions. The aim is
 - Work from an isolated feature branch or Paperclip worktree by default; do not make task changes directly on the protected/base branch.
 - If you are attached to an existing PR, keep using that branch and mention the PR URL in the task update.
 - PR readiness gate: before opening or presenting a PR as review-ready, confirm the diff is focused on the requested task, the repository PR template is filled when one exists, verification evidence is included, and required/relevant CI is green.
-- If you create a new PR, include the PR URL, branch name, base branch, local verification evidence, and CI status in the final Paperclip comment.
-- If the work is incomplete, blocked, not green, or missing any readiness-gate item, do not present it as ready for review or mark the task `done`; leave the branch pushed and clearly state what is missing.
+- For autonomous/bot-delivered PRs, verify the pushed commit is signed and branch protection accepts the signature; unsigned bot PRs are blocked supply-chain artifacts, not merge-ready work.
+- If you create a new PR, include the PR URL, branch name, base branch, local verification evidence, CI status, and commit-signature status in the final Paperclip comment.
+- If the work is incomplete, blocked, not green, unsigned, or missing any readiness-gate item, do not present it as ready for review or mark the task `done`; leave the branch pushed when safe and clearly state what is missing.
 
 ## Clean implementation bar
 

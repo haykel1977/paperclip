@@ -61,6 +61,12 @@ type DeliveryQualityGateResult =
   | { ok: true; commands: DeliveryQualityGateCommand[] }
   | { ok: false; reason: string };
 
+type DeliveryCommitSigningPlan = {
+  required: boolean;
+  signCommit: boolean;
+  source: "autonomous-required" | "env" | "git-config" | "not-required";
+};
+
 const DELIVERY_QUALITY_GATE_SCRIPTS: Record<DeliveryQualityGateStep, string[]> = {
   typecheck: ["typecheck", "check:types", "types"],
   lint: ["lint"],
@@ -91,6 +97,11 @@ function isAutonomousDeliveryEnabled(env: Record<string, string>): boolean {
 
 function readDeliveryBotToken(env: Record<string, string>): string | null {
   return nonEmpty(env.PAPERCLIP_DELIVERY_BOT_TOKEN ?? process.env.PAPERCLIP_DELIVERY_BOT_TOKEN);
+}
+
+function readBooleanEnv(env: Record<string, string>, key: string): boolean {
+  const value = (env[key] ?? process.env[key] ?? "").trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
 }
 
 const SECRET_ENV_KEY_RE = /(?:^|_)(?:TOKEN|KEY|SECRET|PASSWORD|PASS|AUTH)(?:_|$)/i;
@@ -315,6 +326,65 @@ function formatCommand(command: DeliveryQualityGateCommand): string {
   return `${command.cmd} ${command.args.join(" ")}`.trim();
 }
 
+async function readGitConfigBoolean(input: {
+  key: string;
+  worktreeCwd: string;
+  env: Record<string, string>;
+  runProc: DeliveryHookRunProcess;
+}): Promise<boolean> {
+  const result = await input.runProc("git", ["config", "--get", input.key], input.worktreeCwd, input.env);
+  if (result.exitCode !== 0) return false;
+  const value = result.stdout.trim().toLowerCase();
+  return value === "true" || value === "1" || value === "yes" || value === "on";
+}
+
+async function resolveDeliveryCommitSigningPlan(input: {
+  autonomousDelivery: boolean;
+  worktreeCwd: string;
+  env: Record<string, string>;
+  runProc: DeliveryHookRunProcess;
+}): Promise<DeliveryCommitSigningPlan> {
+  const envRequested = readBooleanEnv(input.env, "PAPERCLIP_DELIVERY_SIGN_COMMITS");
+  if (envRequested) {
+    return {
+      required: input.autonomousDelivery,
+      signCommit: true,
+      source: "env",
+    };
+  }
+
+  const gitConfigRequested = await readGitConfigBoolean({
+    key: "commit.gpgsign",
+    worktreeCwd: input.worktreeCwd,
+    env: input.env,
+    runProc: input.runProc,
+  });
+  if (gitConfigRequested) {
+    return {
+      required: input.autonomousDelivery,
+      signCommit: true,
+      source: "git-config",
+    };
+  }
+
+  return {
+    required: input.autonomousDelivery,
+    signCommit: false,
+    source: input.autonomousDelivery ? "autonomous-required" : "not-required",
+  };
+}
+
+async function verifyLatestCommitIsSigned(input: {
+  worktreeCwd: string;
+  env: Record<string, string>;
+  runProc: DeliveryHookRunProcess;
+}): Promise<boolean> {
+  const result = await input.runProc("git", ["log", "-1", "--format=%G?"], input.worktreeCwd, input.env);
+  if (result.exitCode !== 0) return false;
+  const signatureStatus = result.stdout.trim();
+  return signatureStatus.length > 0 && signatureStatus !== "N";
+}
+
 function formatChangedFiles(statusStdout: string): string[] {
   return statusStdout
     .split(/\r?\n/)
@@ -339,6 +409,7 @@ function buildQuantumPrBody(input: {
   isDevTestLane: boolean;
   statusStdout: string;
   qualityGateCommands: DeliveryQualityGateCommand[];
+  signingPlan: DeliveryCommitSigningPlan;
 }): string {
   const issue = formatPrValue(input.issueIdentifier);
   const changedFiles = formatChangedFiles(input.statusStdout);
@@ -359,6 +430,9 @@ function buildQuantumPrBody(input: {
     "TRUTHFULNESS: BACKEND-WIRED",
     `ADR: ${input.adrRef}`,
     "",
+    "## Type de changement",
+    "- Automated agent delivery PR",
+    "",
     "## Delivery Metadata",
     `- Paperclip issue: ${issue} (${formatPrValue(input.issueId)})`,
     `- Run: ${input.runId}`,
@@ -369,7 +443,14 @@ function buildQuantumPrBody(input: {
     `- Base branch: ${input.baseBranch}`,
     `- Lane: ${input.lane}`,
     `- Merge policy: ${mergePolicy}`,
+    `- Commit signing: ${input.signingPlan.signCommit ? `enabled (${input.signingPlan.source})` : "not required for this lane"}`,
     "- Factory: sovereign delivery hook (deterministic, no LLM in delivery path)",
+    "",
+    "## Supply Chain Attestation",
+    `- VERIFIED: local quality gates listed below passed before commit/push.`,
+    `- VERIFIED: ${input.autonomousDelivery ? "autonomous delivery requires a signed git commit before push" : "this lane does not claim autonomous merge eligibility"}.`,
+    "- UNVERIFIABLE: remote GitHub branch protection, required-signature checks, and hosted CI are authoritative after push.",
+    "- ACCEPTED_RISK: this hook opens or updates the PR only; it does not bypass repository governance.",
     "",
     "## Changed Paths",
     ...changedFileRows,
@@ -378,6 +459,20 @@ function buildQuantumPrBody(input: {
     "| Gate | Command | Result |",
     "| --- | --- | --- |",
     ...gateRows,
+    "",
+    "## Preuves",
+    "- See Quality Gate Evidence and Delivery Metadata above.",
+    "",
+    "## Sécurité",
+    "- Secret-like environment variables are stripped from local quality-gate commands.",
+    "- Bot tokens are used only for git/gh delivery commands and are redacted from logs.",
+    "- Autonomous delivery is blocked unless commit signing is configured and the latest commit is signed before push.",
+    "",
+    "## Dev/test merge policy",
+    `- ${mergePolicy}`,
+    "",
+    "## Plan de rollback",
+    "- Revert this PR or close it before merge; no deployment side effect is performed by the delivery hook itself.",
     "",
     "## Truthfulness Boundary",
     "| Claim | Evidence | Boundary |",
@@ -400,6 +495,7 @@ function buildQuantumPrBody(input: {
  * - push retry: one retry on transient network/rate-limit errors (429, 503, timeout)
  * - structured logs: consistent `key=value` format for all delivery events
  * - label fetch extracted to `fetchRepoLabels` (shared, non-fatal)
+ * - autonomous lane requires signed commits before push
  * - fix: `executeConfiguredDeliveryHook` no longer creates a second redactor
  */
 export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Promise<DeliveryHookResult> {
@@ -462,6 +558,17 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     return { delivered: true, prUrl: existingPrUrl, reason: "pr_exists" };
   }
 
+  const signingPlan = await resolveDeliveryCommitSigningPlan({
+    autonomousDelivery,
+    worktreeCwd,
+    env,
+    runProc,
+  });
+  if (signingPlan.required && !signingPlan.signCommit) {
+    await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="signed commits not configured"\n`);
+    return { delivered: false, prUrl: null, reason: "delivery_blocked: signed commits not configured" };
+  }
+
   // ── 4. quality gate ───────────────────────────────────────────────────────
   const qualityGate = await runDeliveryQualityGate({ worktreeCwd, env, runProc, log, ts });
   if (!qualityGate.ok) {
@@ -486,6 +593,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     isDevTestLane,
     statusStdout: status.stdout,
     qualityGateCommands: qualityGate.commands,
+    signingPlan,
   });
 
   // ── 6. commit ─────────────────────────────────────────────────────────────
@@ -495,10 +603,18 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     return { delivered: false, prUrl: null, reason: "git_add_failed" };
   }
 
-  const commit = await runProc("git", ["commit", "-m", title, "-m", body], worktreeCwd, env);
+  const commitArgs = ["commit", ...(signingPlan.signCommit ? ["-S"] : []), "-m", title, "-m", body];
+  const commit = await runProc("git", commitArgs, worktreeCwd, env);
   if (commit.exitCode !== 0) {
     await log("stderr", `[delivery ${ts()}] git_commit_failed: ${commit.stderr}\n`);
     return { delivered: false, prUrl: null, reason: "git_commit_failed" };
+  }
+  if (signingPlan.required) {
+    const signed = await verifyLatestCommitIsSigned({ worktreeCwd, env, runProc });
+    if (!signed) {
+      await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="latest commit is unsigned"\n`);
+      return { delivered: false, prUrl: null, reason: "delivery_blocked: unsigned commit" };
+    }
   }
 
   // ── 7. push (with retry on transient errors) ──────────────────────────────

@@ -44,7 +44,7 @@ const base = {
   baseBranch: "main",
   adapterType: "codex_local",
   agentId: "agent-1",
-  model: "gpt-5",
+  model: "sovereign-gpt-5",
   log: vi.fn(async () => {}),
 };
 
@@ -161,8 +161,9 @@ describe("executeDeliveryHook", () => {
     const body = bodyIndex >= 0 ? createCall?.[bodyIndex + 1] ?? "" : "";
     expect(body).toContain("Adapter: codex_local");
     expect(body).toContain("Agent: agent-1");
-    expect(body).toContain("Model: gpt-5");
-    expect(body).not.toContain("Model: sovereign (qwen3-coder:30b @ Bifrost CCX43)");
+    expect(body).toContain("Model: sovereign-gpt-5");
+    expect(body).toContain("## Supply Chain Attestation");
+    expect(body).toContain("## Plan de rollback");
     expect(calls.find((call) => call.includes("--add-reviewer"))).toContain("haykel1977");
   });
 
@@ -181,7 +182,7 @@ describe("executeDeliveryHook", () => {
     expect(calls.some((call) => call[0] === "gh")).toBe(false);
   });
 
-  it("flag ON + gate vert -> PR Quantum truth-first avec token bot", async () => {
+  it("flag ON + gate vert -> PR Quantum truth-first avec token bot et commit signé", async () => {
     const worktreeCwd = mkWorktree();
     const calls: string[][] = [];
     const envCalls: Array<{ cmd: string; args: string[]; env: Record<string, string> }> = [];
@@ -190,6 +191,7 @@ describe("executeDeliveryHook", () => {
       envCalls.push({ cmd, args, env: callEnv });
       const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      if (key === "git log -1") return { exitCode: 0, stdout: "G\n", stderr: "" };
       if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
       if (key === "gh label list") {
         return {
@@ -204,7 +206,12 @@ describe("executeDeliveryHook", () => {
     await executeDeliveryHook({
       ...base,
       worktreeCwd,
-      env: { PAPERCLIP_AUTONOMOUS_DELIVERY: "1", PAPERCLIP_DELIVERY_BOT_TOKEN: "bot-token", GH_TOKEN: "personal-token" },
+      env: {
+        PAPERCLIP_AUTONOMOUS_DELIVERY: "1",
+        PAPERCLIP_DELIVERY_BOT_TOKEN: "bot-token",
+        PAPERCLIP_DELIVERY_SIGN_COMMITS: "1",
+        GH_TOKEN: "personal-token",
+      },
       runProc,
     });
     const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
@@ -221,8 +228,14 @@ describe("executeDeliveryHook", () => {
     expect(body).toContain("## Truthfulness Boundary");
     expect(body).toContain("| Claim | Evidence | Boundary |");
     expect(body).toContain("## Quality Gate Evidence");
+    expect(body).toContain("## Type de changement");
+    expect(body).toContain("VERIFIED: autonomous delivery requires a signed git commit before push");
+    expect(body).toContain("## Sécurité");
+    expect(body).toContain("## Dev/test merge policy");
     expect(body).toContain("`pnpm run typecheck`");
     expect(body).toContain("- `f`");
+    expect(calls).toContainEqual(expect.arrayContaining(["git", "commit", "-S"]));
+    expect(calls).toContainEqual(["git", "log", "-1", "--format=%G?"]);
     expect(calls.some((call) => call.includes("--add-reviewer"))).toBe(false);
     const pushEnv = envCalls.find((call) => call.cmd === "git" && call.args[0] === "push")?.env;
     expect(pushEnv?.GH_TOKEN).toBe("bot-token");
@@ -232,6 +245,57 @@ describe("executeDeliveryHook", () => {
     const gateEnv = envCalls.find((call) => call.cmd === "pnpm" && call.args[1] === "typecheck")?.env;
     expect(gateEnv?.GH_TOKEN).toBeUndefined();
     expect(gateEnv?.PAPERCLIP_DELIVERY_BOT_TOKEN).toBeUndefined();
+  });
+
+  it("autonomous delivery blocks before commit when signing is not configured", async () => {
+    const worktreeCwd = mkWorktree();
+    const calls: string[][] = [];
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const result = await executeDeliveryHook({
+      ...base,
+      worktreeCwd,
+      env: { PAPERCLIP_AUTONOMOUS_DELIVERY: "1", PAPERCLIP_DELIVERY_BOT_TOKEN: "bot-token" },
+      runProc,
+    });
+
+    expect(result.reason).toBe("delivery_blocked: signed commits not configured");
+    expect(calls.some((call) => call[0] === "git" && call[1] === "commit")).toBe(false);
+    expect(calls.some((call) => call[0] === "git" && call[1] === "push")).toBe(false);
+  });
+
+  it("autonomous delivery blocks after commit when the commit is unsigned", async () => {
+    const worktreeCwd = mkWorktree();
+    const calls: string[][] = [];
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      if (key === "git log -1") return { exitCode: 0, stdout: "N\n", stderr: "" };
+      if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const result = await executeDeliveryHook({
+      ...base,
+      worktreeCwd,
+      env: {
+        PAPERCLIP_AUTONOMOUS_DELIVERY: "1",
+        PAPERCLIP_DELIVERY_BOT_TOKEN: "bot-token",
+        PAPERCLIP_DELIVERY_SIGN_COMMITS: "1",
+      },
+      runProc,
+    });
+
+    expect(result.reason).toBe("delivery_blocked: unsigned commit");
+    expect(calls).toContainEqual(expect.arrayContaining(["git", "commit", "-S"]));
+    expect(calls.some((call) => call[0] === "git" && call[1] === "push")).toBe(false);
   });
 
   it("dev-test lane keeps existing no-human lane labels when autonomous flag is off", async () => {
