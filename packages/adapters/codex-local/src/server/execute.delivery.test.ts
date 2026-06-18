@@ -182,4 +182,56 @@ describe("executeDeliveryHook", () => {
     expect(body).toContain("Truthfulness Boundary");
     expect(body).toContain("HAS-46");
   });
+
+  it("T10: dev-test lane -> drops human-gate-required label and skips reviewer request", async () => {
+    const calls: string[][] = [];
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      if (args[0] === "diff") return { exitCode: 0, stdout: "diff --git a/f b/f\n+x\n", stderr: "" };
+      if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
+      // All lane labels exist in the repo so we can assert which ones get applied.
+      if (key === "gh label list")
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify(["factory-proof", "human-gate-required", "agent-pr", "automated", "truth-first"]),
+          stderr: "",
+        };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/5\n", stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    const r = await executeDeliveryHook({ ...base, env: { PAPERCLIP_DELIVERY_LANE: "dev-test" }, runProc } as any);
+    expect(r.reason).toBe("created");
+    const createCall = calls.find((c) => c[0] === "gh" && c[1] === "pr" && c[2] === "create")!;
+    expect(createCall).toContain("factory-proof");
+    expect(createCall).toContain("agent-pr");
+    expect(createCall).not.toContain("human-gate-required");
+    // No human-gate reviewer request in the no-human lane.
+    const reviewerCall = calls.find((c) => c.includes("--add-reviewer"));
+    expect(reviewerCall).toBeUndefined();
+    const bodyIdx = createCall.indexOf("--body");
+    expect(createCall[bodyIdx + 1]).toContain("dev-test");
+  });
+
+  it("T11: production lane (default) -> keeps human-gate-required label and requests reviewer", async () => {
+    const calls: string[][] = [];
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      if (args[0] === "diff") return { exitCode: 0, stdout: "diff --git a/f b/f\n+x\n", stderr: "" };
+      if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
+      if (key === "gh label list")
+        return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "human-gate-required"]), stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/6\n", stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    const r = await executeDeliveryHook({ ...base, runProc } as any);
+    expect(r.reason).toBe("created");
+    const createCall = calls.find((c) => c[0] === "gh" && c[1] === "pr" && c[2] === "create")!;
+    expect(createCall).toContain("human-gate-required");
+    const reviewerCall = calls.find((c) => c.includes("--add-reviewer"));
+    expect(reviewerCall).toContain("haykel1977");
+  });
 });

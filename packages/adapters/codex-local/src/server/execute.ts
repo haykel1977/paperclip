@@ -313,6 +313,18 @@ export async function executeDeliveryHook(input: {
   const { worktreeCwd, branch, env, runProc, log } = input;
   const ts = () => new Date().toISOString();
 
+  // Delivery lane (ported from PR #7 on `main`). Default is the human-gated
+  // production lane: PRs carry `human-gate-required` and request human review,
+  // and branch protection enforces the gate. Operators may opt a run into the
+  // dev/test no-human lane with PAPERCLIP_DELIVERY_LANE=dev-test, which drops the
+  // human-gate label and skips the reviewer request so eligible agent PRs can be
+  // merged after green checks without a human gate. The hook still never merges.
+  const lane = (env.PAPERCLIP_DELIVERY_LANE ?? process.env.PAPERCLIP_DELIVERY_LANE ?? "production").trim();
+  const isDevTestLane = lane === "dev-test";
+  const deliveryLabels = isDevTestLane
+    ? ["factory-proof", "agent-pr", "automated", "truth-first"]
+    : ["factory-proof", "human-gate-required"];
+
   const status = await runProc("git", ["status", "--porcelain"], worktreeCwd, env);
   if (status.exitCode !== 0) {
     await log("stderr", `[delivery ${ts()}] git status failed: ${status.stderr}\n`);
@@ -355,18 +367,22 @@ export async function executeDeliveryHook(input: {
   }
 
   const title = `${input.issueIdentifier ?? "FACTORY"}: factory delivery`;
+  const mergePolicyLine = isDevTestLane
+    ? `Lane: dev-test (no-human) — eligible agent PRs may merge only after functional and security checks are green; the hook never auto-merges.`
+    : `HAS-46: human review required — never auto-merge.`;
   const body = [
     `Paperclip issue: ${input.issueIdentifier ?? "?"} (${input.issueId ?? "?"})`,
     `Run: ${input.runId}`,
     `Model: sovereign (qwen3-coder:30b @ Bifrost CCX43)`,
     `Factory: sovereign delivery hook (deterministic, no LLM)`,
+    `Lane: ${lane}`,
     ``,
     `## Truthfulness Boundary`,
     `This PR is produced by a deterministic delivery hook with no LLM in the delivery`,
     `path. Claims in this body are limited to factory metadata (issue, run, model) that`,
     `the hook can verify; it makes no assertions about the correctness of the diff.`,
     ``,
-    `HAS-46: human review required — never auto-merge.`,
+    mergePolicyLine,
   ].join("\n");
 
   const add = await runProc("git", ["add", "-A"], worktreeCwd, env);
@@ -405,7 +421,7 @@ export async function executeDeliveryHook(input: {
   );
   if (existing.exitCode === 0 && existing.stdout.trim()) {
     const existingUrl = existing.stdout.trim();
-    const labelsRequiredReco = ["factory-proof", "human-gate-required"];
+    const labelsRequiredReco = deliveryLabels;
     let labelsToReconcile: string[] = [];
     const labelListReco = await runProc(
       "gh",
@@ -436,7 +452,7 @@ export async function executeDeliveryHook(input: {
   }
 
   // Label pre-flight: only apply labels that exist in the repo (Phase -1).
-  const labelsRequired = ["factory-proof", "human-gate-required"];
+  const labelsRequired = deliveryLabels;
   let labelsToApply: string[] = [];
   const labelList = await runProc(
     "gh",
@@ -481,7 +497,8 @@ export async function executeDeliveryHook(input: {
     return { delivered: false, prUrl: null, reason: "pr_create_failed" };
   }
   const url = (pr.stdout.match(/https:\/\/github\.com\/\S+\/pull\/\d+/) || [null])[0];
-  if (url) {
+  // Reviewer request is the human gate; the dev-test no-human lane skips it.
+  if (url && !isDevTestLane) {
     const rev = await runProc("gh", ["pr", "edit", url, "--add-reviewer", "haykel1977"], worktreeCwd, env);
     if (rev.exitCode !== 0) {
       await log("stderr", `[delivery ${ts()}] add-reviewer failed (non-fatal): ${rev.stderr}\n`);
