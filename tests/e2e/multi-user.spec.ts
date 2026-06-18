@@ -62,6 +62,7 @@ async function createCompanyViaWizard(
         role: "ceo",
         title: "CEO",
         adapterType: "claude_local",
+        adapterConfig: { model: "sovereign-e2e-claude" },
       },
     }
   );
@@ -542,9 +543,11 @@ test.describe("Multi-user: Agent invite flow", () => {
           requestType: "agent",
           agentName: "TestAgent",
           adapterType: "claude_local",
+          agentDefaultsPayload: { model: "sovereign-e2e-join-claude" },
         },
       }
     );
+
     expect(acceptRes.ok()).toBe(true);
     const body = await acceptRes.json();
     expect(body).toHaveProperty("id");

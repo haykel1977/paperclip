@@ -12,6 +12,14 @@ const ADMIN_PASSWORD =
 const COMPANY_NAME = `Release-Smoke-${Date.now()}`;
 const AGENT_NAME = "CEO";
 const TASK_TITLE = "Release smoke task";
+const SOVEREIGN_MODEL = "sovereign-smoke-claude";
+
+async function selectManualSovereignModel(page: Page) {
+  await page.getByRole("button", { name: /Select sovereign model/ }).click();
+  await page.locator('input[placeholder="Search models..."]').fill(SOVEREIGN_MODEL);
+  await page.getByRole("button", { name: /Use manual sovereign model/ }).click();
+  await expect(page.getByRole("button", { name: SOVEREIGN_MODEL })).toBeVisible();
+}
 
 async function signIn(page: Page) {
   await page.goto("/");
@@ -52,11 +60,13 @@ test.describe("Docker authenticated onboarding smoke", () => {
     ).toBeVisible({ timeout: 10_000 });
 
     await expect(page.locator('input[placeholder="CEO"]')).toHaveValue(AGENT_NAME);
+    await selectManualSovereignModel(page);
     await page.getByRole("button", { name: "Next" }).click();
 
     await expect(
       page.locator("h3", { hasText: "Give it something to do" })
     ).toBeVisible({ timeout: 10_000 });
+
     await page
       .locator('input[placeholder="e.g. Research competitor pricing"]')
       .fill(TASK_TITLE);

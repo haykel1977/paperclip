@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
 /**
  * E2E: Onboarding wizard flow (skip_llm mode).
@@ -19,9 +19,18 @@ const SKIP_LLM = process.env.PAPERCLIP_E2E_SKIP_LLM !== "false";
 const COMPANY_NAME = `E2E-Test-${Date.now()}`;
 const AGENT_NAME = "CEO";
 const TASK_TITLE = "E2E test task";
+const SOVEREIGN_MODEL = "sovereign-e2e-claude";
+
+async function selectManualSovereignModel(page: Page) {
+  await page.getByRole("button", { name: /Select sovereign model/ }).click();
+  await page.locator('input[placeholder="Search models..."]').fill(SOVEREIGN_MODEL);
+  await page.getByRole("button", { name: /Use manual sovereign model/ }).click();
+  await expect(page.getByRole("button", { name: SOVEREIGN_MODEL })).toBeVisible();
+}
 
 test.describe("Onboarding wizard", () => {
   test("completes full wizard flow", async ({ page }) => {
+
     await page.goto("/onboarding");
 
     const wizardHeading = page.locator("h3", { hasText: "Name your company" });
@@ -48,9 +57,11 @@ test.describe("Onboarding wizard", () => {
     await page.getByRole("button", { name: "More Agent Adapter Types" }).click();
     await expect(page.getByRole("button", { name: "Process" })).toHaveCount(0);
 
+    await selectManualSovereignModel(page);
     await page.getByRole("button", { name: "Next" }).click();
 
     await expect(
+
       page.locator("h3", { hasText: "Give it something to do" })
     ).toBeVisible({ timeout: 30_000 });
 
