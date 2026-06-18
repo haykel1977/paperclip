@@ -1,7 +1,9 @@
 import { memo, useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent, type CSSProperties, type DragEvent, type RefObject } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { IssueWorkMode } from "@paperclipai/shared";
+import { isSovereignAgentModel } from "@paperclipai/shared";
 import { pickTextColorForSolidBg } from "@/lib/color-contrast";
+
 import { useDialog } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
 import { useAdapterCapabilities } from "../adapters/use-adapter-capabilities";
@@ -1178,6 +1180,7 @@ export function NewIssueDialog() {
   const modelOverrideOptions = useMemo<InlineEntityOption[]>(
     () => {
       return [...(assigneeAdapterModels ?? [])]
+        .filter(isSovereignAgentModel)
         .sort((a, b) => {
           const providerA = extractProviderIdWithFallback(a.id);
           const providerB = extractProviderIdWithFallback(b.id);
@@ -1193,6 +1196,7 @@ export function NewIssueDialog() {
     },
     [assigneeAdapterModels],
   );
+
   const currentWorkMode = ISSUE_WORK_MODE_OPTIONS[workMode === "planning" ? 1 : 0]!;
   const CurrentWorkModeIcon = currentWorkMode.icon;
 

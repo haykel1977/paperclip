@@ -1,3 +1,5 @@
+import { isSovereignAgentModelValue } from "@paperclipai/shared";
+
 export const ISSUE_OVERRIDE_ADAPTER_TYPES = new Set([
   "claude_local",
   "codex_local",
@@ -21,13 +23,14 @@ export interface BuildAssigneeAdapterOverridesInput {
  * - "primary" → no overrides, runs on the agent's primary model.
  * - "cheap"   → `modelProfile: "cheap"` only; the runtime resolves the actual
  *               adapter config from the agent's runtimeConfig + adapter default.
- * - "custom"  → preserves the legacy explicit override path
- *               (`adapterConfig.model`, thinking effort, chrome).
+ * - "custom"  → uses the explicit override path with sovereign-only
+ *               `adapterConfig.model`, thinking effort, and chrome.
  */
 export function buildAssigneeAdapterOverrides(
   input: BuildAssigneeAdapterOverridesInput,
 ): Record<string, unknown> | null {
   const adapterType = input.adapterType ?? null;
+
   if (!adapterType || !ISSUE_OVERRIDE_ADAPTER_TYPES.has(adapterType)) {
     return null;
   }
@@ -41,7 +44,9 @@ export function buildAssigneeAdapterOverrides(
   }
 
   const adapterConfig: Record<string, unknown> = {};
-  if (input.modelOverride) adapterConfig.model = input.modelOverride;
+  if (input.modelOverride && isSovereignAgentModelValue(input.modelOverride)) {
+    adapterConfig.model = input.modelOverride;
+  }
   if (input.thinkingEffortOverride) {
     if (adapterType === "codex_local") {
       adapterConfig.modelReasoningEffort = input.thinkingEffortOverride;
@@ -50,6 +55,7 @@ export function buildAssigneeAdapterOverrides(
     } else if (adapterType === "claude_local") {
       adapterConfig.effort = input.thinkingEffortOverride;
     }
+
   }
   if (adapterType === "claude_local" && input.chrome) {
     adapterConfig.chrome = true;

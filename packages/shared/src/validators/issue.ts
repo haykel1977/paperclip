@@ -27,10 +27,12 @@ import {
   MODEL_PROFILE_KEYS,
   REQUEST_CHECKBOX_CONFIRMATION_OPTION_LIMIT,
 } from "../constants.js";
+import { isSovereignAgentModelValue } from "../sovereign-models.js";
 import { multilineTextSchema } from "./text.js";
 import { lowTrustReviewPresetPolicySchema, trustAuthorizationPolicySchema } from "./trust-policy.js";
 
 export const issueBlockedInboxStateSchema = z.enum([
+
   "needs_attention",
   "awaiting_decision",
   "external_wait",
@@ -128,10 +130,21 @@ export const issueAssigneeAdapterOverridesSchema = z
     adapterConfig: z.record(z.string(), z.unknown()).optional(),
     useProjectWorkspace: z.boolean().optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    const model = value.adapterConfig?.model;
+    if (typeof model === "string" && model.trim() && !isSovereignAgentModelValue(model)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "assigneeAdapterOverrides.adapterConfig.model must be a sovereign model",
+        path: ["adapterConfig", "model"],
+      });
+    }
+  });
 
 const issueExecutionStagePrincipalBaseSchema = z.object({
   type: z.enum(["agent", "user"]),
+
   agentId: z.string().uuid().optional().nullable(),
   userId: z.string().optional().nullable(),
 });

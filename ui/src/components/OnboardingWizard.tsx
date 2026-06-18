@@ -1,7 +1,9 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AdapterEnvironmentTestResult } from "@paperclipai/shared";
+import { isSovereignAgentModel, isSovereignAgentModelValue } from "@paperclipai/shared";
 import { useLocation, useNavigate, useParams } from "@/lib/router";
+
 import { useDialog } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
 import { companiesApi } from "../api/companies";
@@ -37,14 +39,10 @@ import {
   selectDefaultCompanyGoalId
 } from "../lib/onboarding-launch";
 import { buildNewAgentRuntimeConfig } from "../lib/new-agent-runtime-config";
-import {
-  DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
-  DEFAULT_CODEX_LOCAL_MODEL
-} from "@paperclipai/adapter-codex-local";
-import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
-import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
-import { DEFAULT_OPENCODE_LOCAL_MODEL, isValidOpenCodeModelId } from "@paperclipai/adapter-opencode-local";
+import { DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX } from "@paperclipai/adapter-codex-local";
+import { isValidOpenCodeModelId } from "@paperclipai/adapter-opencode-local";
 import { resolveRouteOnboardingOptions } from "../lib/onboarding-route";
+
 import { AsciiArtAnimation } from "./AsciiArtAnimation";
 import {
   Building2,
@@ -238,19 +236,31 @@ export function OnboardingWizard() {
     setAdapterEnvError(null);
   }, [step, adapterType, model, command, args, url]);
 
-  const selectedModel = (adapterModels ?? []).find((m) => m.id === model);
+  const sovereignAdapterModels = useMemo(
+    () => (adapterModels ?? []).filter(isSovereignAgentModel),
+    [adapterModels],
+  );
+  const selectedModel = sovereignAdapterModels.find((m) => m.id === model);
+  const manualModel = modelSearch.trim();
+  const canUseManualModel = Boolean(
+    manualModel
+      && isSovereignAgentModelValue(manualModel)
+      && !sovereignAdapterModels.some((entry) => entry.id.toLowerCase() === manualModel.toLowerCase()),
+  );
   const hasAnthropicApiKeyOverrideCheck =
     adapterEnvResult?.checks.some(
       (check) =>
         check.code === "claude_anthropic_api_key_overrides_subscription"
     ) ?? false;
+
   const shouldSuggestUnsetAnthropicApiKey =
     adapterType === "claude_local" &&
     adapterEnvResult?.status === "fail" &&
     hasAnthropicApiKeyOverrideCheck;
+
   const filteredModels = useMemo(() => {
     const query = modelSearch.trim().toLowerCase();
-    return (adapterModels ?? []).filter((entry) => {
+    return sovereignAdapterModels.filter((entry) => {
       if (!query) return true;
       const provider = extractProviderIdWithFallback(entry.id, "");
       return (
@@ -259,7 +269,8 @@ export function OnboardingWizard() {
         provider.toLowerCase().includes(query)
       );
     });
-  }, [adapterModels, modelSearch]);
+  }, [sovereignAdapterModels, modelSearch]);
+
   const groupedModels = useMemo(() => {
     if (adapterType !== "opencode_local") {
       return [
@@ -321,21 +332,13 @@ export function OnboardingWizard() {
     const config = adapter.buildAdapterConfig({
       ...defaultCreateValues,
       adapterType,
-      model:
-        adapterType === "codex_local"
-          ? model || DEFAULT_CODEX_LOCAL_MODEL
-          : adapterType === "gemini_local"
-            ? model || DEFAULT_GEMINI_LOCAL_MODEL
-          : adapterType === "cursor"
-            ? model || DEFAULT_CURSOR_LOCAL_MODEL
-            : adapterType === "opencode_local"
-              ? model || DEFAULT_OPENCODE_LOCAL_MODEL
-              : model,
+      model,
       command,
       args,
       url,
       dangerouslySkipPermissions:
         adapterType === "claude_local" || adapterType === "opencode_local",
+
       dangerouslyBypassSandbox:
         adapterType === "codex_local"
           ? DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX
@@ -363,7 +366,12 @@ export function OnboardingWizard() {
       );
       return null;
     }
+    if (!isSovereignAgentModelValue(model)) {
+      setAdapterEnvError("Select a sovereign model before testing the adapter environment.");
+      return null;
+    }
     setAdapterEnvLoading(true);
+
     setAdapterEnvError(null);
     try {
       const result = await agentsApi.testEnvironment(
@@ -426,16 +434,21 @@ export function OnboardingWizard() {
     setLoading(true);
     setError(null);
     try {
+      if (!isSovereignAgentModelValue(model)) {
+        setError("Only sovereign agent models are allowed. Select a model containing \"sovereign\" or \"souverain\".");
+        return;
+      }
       if (adapterType === "opencode_local") {
         if (!isValidOpenCodeModelId(model)) {
           setError(
-            "OpenCode requires an explicit model in provider/model format."
+            "OpenCode requires an explicit sovereign model in provider/model format."
           );
           return;
         }
       }
 
       if (isLocalAdapter) {
+
         const result = adapterEnvResult ?? (await runAdapterEnvironmentTest());
         if (!result) return;
       }
@@ -751,22 +764,12 @@ export function OnboardingWizard() {
                               : "border-border hover:bg-accent/50"
                           )}
                           onClick={() => {
-                            const nextType = opt.type;
-                            setAdapterType(nextType);
-                            if (nextType === "codex_local") {
-                              if (!model) {
-                                setModel(DEFAULT_CODEX_LOCAL_MODEL);
-                              }
-                              return;
-                            }
-                            if (nextType === "opencode_local") {
-                              setModel(DEFAULT_OPENCODE_LOCAL_MODEL);
-                              return;
-                            }
+                            setAdapterType(opt.type);
                             setModel("");
                           }}
                         >
                           {opt.recommended && (
+
                             <span className="absolute -top-1.5 right-1.5 bg-green-500 text-white text-[9px] font-semibold px-1.5 py-0.5 rounded-full leading-none">
                               Recommended
                             </span>
@@ -809,24 +812,12 @@ export function OnboardingWizard() {
                              )}
                              onClick={() => {
                                if (opt.comingSoon) return;
-                               const nextType = opt.type;
-                              setAdapterType(nextType);
-                              if (nextType === "gemini_local" && !model) {
-                                setModel(DEFAULT_GEMINI_LOCAL_MODEL);
-                                return;
-                              }
-                              if (nextType === "cursor" && !model) {
-                                setModel(DEFAULT_CURSOR_LOCAL_MODEL);
-                                return;
-                              }
-                              if (nextType === "opencode_local") {
-                                setModel(DEFAULT_OPENCODE_LOCAL_MODEL);
-                                return;
-                              }
-                              setModel("");
-                            }}
+                               setAdapterType(opt.type);
+                               setModel("");
+                             }}
                           >
                             <opt.icon className="h-4 w-4" />
+
                             <span className="font-medium">{opt.label}</span>
                             <span className="text-muted-foreground text-[10px]">
                               {opt.comingSoon
@@ -862,11 +853,9 @@ export function OnboardingWizard() {
                               >
                                 {selectedModel
                                   ? selectedModel.label
-                                  : model ||
-                                    (adapterType === "opencode_local"
-                                      ? "Select model (required)"
-                                      : "Default")}
+                                  : model || "Select sovereign model (required)"}
                               </span>
+
                               <ChevronDown className="h-3 w-3 text-muted-foreground" />
                             </button>
                           </PopoverTrigger>
@@ -881,27 +870,27 @@ export function OnboardingWizard() {
                               onChange={(e) => setModelSearch(e.target.value)}
                               autoFocus
                             />
-                            {adapterType !== "opencode_local" && (
-                              <button
-                                className={cn(
-                                  "flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded hover:bg-accent/50",
-                                  !model && "bg-accent"
-                                )}
-                                onClick={() => {
-                                  setModel("");
-                                  setModelOpen(false);
-                                }}
-                              >
-                                Default
-                              </button>
-                            )}
                             <div className="max-h-[240px] overflow-y-auto">
+                              {canUseManualModel && (
+                                <button
+                                  className="flex items-center justify-between gap-2 w-full px-2 py-1.5 text-sm rounded hover:bg-accent/50"
+                                  onClick={() => {
+                                    setModel(manualModel);
+                                    setModelOpen(false);
+                                    setModelSearch("");
+                                  }}
+                                >
+                                  <span>Use manual sovereign model</span>
+                                  <span className="text-xs font-mono text-muted-foreground truncate">{manualModel}</span>
+                                </button>
+                              )}
                               {groupedModels.map((group) => (
                                 <div
                                   key={group.provider}
                                   className="mb-1 last:mb-0"
                                 >
                                   {adapterType === "opencode_local" && (
+
                                     <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
                                       {group.provider} ({group.entries.length})
                                     </div>
@@ -931,12 +920,13 @@ export function OnboardingWizard() {
                                 </div>
                               ))}
                             </div>
-                            {filteredModels.length === 0 && (
+                            {filteredModels.length === 0 && !canUseManualModel && (
                               <p className="px-2 py-1.5 text-xs text-muted-foreground">
-                                No models discovered.
+                                No sovereign models discovered.
                               </p>
                             )}
                           </PopoverContent>
+
                         </Popover>
                       </div>
                     </div>

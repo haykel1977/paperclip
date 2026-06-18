@@ -13,14 +13,15 @@ const cheapProfile: AdapterModelProfileDefinition = {
   key: "cheap",
   label: "Cheap",
   adapterConfig: {
-    model: "adapter-cheap",
+    model: "adapter-sovereign-cheap",
     modelReasoningEffort: "low",
   },
   source: "adapter_default",
 };
 
 describe("heartbeat model profile application", () => {
-  it("uses the Codex local adapter cheap default when the agent has no runtime override", async () => {
+  it("does not apply a non-sovereign adapter cheap default", async () => {
+
     const modelProfile = resolveModelProfileApplication({
       adapterModelProfiles: await listAdapterModelProfiles("codex_local"),
       agentRuntimeConfig: {},
@@ -31,17 +32,15 @@ describe("heartbeat model profile application", () => {
     expect(modelProfile).toMatchObject({
       requested: "cheap",
       requestedBy: "issue_override",
-      applied: "cheap",
-      configSource: "adapter_default",
-      fallbackReason: null,
-      adapterConfig: {
-        model: "gpt-5.3-codex-spark",
-        modelReasoningEffort: "high",
-      },
+      applied: null,
+      configSource: null,
+      fallbackReason: "non_sovereign_model_profile",
+      adapterConfig: null,
     });
   });
 
-  it("applies cheap profile patches before explicit issue adapter config overrides", () => {
+  it("applies cheap profile patches before explicit sovereign issue adapter config overrides", () => {
+
     const modelProfile = resolveModelProfileApplication({
       adapterModelProfiles: [cheapProfile],
       agentRuntimeConfig: {},
@@ -51,13 +50,13 @@ describe("heartbeat model profile application", () => {
 
     const merged = mergeModelProfileAdapterConfig({
       baseConfig: {
-        model: "primary",
+        model: "primary-sovereign",
         modelReasoningEffort: "high",
         approvalPolicy: "strict",
       },
       modelProfile,
       issueAdapterConfig: {
-        model: "issue-explicit",
+        model: "issue-sovereign-explicit",
       },
     });
 
@@ -69,20 +68,20 @@ describe("heartbeat model profile application", () => {
       fallbackReason: null,
     });
     expect(merged).toEqual({
-      model: "issue-explicit",
+      model: "issue-sovereign-explicit",
       modelReasoningEffort: "low",
       approvalPolicy: "strict",
     });
   });
 
-  it("lets agent runtime profile config customize adapter defaults", () => {
+  it("lets agent runtime profile config customize adapter defaults with a sovereign model", () => {
     const modelProfile = resolveModelProfileApplication({
       adapterModelProfiles: [cheapProfile],
       agentRuntimeConfig: {
         modelProfiles: {
           cheap: {
             adapterConfig: {
-              model: "agent-cheap",
+              model: "agent-sovereign-cheap",
             },
           },
         },
@@ -97,7 +96,7 @@ describe("heartbeat model profile application", () => {
       applied: "cheap",
       configSource: "agent_runtime",
       adapterConfig: {
-        model: "agent-cheap",
+        model: "agent-sovereign-cheap",
         modelReasoningEffort: "low",
       },
     });

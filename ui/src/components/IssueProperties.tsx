@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { pickTextColorForPillBg } from "@/lib/color-contrast";
 import { Link } from "@/lib/router";
 import type { Issue, IssueLabel, Project, WorkspaceRuntimeService } from "@paperclipai/shared";
+import { isSovereignAgentModel, isSovereignAgentModelValue } from "@paperclipai/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+
 import type { AdapterModel } from "../api/agents";
 import { accessApi } from "../api/access";
 import { agentsApi } from "../api/agents";
@@ -607,13 +609,17 @@ export function IssueProperties({
     [assigneeCheapProfiles],
   );
   const modelOverrideOptions = useMemo<InlineEntityOption[]>(() => {
-    const models = sortAdapterModels(assigneeAdapterModels ?? []);
+    const models = sortAdapterModels((assigneeAdapterModels ?? []).filter(isSovereignAgentModel));
     const options = models.map((model) => ({
       id: model.id,
       label: model.label,
       searchText: `${model.id} ${extractProviderIdWithFallback(model.id)}`,
     }));
-    if (assigneeOverrideModel && !options.some((option) => option.id === assigneeOverrideModel)) {
+    if (
+      assigneeOverrideModel
+      && isSovereignAgentModelValue(assigneeOverrideModel)
+      && !options.some((option) => option.id === assigneeOverrideModel)
+    ) {
       options.unshift({
         id: assigneeOverrideModel,
         label: assigneeOverrideModel,
@@ -622,15 +628,25 @@ export function IssueProperties({
     }
     return options;
   }, [assigneeAdapterModels, assigneeOverrideModel]);
+
   const updateAssigneeAdapterOverrides = (next: Issue["assigneeAdapterOverrides"]) => {
     onUpdate({ assigneeAdapterOverrides: next });
   };
   const buildAssigneeOverrideWithConfig = (adapterConfig: Record<string, unknown>) => {
-    const nextConfig = compactRecord(adapterConfig);
+    const sanitizedConfig = { ...adapterConfig };
+    if (
+      typeof sanitizedConfig.model === "string"
+      && sanitizedConfig.model.trim()
+      && !isSovereignAgentModelValue(sanitizedConfig.model)
+    ) {
+      delete sanitizedConfig.model;
+    }
+    const nextConfig = compactRecord(sanitizedConfig);
     const next = compactRecord({
       useProjectWorkspace: assigneeAdapterOverrides?.useProjectWorkspace,
       ...(Object.keys(nextConfig).length > 0 ? { adapterConfig: nextConfig } : {}),
     });
+
     return Object.keys(next).length > 0 ? next : null;
   };
   const updateAssigneeOverrideConfig = (patch: Record<string, unknown>) => {

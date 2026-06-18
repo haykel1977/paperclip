@@ -1543,6 +1543,7 @@ export function agentRoutes(
         inputAdapterConfig,
         { strictMode: strictSecretsMode },
       );
+      await assertAdapterConfigConstraints(type, normalizedAdapterConfig);
       const { config: runtimeAdapterConfig } = await secretsSvc.resolveAdapterConfigForRuntime(
         companyId,
         normalizedAdapterConfig,

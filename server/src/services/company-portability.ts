@@ -47,8 +47,10 @@ import {
   issueCommentAuthorTypeSchema,
   issueCommentMetadataSchema,
   issueCommentPresentationSchema,
+  isSovereignAgentModelValue,
   normalizeAgentUrlKey,
 } from "@paperclipai/shared";
+
 import {
   readPaperclipSkillSyncPreference,
   writePaperclipSkillSyncPreference,
@@ -3007,10 +3009,30 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
     return adapterType;
   }
 
+  const SOVEREIGN_MODEL_REQUIRED_ADAPTER_TYPES = new Set([
+    "acpx_local",
+    "claude_local",
+    "codex_local",
+    "cursor",
+    "gemini_local",
+    "grok_local",
+    "opencode_local",
+    "pi_local",
+  ]);
+
   async function assertImportAdapterConfigConstraints(
     adapterType: string,
     adapterConfig: Record<string, unknown>,
   ) {
+    const model = typeof adapterConfig.model === "string" ? adapterConfig.model.trim() : "";
+    if (SOVEREIGN_MODEL_REQUIRED_ADAPTER_TYPES.has(adapterType)) {
+      if (!model) {
+        throw unprocessable(`adapterConfig.model is required for ${adapterType}`);
+      }
+      if (!isSovereignAgentModelValue(model)) {
+        throw unprocessable("adapterConfig.model must be a sovereign model");
+      }
+    }
     if (adapterType !== "opencode_local") return;
     try {
       requireOpenCodeModelId(adapterConfig.model);
@@ -3022,6 +3044,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
 
   async function prepareImportedAgentAdapter(
     companyId: string,
+
     adapterType: string | null | undefined,
     adapterConfig: Record<string, unknown>,
     desiredSkills: string[],

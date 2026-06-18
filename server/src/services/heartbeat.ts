@@ -11,9 +11,11 @@ import {
   MODEL_PROFILE_KEYS,
   envBindingSchema,
   isEnvironmentDriverSupportedForAdapter,
+  isSovereignAgentModel,
   isSovereignAgentModelValue,
   type BillingType,
   type EnvironmentLeaseStatus,
+
   type ExecutionWorkspace,
 
   type ExecutionWorkspaceConfig,
@@ -58,10 +60,11 @@ import { conflict, HttpError, notFound } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { publishLiveEvent } from "./live-events.js";
 import { getRunLogStore, type RunLogHandle } from "./run-log-store.js";
-import { getServerAdapter, listAdapterModelProfiles, runningProcesses } from "../adapters/index.js";
+import { getServerAdapter, listAdapterModelProfiles, listAdapterModels, runningProcesses } from "../adapters/index.js";
 import type {
   AdapterExecutionResult,
   AdapterInvocationMeta,
+
   AdapterModelProfileDefinition,
   AdapterSessionCodec,
   UsageSummary,
@@ -1442,6 +1445,39 @@ export function prioritizeProjectWorkspaceCandidatesForRun<T extends ProjectWork
 
 function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+const SOVEREIGN_MODEL_REQUIRED_ADAPTER_TYPES = new Set([
+  "acpx_local",
+  "claude_local",
+  "codex_local",
+  "cursor",
+  "gemini_local",
+  "grok_local",
+  "opencode_local",
+  "pi_local",
+]);
+
+async function assertSovereignRuntimeModel(
+  adapterType: string,
+  config: Record<string, unknown>,
+): Promise<void> {
+  if (!SOVEREIGN_MODEL_REQUIRED_ADAPTER_TYPES.has(adapterType)) return;
+
+  const model = readNonEmptyString(config.model);
+  if (!model) {
+    throw new Error(
+      `Agent adapter ${adapterType} requires an explicit sovereign model before execution.`,
+    );
+  }
+  if (isSovereignAgentModelValue(model)) return;
+
+  const knownModel = (await listAdapterModels(adapterType)).find((entry) => entry.id === model);
+  if (knownModel && isSovereignAgentModel(knownModel)) return;
+
+  throw new Error(
+    `Agent adapter ${adapterType} cannot execute non-sovereign model "${model}".`,
+  );
 }
 
 function readModelProfileKey(value: unknown): ModelProfileKey | null {
@@ -8196,11 +8232,13 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       ...effectiveResolvedConfig,
       paperclipRuntimeSkills: runtimeSkillEntries,
     };
+    await assertSovereignRuntimeModel(agent.adapterType, runtimeConfig);
     const hostExecutionWorkspaceConfig = stripHostWorkspaceProvisionForLowTrustSandbox({
       config: runtimeConfig,
       trustPreset,
       selectedEnvironmentDriver: lowTrustPreflightEnvironmentDriver,
     });
+
     const workspaceOperationRecorder = workspaceOperationsSvc.createRecorder({
       companyId: agent.companyId,
       heartbeatRunId: run.id,

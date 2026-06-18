@@ -310,6 +310,16 @@ describe("issue validators", () => {
     expect(parsed.assigneeAdapterOverrides?.modelProfile).toBe("cheap");
   });
 
+  it("rejects non-sovereign issue assignee model overrides", () => {
+    const parsed = updateIssueSchema.safeParse({
+      assigneeAdapterOverrides: {
+        adapterConfig: { model: "claude-sonnet-4-6" },
+      },
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
   it("rejects unknown issue model profile keys", () => {
     const parsed = updateIssueSchema.safeParse({
       assigneeAdapterOverrides: {

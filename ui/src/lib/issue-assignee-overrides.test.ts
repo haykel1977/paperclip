@@ -40,20 +40,36 @@ describe("buildAssigneeAdapterOverrides", () => {
     ).toEqual({ modelProfile: "cheap" });
   });
 
-  it("custom lane preserves explicit model + thinking effort + chrome overrides", () => {
+  it("custom lane preserves explicit sovereign model + thinking effort + chrome overrides", () => {
+    expect(
+      buildAssigneeAdapterOverrides({
+        adapterType: "claude_local",
+        lane: "custom",
+        modelOverride: "claude-sovereign-haiku",
+        thinkingEffortOverride: "high",
+        chrome: true,
+      }),
+    ).toEqual({
+      adapterConfig: {
+        model: "claude-sovereign-haiku",
+        effort: "high",
+        chrome: true,
+      },
+    });
+  });
+
+  it("custom lane drops non-sovereign explicit model overrides", () => {
     expect(
       buildAssigneeAdapterOverrides({
         adapterType: "claude_local",
         lane: "custom",
         modelOverride: "claude-haiku-4-5",
         thinkingEffortOverride: "high",
-        chrome: true,
+        chrome: false,
       }),
     ).toEqual({
       adapterConfig: {
-        model: "claude-haiku-4-5",
         effort: "high",
-        chrome: true,
       },
     });
   });
