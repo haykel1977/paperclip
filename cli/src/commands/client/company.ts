@@ -7,6 +7,7 @@ import type {
   Company,
   FeedbackTrace,
   CompanyPortabilityFileEntry,
+  CompanyPortabilityAdapterOverride,
   CompanyPortabilityExportResult,
   CompanyPortabilityInclude,
   CompanyPortabilityPreviewResult,
@@ -43,6 +44,17 @@ interface AgentMeResponse {
 type CompanyDeleteSelectorMode = "auto" | "id" | "prefix";
 type CompanyImportTargetMode = "new" | "existing";
 type CompanyCollisionMode = "rename" | "skip" | "replace";
+
+const SOVEREIGN_IMPORT_DEFAULT_MODEL_BY_ADAPTER_TYPE: Record<string, string> = {
+  acpx_local: "sovereign-import-acpx",
+  claude_local: "sovereign-import-claude",
+  codex_local: "sovereign-import-codex",
+  cursor: "sovereign-import-cursor",
+  gemini_local: "sovereign-import-gemini",
+  grok_local: "sovereign-import-grok",
+  opencode_local: "openai/sovereign-import-opencode",
+  pi_local: "openai/sovereign-import-pi",
+};
 
 interface CompanyDeleteOptions extends BaseClientOptions {
   by?: CompanyDeleteSelectorMode;
@@ -380,7 +392,7 @@ export function buildSelectedFilesFromImportSelection(
 
 export function buildDefaultImportAdapterOverrides(
   preview: Pick<CompanyPortabilityPreviewResult, "manifest" | "selectedAgentSlugs">,
-): Record<string, { adapterType: string }> | undefined {
+): Record<string, CompanyPortabilityAdapterOverride> | undefined {
   const selectedAgentSlugs = new Set(preview.selectedAgentSlugs);
   const overrides = Object.fromEntries(
     preview.manifest.agents
@@ -389,8 +401,8 @@ export function buildDefaultImportAdapterOverrides(
       .map((agent) => [
         agent.slug,
         {
-          // TODO: replace this temporary claude_local fallback with adapter selection in the import TUI.
           adapterType: "claude_local",
+          adapterConfig: { model: SOVEREIGN_IMPORT_DEFAULT_MODEL_BY_ADAPTER_TYPE.claude_local },
         },
       ]),
   );
@@ -398,7 +410,7 @@ export function buildDefaultImportAdapterOverrides(
 }
 
 function buildDefaultImportAdapterMessages(
-  overrides: Record<string, { adapterType: string }> | undefined,
+  overrides: Record<string, CompanyPortabilityAdapterOverride> | undefined,
 ): string[] {
   if (!overrides) return [];
   const adapterTypes = Array.from(new Set(Object.values(overrides).map((override) => override.adapterType)))

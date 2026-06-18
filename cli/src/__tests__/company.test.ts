@@ -794,6 +794,7 @@ describe("default adapter overrides", () => {
     expect(buildDefaultImportAdapterOverrides(preview)).toEqual({
       "legacy-agent": {
         adapterType: "claude_local",
+        adapterConfig: { model: "sovereign-import-claude" },
       },
     });
   });

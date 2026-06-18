@@ -33,7 +33,7 @@ export const runTranscriptFixtureEntries: TranscriptEntry[] = [
   {
     kind: "init",
     ts: "2026-03-11T15:21:05.948Z",
-    model: "codex",
+    model: "sovereign-codex",
     sessionId: "sess_fixture_01",
   },
   {

@@ -321,6 +321,7 @@ describe("teamsCatalogService", () => {
 
     const callerOverrides = {
       cto: { adapterType: "opencode_local", adapterConfig: { model: "anthropic/sovereign-claude-opus-4" } },
+      qa: { adapterType: "cursor" },
     };
     await svc.installCatalogTeam("company-1", "core-exec-team", {
       adapterOverrides: callerOverrides,
@@ -330,11 +331,12 @@ describe("teamsCatalogService", () => {
     expect(importInput.adapterOverrides).toEqual({
       ceo: { adapterType: "claude_local", adapterConfig: { model: "sovereign-catalog-claude" } },
       cto: { adapterType: "opencode_local", adapterConfig: { model: "anthropic/sovereign-claude-opus-4" } },
-      qa: { adapterType: "claude_local", adapterConfig: { model: "sovereign-catalog-claude" } },
+      qa: { adapterType: "cursor", adapterConfig: { model: "sovereign-catalog-cursor" } },
     });
     // Caller-supplied object must not be mutated in place.
     expect(callerOverrides).toEqual({
       cto: { adapterType: "opencode_local", adapterConfig: { model: "anthropic/sovereign-claude-opus-4" } },
+      qa: { adapterType: "cursor" },
     });
   });
 

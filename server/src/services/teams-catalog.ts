@@ -703,6 +703,20 @@ function defaultSafeCatalogAdapterConfig(adapterType: string): Record<string, un
   return model ? { model } : {};
 }
 
+function withSafeCatalogAdapterConfigDefaults(
+  override: CompanyPortabilityAdapterOverride,
+): CompanyPortabilityAdapterOverride {
+  const defaultConfig = defaultSafeCatalogAdapterConfig(override.adapterType);
+  if (Object.keys(defaultConfig).length === 0) return { ...override };
+  return {
+    ...override,
+    adapterConfig: {
+      ...defaultConfig,
+      ...(override.adapterConfig ?? {}),
+    },
+  };
+}
+
 /**
  * Bundled catalog agents declare no adapter in their `AGENTS.md` frontmatter, so
  * `parsePortableAgentFrontmatter` defaults them to `process` — which the
@@ -710,22 +724,23 @@ function defaultSafeCatalogAdapterConfig(adapterType: string): Record<string, un
  * `company-portability`). Inject a safe per-agent adapter default for every
 
  * catalog agent the caller did not explicitly override so default-trust teams
- * install without manual adapter flags. Explicit caller overrides win and are
- * left untouched (both `adapterType` and `adapterConfig`). This is scoped to the
- * catalog install path; the generic portability fallback is unchanged.
+ * install without manual adapter flags. Explicit caller overrides keep their
+ * adapter type/config, with the sovereign model default filled when omitted.
+ * This is scoped to the catalog install path; the generic portability fallback
+ * is unchanged.
  */
 function withSafeCatalogAdapterDefaults(
   agentSlugs: string[],
   callerOverrides: CompanyPortabilityImport["adapterOverrides"],
   defaultAdapterType: string,
 ): Record<string, CompanyPortabilityAdapterOverride> {
-  const merged: Record<string, CompanyPortabilityAdapterOverride> = { ...(callerOverrides ?? {}) };
+  const merged: Record<string, CompanyPortabilityAdapterOverride> = {};
+  for (const [slug, override] of Object.entries(callerOverrides ?? {})) {
+    merged[slug] = withSafeCatalogAdapterConfigDefaults(override);
+  }
   for (const slug of agentSlugs) {
     if (merged[slug]) continue;
-    const adapterConfig = defaultSafeCatalogAdapterConfig(defaultAdapterType);
-    merged[slug] = Object.keys(adapterConfig).length > 0
-      ? { adapterType: defaultAdapterType, adapterConfig }
-      : { adapterType: defaultAdapterType };
+    merged[slug] = withSafeCatalogAdapterConfigDefaults({ adapterType: defaultAdapterType });
   }
   return merged;
 }

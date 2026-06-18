@@ -65,4 +65,12 @@ describe("buildNewAgentRuntimeConfig", () => {
     expect(config.modelProfiles).toBeUndefined();
   });
 
+  it("omits non-sovereign cheap model overrides", () => {
+    const config = buildNewAgentRuntimeConfig({
+      cheapModel: "claude-sonnet",
+      cheapModelEnabled: true,
+    });
+    expect(config.modelProfiles).toBeUndefined();
+  });
+
 });

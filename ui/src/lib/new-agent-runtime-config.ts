@@ -1,4 +1,4 @@
-import { AGENT_DEFAULT_MAX_CONCURRENT_RUNS } from "@paperclipai/shared";
+import { AGENT_DEFAULT_MAX_CONCURRENT_RUNS, isSovereignAgentModelValue } from "@paperclipai/shared";
 import { defaultCreateValues } from "../components/agent-config-defaults";
 
 export function buildNewAgentRuntimeConfig(input?: {
@@ -19,7 +19,7 @@ export function buildNewAgentRuntimeConfig(input?: {
 
   const cheapModel = input?.cheapModel?.trim() ?? "";
   const cheapEnabled = input?.cheapModelEnabled ?? false;
-  if (cheapModel && cheapEnabled) {
+  if (cheapModel && cheapEnabled && isSovereignAgentModelValue(cheapModel)) {
     config.modelProfiles = {
       cheap: {
         enabled: true,
