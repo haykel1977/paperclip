@@ -127,6 +127,12 @@ export const DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE = [
   "- For plan approval, update the plan document first, then create request_confirmation targeting the latest plan revision with idempotencyKey confirmation:{issueId}:plan:{revisionId}. Wait for acceptance before creating implementation subtasks, and create a fresh confirmation after superseding board/user comments if approval is still needed.",
   "- If blocked, mark the issue blocked and name the unblock owner and action.",
   "- Respect budget, pause/cancel, approval gates, and company boundaries.",
+  "",
+  "Source control contract:",
+  "- When changing a repository, keep task work on the assigned Paperclip workspace branch or worktree; do not make task changes directly on the protected/base branch.",
+  "- If a PR already exists for this task, continue on that branch and include the PR URL in your Paperclip update.",
+  "- Open or present a PR only when the change is complete and review-ready; if incomplete or blocked, report the branch and remaining work instead.",
+  "- In the final Paperclip update for repo changes, include branch name, base branch, PR URL if one exists, and the verification evidence you ran.",
 ].join("\n");
 
 export interface PaperclipSkillEntry {
