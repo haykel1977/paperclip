@@ -19,9 +19,8 @@ export const modelProfiles: AdapterModelProfileDefinition[] = [
   {
     key: "cheap",
     label: "Cheap",
-    description: "Use Claude Sonnet as the lower-cost Claude Code lane while preserving the agent's primary model.",
+    description: "Use lower Claude effort for the cheap lane while preserving the agent's sovereign primary model.",
     adapterConfig: {
-      model: "claude-sonnet-4-6",
       effort: "low",
     },
     source: "adapter_default",
@@ -35,9 +34,10 @@ Adapter: claude_local
 Core fields:
 - cwd (string, optional): default absolute working directory fallback for the agent process (created if missing when possible)
 - instructionsFilePath (string, optional): absolute path to a markdown instructions file injected at runtime
-- model (string, optional): Claude model id
+- model (string, required): sovereign Claude model id or label containing "sovereign" or "souverain"
 - effort (string, optional): reasoning effort passed via --effort (low|medium|high)
 - chrome (boolean, optional): pass --chrome when running Claude
+
 - promptTemplate (string, optional): run prompt template
 - maxTurnsPerRun (number, optional): max turns for one run
 - dangerouslySkipPermissions (boolean, optional, default true): pass --dangerously-skip-permissions to claude; defaults to true because Paperclip runs Claude in headless --print mode where interactive permission prompts cannot be answered

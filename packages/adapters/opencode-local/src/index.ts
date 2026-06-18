@@ -44,9 +44,10 @@ export const SANDBOX_INSTALL_COMMAND =
   'fi; ' +
   'fi';
 
-export const DEFAULT_OPENCODE_LOCAL_MODEL = "openai/gpt-5.2-codex";
+const OPENCODE_LOCAL_FALLBACK_MODEL = "openai/gpt-5.2-codex";
 
 export function isValidOpenCodeModelId(value: unknown): value is string {
+
   if (typeof value !== "string") return false;
   const trimmed = value.trim();
   const slashIndex = trimmed.indexOf("/");
@@ -54,8 +55,9 @@ export function isValidOpenCodeModelId(value: unknown): value is string {
 }
 
 export const models: Array<{ id: string; label: string }> = [
-  { id: DEFAULT_OPENCODE_LOCAL_MODEL, label: DEFAULT_OPENCODE_LOCAL_MODEL },
+  { id: OPENCODE_LOCAL_FALLBACK_MODEL, label: OPENCODE_LOCAL_FALLBACK_MODEL },
   { id: "openai/gpt-5.4", label: "openai/gpt-5.4" },
+
   { id: "openai/gpt-5.2", label: "openai/gpt-5.2" },
   { id: "openai/gpt-5.1-codex-max", label: "openai/gpt-5.1-codex-max" },
   { id: "openai/gpt-5.1-codex-mini", label: "openai/gpt-5.1-codex-mini" },
@@ -65,9 +67,8 @@ export const modelProfiles: AdapterModelProfileDefinition[] = [
   {
     key: "cheap",
     label: "Cheap",
-    description: "Use OpenCode's known Codex mini model as the budget lane.",
+    description: "Use a lower OpenCode variant for the cheap lane while preserving the agent's sovereign primary model.",
     adapterConfig: {
-      model: "openai/gpt-5.1-codex-mini",
       variant: "low",
     },
     source: "adapter_default",
@@ -91,8 +92,9 @@ Don't use when:
 Core fields:
 - cwd (string, optional): default absolute working directory fallback for the agent process (created if missing when possible)
 - instructionsFilePath (string, optional): absolute path to a markdown instructions file prepended to the run prompt
-- model (string, required): OpenCode model id in provider/model format (for example anthropic/claude-sonnet-4-5)
+- model (string, required): sovereign OpenCode model id in provider/model format containing "sovereign" or "souverain"
 - variant (string, optional): provider-specific reasoning/profile variant passed as --variant (for example minimal|low|medium|high|xhigh|max)
+
 - dangerouslySkipPermissions (boolean, optional): inject a runtime OpenCode config that allows \`external_directory\` access without interactive prompts; defaults to true for unattended Paperclip runs
 - promptTemplate (string, optional): run prompt template
 - command (string, optional): defaults to "opencode"

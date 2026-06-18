@@ -124,11 +124,12 @@ describeEmbeddedPostgres("teams catalog install with no caller adapter overrides
       collisionStrategy: "rename",
       include: { projects: false, issues: false },
       adapterOverrides: {
-        cto: { adapterType: "opencode_local", adapterConfig: { model: "anthropic/claude-opus-4" } },
+        cto: { adapterType: "opencode_local", adapterConfig: { model: "anthropic/sovereign-claude-opus-4" } },
       },
     });
 
     const byName = await listAdapterTypesByName(companyId);
+
     expect(byName.size).toBe(3);
     const ctoRow = Array.from(byName.values()).find((row) => row.role === "engineering-manager" || row.name === "CTO");
     expect(ctoRow?.adapterType).toBe("opencode_local");

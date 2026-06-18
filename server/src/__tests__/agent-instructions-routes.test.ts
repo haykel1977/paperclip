@@ -298,7 +298,7 @@ describe("agent instructions bundle routes", () => {
         instructionsRootPath: "/tmp/agent-1",
         instructionsEntryFile: "AGENTS.md",
         instructionsFilePath: "/tmp/agent-1/AGENTS.md",
-        model: "gpt-5.4",
+        model: "sovereign-gpt-5.4",
       },
     });
 
@@ -307,19 +307,21 @@ describe("agent instructions bundle routes", () => {
       .send({
         adapterType: "claude_local",
         adapterConfig: {
-          model: "claude-sonnet-4",
+          model: "sovereign-claude-sonnet-4",
         },
       }));
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
+
     expect(mockAgentService.update).toHaveBeenCalledWith(
       "11111111-1111-4111-8111-111111111111",
       expect.objectContaining({
         adapterType: "claude_local",
         adapterConfig: expect.objectContaining({
-          model: "claude-sonnet-4",
+          model: "sovereign-claude-sonnet-4",
           instructionsBundleMode: "managed",
           instructionsRootPath: "/tmp/agent-1",
+
           instructionsEntryFile: "AGENTS.md",
           instructionsFilePath: "/tmp/agent-1/AGENTS.md",
         }),
@@ -337,7 +339,7 @@ describe("agent instructions bundle routes", () => {
         instructionsRootPath: "/tmp/agent-1",
         instructionsEntryFile: "AGENTS.md",
         instructionsFilePath: "/tmp/agent-1/AGENTS.md",
-        model: "gpt-5.4",
+        model: "sovereign-gpt-5.4",
       },
     });
 
@@ -355,9 +357,10 @@ describe("agent instructions bundle routes", () => {
       expect.objectContaining({
         adapterConfig: expect.objectContaining({
           command: "codex --profile engineer",
-          model: "gpt-5.4",
+          model: "sovereign-gpt-5.4",
           instructionsBundleMode: "managed",
           instructionsRootPath: "/tmp/agent-1",
+
           instructionsEntryFile: "AGENTS.md",
           instructionsFilePath: "/tmp/agent-1/AGENTS.md",
         }),
@@ -375,7 +378,7 @@ describe("agent instructions bundle routes", () => {
         instructionsRootPath: "/tmp/agent-1",
         instructionsEntryFile: "AGENTS.md",
         instructionsFilePath: "/tmp/agent-1/AGENTS.md",
-        model: "gpt-5.4",
+        model: "sovereign-gpt-5.4",
       },
     });
 
@@ -385,13 +388,16 @@ describe("agent instructions bundle routes", () => {
         replaceAdapterConfig: true,
         adapterConfig: {
           command: "codex --profile engineer",
+          model: "sovereign-gpt-5.4",
         },
       }));
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(res.body.adapterConfig).toMatchObject({
       command: "codex --profile engineer",
+      model: "sovereign-gpt-5.4",
     });
+
     expect(res.body.adapterConfig.instructionsBundleMode).toBeUndefined();
     expect(res.body.adapterConfig.instructionsRootPath).toBeUndefined();
     expect(res.body.adapterConfig.instructionsEntryFile).toBeUndefined();

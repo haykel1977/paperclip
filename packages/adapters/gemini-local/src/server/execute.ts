@@ -49,11 +49,12 @@ import {
   stringifyPaperclipWakePayload,
   runChildProcess,
 } from "@paperclipai/adapter-utils/server-utils";
-import { DEFAULT_GEMINI_LOCAL_MODEL, SANDBOX_INSTALL_COMMAND } from "../index.js";
+import { SANDBOX_INSTALL_COMMAND } from "../index.js";
 
 import {
   describeGeminiFailure,
   detectGeminiAuthRequired,
+
   isGeminiTurnLimitResult,
   isGeminiUnknownSessionError,
   parseGeminiJsonl,
@@ -184,10 +185,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   const promptTemplate = resolvePaperclipAgentPromptTemplate(config.promptTemplate);
   const command = asString(config.command, "gemini");
-  const model = asString(config.model, DEFAULT_GEMINI_LOCAL_MODEL).trim();
+  const model = asString(config.model, "").trim();
   const sandbox = asBoolean(config.sandbox, false);
 
   const workspaceContext = parseObject(context.paperclipWorkspace);
+
   const workspaceCwd = asString(workspaceContext.cwd, "");
   const workspaceSource = asString(workspaceContext.source, "");
   const workspaceId = asString(workspaceContext.workspaceId, "");
@@ -512,10 +514,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const buildArgs = (resumeSessionId: string | null) => {
     const args = ["--output-format", "stream-json"];
     if (resumeSessionId) args.push("--resume", resumeSessionId);
-    if (model && model !== DEFAULT_GEMINI_LOCAL_MODEL) args.push("--model", model);
+    if (model) args.push("--model", model);
     args.push("--approval-mode", "yolo");
     if (sandbox) {
       args.push("--sandbox");
+
     } else {
       args.push("--sandbox=none");
     }

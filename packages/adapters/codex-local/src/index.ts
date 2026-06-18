@@ -5,7 +5,7 @@ export const label = "Codex (local)";
 
 export const SANDBOX_INSTALL_COMMAND = "npm install -g @openai/codex";
 
-export const DEFAULT_CODEX_LOCAL_MODEL = "gpt-5.3-codex";
+const CODEX_LOCAL_FALLBACK_MODEL = "gpt-5.3-codex";
 export const DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX = true;
 export const CODEX_LOCAL_FAST_MODE_SUPPORTED_MODELS = ["gpt-5.4"] as const;
 
@@ -34,8 +34,9 @@ export function isCodexLocalFastModeSupported(model: string | null | undefined):
 
 export const models = [
   { id: "gpt-5.4", label: "gpt-5.4" },
-  { id: DEFAULT_CODEX_LOCAL_MODEL, label: DEFAULT_CODEX_LOCAL_MODEL },
+  { id: CODEX_LOCAL_FALLBACK_MODEL, label: CODEX_LOCAL_FALLBACK_MODEL },
   { id: "gpt-5.3-codex-spark", label: "gpt-5.3-codex-spark" },
+
   { id: "gpt-5", label: "gpt-5" },
   { id: "o3", label: "o3" },
   { id: "o4-mini", label: "o4-mini" },
@@ -49,11 +50,9 @@ export const modelProfiles: AdapterModelProfileDefinition[] = [
   {
     key: "cheap",
     label: "Cheap",
-    description: "Use the lowest-cost known Codex local model lane without changing the primary model.",
+    description: "Use lower Codex reasoning effort for the cheap lane while preserving the agent's sovereign primary model.",
     adapterConfig: {
-      model: "gpt-5.3-codex-spark",
-      // Spark is the cheap lane by model price; high effort keeps Codex coding behavior usable for delegated work.
-      modelReasoningEffort: "high",
+      modelReasoningEffort: "low",
     },
     source: "adapter_default",
   },
@@ -66,9 +65,10 @@ Adapter: codex_local
 Core fields:
 - cwd (string, optional): default absolute working directory fallback for the agent process (created if missing when possible)
 - instructionsFilePath (string, optional): absolute path to a markdown instructions file prepended to stdin prompt at runtime
-- model (string, optional): Codex model id
+- model (string, required): sovereign Codex model id or label containing "sovereign" or "souverain"
 - modelReasoningEffort (string, optional): reasoning effort override (minimal|low|medium|high|xhigh) passed via -c model_reasoning_effort=...
 - promptTemplate (string, optional): run prompt template
+
 - search (boolean, optional): run codex with --search
 - fastMode (boolean, optional): enable Codex Fast mode; supported on GPT-5.4 and passed through for manual model IDs
 - dangerouslyBypassApprovalsAndSandbox (boolean, optional): run with bypass flag

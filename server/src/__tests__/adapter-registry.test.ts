@@ -171,39 +171,39 @@ describe("server adapter registry", () => {
     expect(adapter!.supportsLocalAgentJwt).toBe(true);
   });
 
-  it("built-in local adapters declare cheap model profile defaults where supported", async () => {
+  it("built-in local adapters declare sovereign-safe cheap model profile defaults where supported", async () => {
     await expect(listAdapterModelProfiles("claude_local")).resolves.toEqual([
       expect.objectContaining({
         key: "cheap",
-        adapterConfig: expect.objectContaining({ model: "claude-sonnet-4-6" }),
+        adapterConfig: { effort: "low" },
         source: "adapter_default",
       }),
     ]);
     await expect(listAdapterModelProfiles("codex_local")).resolves.toEqual([
       expect.objectContaining({
         key: "cheap",
-        adapterConfig: expect.objectContaining({ model: "gpt-5.3-codex-spark" }),
+        adapterConfig: { modelReasoningEffort: "low" },
         source: "adapter_default",
       }),
     ]);
     await expect(listAdapterModelProfiles("gemini_local")).resolves.toEqual([
       expect.objectContaining({
         key: "cheap",
-        adapterConfig: expect.objectContaining({ model: "gemini-2.5-flash-lite" }),
+        adapterConfig: {},
         source: "adapter_default",
       }),
     ]);
     await expect(listAdapterModelProfiles("opencode_local")).resolves.toEqual([
       expect.objectContaining({
         key: "cheap",
-        adapterConfig: expect.objectContaining({ model: "openai/gpt-5.1-codex-mini" }),
+        adapterConfig: { variant: "low" },
         source: "adapter_default",
       }),
     ]);
     await expect(listAdapterModelProfiles("cursor")).resolves.toEqual([
       expect.objectContaining({
         key: "cheap",
-        adapterConfig: expect.objectContaining({ model: "gpt-5.1-codex-mini" }),
+        adapterConfig: {},
         source: "adapter_default",
       }),
     ]);
@@ -211,6 +211,7 @@ describe("server adapter registry", () => {
   });
 
   it("wraps built-in npm runtime installs with the sandbox-aware install helper", () => {
+
     const expectedClaudeInstall = `if ! command -v 'claude' >/dev/null 2>&1; then ${buildSandboxNpmInstallCommand("@anthropic-ai/claude-code")}; fi`;
     const expectedCodexInstall = `if ! command -v 'codex' >/dev/null 2>&1; then ${buildSandboxNpmInstallCommand("@openai/codex")}; fi`;
     const expectedGeminiInstall = `if ! command -v 'gemini' >/dev/null 2>&1; then ${buildSandboxNpmInstallCommand("@google/gemini-cli")}; fi`;

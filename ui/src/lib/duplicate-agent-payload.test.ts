@@ -68,9 +68,10 @@ describe("duplicate agent payload", () => {
       reportsTo: "manager-1",
       capabilities: "Builds product features.",
       adapterType: "codex_local",
-      adapterConfig: { model: "gpt-5.3-codex" },
+      adapterConfig: { model: "sovereign-codex" },
       runtimeConfig: { heartbeat: { enabled: true } },
       defaultEnvironmentId: "environment-1",
+
       budgetMonthlyCents: 500,
       permissions: { canCreateAgents: true },
       metadata: { source: "test" },

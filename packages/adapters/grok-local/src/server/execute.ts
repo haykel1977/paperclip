@@ -40,7 +40,6 @@ import {
   refreshPaperclipWorkspaceEnvForExecution,
   resolvePaperclipAgentPromptTemplate,
 } from "@paperclipai/adapter-utils/server-utils";
-import { DEFAULT_GROK_LOCAL_MODEL } from "../index.js";
 
 import { isGrokUnknownSessionError, parseGrokJsonl } from "./parse.js";
 
@@ -201,10 +200,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   const promptTemplate = resolvePaperclipAgentPromptTemplate(config.promptTemplate);
   const command = asString(config.command, "grok");
-  const model = asString(config.model, DEFAULT_GROK_LOCAL_MODEL).trim();
+  const model = asString(config.model, "").trim();
   const permissionMode = asString(config.permissionMode, "dontAsk").trim() || "dontAsk";
   const reasoningEffort = asString(config.reasoningEffort, "").trim();
   const maxTurns = asNumber(config.maxTurns, 0);
+
   const alwaysApprove = asBoolean(config.alwaysApprove, true);
   const disableWebSearch = asBoolean(config.disableWebSearch, true);
 
@@ -437,9 +437,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     const buildArgs = (resumeSessionId: string | null) => {
       const args = ["--cwd", effectiveExecutionCwd, "--output-format", "streaming-json"];
       if (resumeSessionId) args.push("--resume", resumeSessionId);
-      if (model && model !== DEFAULT_GROK_LOCAL_MODEL) args.push("--model", model);
+      if (model) args.push("--model", model);
       if (reasoningEffort) args.push("--reasoning-effort", reasoningEffort);
       if (maxTurns > 0) args.push("--max-turns", String(maxTurns));
+
       if (permissionMode) args.push("--permission-mode", permissionMode);
       if (alwaysApprove) args.push("--always-approve");
       if (disableWebSearch) args.push("--disable-web-search");

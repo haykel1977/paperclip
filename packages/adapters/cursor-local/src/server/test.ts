@@ -21,7 +21,7 @@ import {
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { DEFAULT_CURSOR_LOCAL_MODEL, SANDBOX_INSTALL_COMMAND } from "../index.js";
+import { SANDBOX_INSTALL_COMMAND } from "../index.js";
 import { parseCursorJsonl } from "./parse.js";
 import { isDefaultCursorCommand, prepareCursorSandboxCommand } from "./remote-command.js";
 import { hasCursorTrustBypassArg } from "../shared/trust.js";
@@ -290,7 +290,7 @@ export async function testEnvironment(
         };
       }
 
-      const model = asString(config.model, DEFAULT_CURSOR_LOCAL_MODEL).trim();
+      const model = asString(config.model, "").trim();
       const extraArgs = (() => {
         const fromExtraArgs = asStringArray(config.extraArgs);
         if (fromExtraArgs.length > 0) return fromExtraArgs;
@@ -299,6 +299,7 @@ export async function testEnvironment(
       const autoTrustEnabled = !hasCursorTrustBypassArg(extraArgs);
       const args = ["-p", "--mode", "ask", "--output-format", "json", "--workspace", cwd];
       if (model) args.push("--model", model);
+
       if (autoTrustEnabled) args.push("--yolo");
       if (extraArgs.length > 0) args.push(...extraArgs);
       args.push("Respond with hello.");

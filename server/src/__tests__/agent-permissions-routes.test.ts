@@ -1,10 +1,10 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_OPENCODE_LOCAL_MODEL } from "@paperclipai/adapter-opencode-local";
 import { LOW_TRUST_REVIEW_PRESET } from "@paperclipai/shared";
 
 vi.mock("acpx/runtime", () => ({
+
   createAcpRuntime: vi.fn(),
   createAgentRegistry: vi.fn(),
   createRuntimeStore: vi.fn(),
@@ -431,12 +431,13 @@ describe.sequential("agent permission routes", () => {
       },
       runtimeConfig: {
         modelProfiles: {
-          default: { enabled: true, adapterConfig: { model: "openai/gpt-5.4-mini" } },
+          default: { enabled: true, adapterConfig: { model: "openai/sovereign-gpt-5.4-mini" } },
         },
       },
     });
 
     const app = await createApp({
+
       type: "board",
       userId: "board-user",
       source: "local_implicit",
@@ -453,9 +454,10 @@ describe.sequential("agent permission routes", () => {
     });
     expect(res.body.runtimeConfig).toMatchObject({
       modelProfiles: {
-        default: { enabled: true, adapterConfig: { model: "openai/gpt-5.4-mini" } },
+        default: { enabled: true, adapterConfig: { model: "openai/sovereign-gpt-5.4-mini" } },
       },
     });
+
     expect(res.body.permissions).toMatchObject({ trustPreset: LOW_TRUST_REVIEW_PRESET });
   }, 20_000);
 
@@ -609,9 +611,11 @@ describe.sequential("agent permission routes", () => {
     mockAgentService.getById.mockResolvedValue({
       ...baseAgent,
       adapterType: "codex_local",
+      adapterConfig: { model: "sovereign-codex" },
     });
 
     const app = await createApp({
+
       type: "board",
       userId: "board-user",
       source: "local_implicit",
@@ -623,6 +627,7 @@ describe.sequential("agent permission routes", () => {
       modelProfiles: {
         cheap: {
           adapterConfig: {
+            model: "sovereign-codex-cheap",
             workspaceStrategy: {
               type: "git_worktree",
               provisionCommand: "bash ./scripts/provision-worktree.sh",
@@ -633,6 +638,7 @@ describe.sequential("agent permission routes", () => {
     };
 
     const res = await requestApp(app, (baseUrl) => request(baseUrl)
+
       .patch(`/api/agents/${agentId}`)
       .send({ runtimeConfig }));
 
@@ -651,6 +657,7 @@ describe.sequential("agent permission routes", () => {
     mockAgentService.getById.mockResolvedValue({
       ...baseAgent,
       adapterType: "codex_local",
+      adapterConfig: { model: "sovereign-codex" },
     });
     mockSecretService.normalizeAdapterConfigForPersistence.mockImplementation(async (_companyId, config) => ({
       ...config,
@@ -672,13 +679,14 @@ describe.sequential("agent permission routes", () => {
     });
 
     const res = await requestApp(app, (baseUrl) => request(baseUrl)
+
       .patch(`/api/agents/${agentId}`)
       .send({
         runtimeConfig: {
           modelProfiles: {
             cheap: {
               adapterConfig: {
-                model: "gpt-5.3-codex-spark",
+                model: "sovereign-codex-spark",
                 env: {
                   API_TOKEN: {
                     type: "secret_ref",
@@ -696,11 +704,12 @@ describe.sequential("agent permission routes", () => {
     expect(mockSecretService.normalizeAdapterConfigForPersistence).toHaveBeenCalledWith(
       companyId,
       expect.objectContaining({
-        model: "gpt-5.3-codex-spark",
+        model: "sovereign-codex-spark",
         env: expect.any(Object),
       }),
       { strictMode: false },
     );
+
     expect(mockAgentService.update).toHaveBeenCalledWith(
       agentId,
       expect.objectContaining({
@@ -708,7 +717,7 @@ describe.sequential("agent permission routes", () => {
           modelProfiles: {
             cheap: {
               adapterConfig: {
-                model: "gpt-5.3-codex-spark",
+                model: "sovereign-codex-spark",
                 env: {
                   API_TOKEN: {
                     type: "secret_ref",
@@ -721,6 +730,7 @@ describe.sequential("agent permission routes", () => {
           },
         },
       }),
+
       expect.anything(),
     );
   });
@@ -978,7 +988,7 @@ describe.sequential("agent permission routes", () => {
     );
   });
 
-  it("seeds opencode agent creation with the static default model without live discovery", async () => {
+  it("rejects opencode agent creation without an explicit sovereign model", async () => {
     mockEnsureOpenCodeModelConfiguredAndAvailable.mockRejectedValue(
       new Error("`opencode models` should not be called during creation"),
     );
@@ -1000,20 +1010,14 @@ describe.sequential("agent permission routes", () => {
         adapterConfig: {},
       }));
 
-    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(res.status, JSON.stringify(res.body)).toBe(422);
+    expect(res.body.error).toContain("adapterConfig.model is required");
     expect(mockEnsureOpenCodeModelConfiguredAndAvailable).not.toHaveBeenCalled();
-    expect(mockAgentService.create).toHaveBeenCalledWith(
-      companyId,
-      expect.objectContaining({
-        adapterType: "opencode_local",
-        adapterConfig: expect.objectContaining({
-          model: DEFAULT_OPENCODE_LOCAL_MODEL,
-        }),
-      }),
-    );
+    expect(mockAgentService.create).not.toHaveBeenCalled();
   });
 
-  it("accepts manual opencode provider/model values without host-side discovery", async () => {
+  it("accepts manual sovereign opencode provider/model values without host-side discovery", async () => {
+
     mockEnsureOpenCodeModelConfiguredAndAvailable.mockRejectedValue(
       new Error("`opencode models` should not be called during creation"),
     );
@@ -1033,7 +1037,7 @@ describe.sequential("agent permission routes", () => {
         role: "engineer",
         adapterType: "opencode_local",
         adapterConfig: {
-          model: "anthropic/claude-sonnet-4-5",
+          model: "anthropic/sovereign-claude-sonnet-4-5",
         },
       }));
 
@@ -1044,13 +1048,14 @@ describe.sequential("agent permission routes", () => {
       expect.objectContaining({
         adapterType: "opencode_local",
         adapterConfig: expect.objectContaining({
-          model: "anthropic/claude-sonnet-4-5",
+          model: "anthropic/sovereign-claude-sonnet-4-5",
         }),
       }),
     );
   });
 
   it("normalizes hire requests to disable timer heartbeats by default", async () => {
+
     const app = await createApp({
       type: "board",
       userId: "board-user",
@@ -1213,15 +1218,16 @@ describe.sequential("agent permission routes", () => {
   });
 
   const sshCapableAdapterCases = [
-    { adapterType: "codex_local", name: "Codex Builder", adapterConfig: {} },
-    { adapterType: "claude_local", name: "Claude Builder", adapterConfig: {} },
-    { adapterType: "gemini_local", name: "Gemini Builder", adapterConfig: {} },
-    { adapterType: "opencode_local", name: "OpenCode Builder", adapterConfig: { model: "opencode/gpt-5-nano" } },
-    { adapterType: "cursor", name: "Cursor Builder", adapterConfig: {} },
-    { adapterType: "pi_local", name: "Pi Builder", adapterConfig: { model: "openai/gpt-5.4-mini" } },
+    { adapterType: "codex_local", name: "Codex Builder", adapterConfig: { model: "sovereign-codex" } },
+    { adapterType: "claude_local", name: "Claude Builder", adapterConfig: { model: "sovereign-claude" } },
+    { adapterType: "gemini_local", name: "Gemini Builder", adapterConfig: { model: "sovereign-gemini" } },
+    { adapterType: "opencode_local", name: "OpenCode Builder", adapterConfig: { model: "opencode/sovereign-gpt-5-nano" } },
+    { adapterType: "cursor", name: "Cursor Builder", adapterConfig: { model: "sovereign-cursor" } },
+    { adapterType: "pi_local", name: "Pi Builder", adapterConfig: { model: "openai/sovereign-gpt-5.4-mini" } },
   ];
 
   for (const adapterCase of sshCapableAdapterCases) {
+
     it(`allows creating a ${adapterCase.adapterType} agent with an SSH default environment`, async () => {
       const environmentId = "33333333-3333-4333-8333-333333333333";
       mockEnvironmentService.getById.mockResolvedValue({

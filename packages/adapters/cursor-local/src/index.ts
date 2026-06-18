@@ -12,10 +12,9 @@ export const label = "Cursor CLI (local)";
 // equivalent.
 export const SANDBOX_INSTALL_COMMAND = "curl https://cursor.com/install -fsS | bash";
 
-export const DEFAULT_CURSOR_LOCAL_MODEL = "auto";
-
 const CURSOR_FALLBACK_MODEL_IDS = [
   "auto",
+
   "composer-1.5",
   "composer-1",
   "gpt-5.3-codex-low",
@@ -62,10 +61,8 @@ export const modelProfiles: AdapterModelProfileDefinition[] = [
   {
     key: "cheap",
     label: "Cheap",
-    description: "Use Cursor's known Codex mini model as the budget lane instead of assuming auto is cheap.",
-    adapterConfig: {
-      model: "gpt-5.1-codex-mini",
-    },
+    description: "Preserve the agent's sovereign primary model for the cheap lane until a sovereign budget model is configured.",
+    adapterConfig: {},
     source: "adapter_default",
   },
 ];
@@ -88,8 +85,9 @@ Core fields:
 - cwd (string, optional): default absolute working directory fallback for the agent process (created if missing when possible)
 - instructionsFilePath (string, optional): absolute path to a markdown instructions file prepended to the run prompt
 - promptTemplate (string, optional): run prompt template
-- model (string, optional): Cursor model id (for example auto or gpt-5.3-codex)
+- model (string, required): sovereign Cursor model id or label containing "sovereign" or "souverain"
 - mode (string, optional): Cursor execution mode passed as --mode (plan|ask). Leave unset for normal autonomous runs.
+
 - command (string, optional): defaults to "agent"
 - extraArgs (string[], optional): additional CLI args
 - env (object, optional): KEY=VALUE environment variables

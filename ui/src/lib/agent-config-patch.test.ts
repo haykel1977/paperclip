@@ -17,7 +17,7 @@ function makeAgent(): Agent {
     capabilities: null,
     adapterType: "claude_local",
     adapterConfig: {
-      model: "claude-sonnet-4-6",
+      model: "claude-sovereign-sonnet",
       env: {
         OPENAI_API_KEY: {
           type: "plain",
@@ -26,6 +26,7 @@ function makeAgent(): Agent {
       },
       promptTemplate: "Work the issue.",
     },
+
     runtimeConfig: {
       heartbeat: {
         enabled: true,
@@ -70,11 +71,12 @@ describe("buildAgentUpdatePatch", () => {
 
     expect(patch).toEqual({
       adapterConfig: {
-        model: "claude-sonnet-4-6",
+        model: "claude-sovereign-sonnet",
         promptTemplate: "Work the issue.",
       },
       replaceAdapterConfig: true,
     });
+
   });
 
   it("writes the cheap profile under runtimeConfig.modelProfiles, never on primary adapterConfig", () => {
@@ -84,7 +86,7 @@ describe("buildAgentUpdatePatch", () => {
         modelProfiles: {
           cheap: {
             enabled: true,
-            adapterConfig: { model: "claude-haiku-4-5" },
+            adapterConfig: { model: "claude-sovereign-haiku" },
           },
         },
       }),
@@ -99,11 +101,12 @@ describe("buildAgentUpdatePatch", () => {
         modelProfiles: {
           cheap: {
             enabled: true,
-            adapterConfig: { model: "claude-haiku-4-5" },
+            adapterConfig: { model: "claude-sovereign-haiku" },
           },
         },
       },
     });
+
     // The primary adapterConfig is untouched.
     expect(patch.adapterConfig).toBeUndefined();
   });
@@ -144,12 +147,13 @@ describe("buildAgentUpdatePatch", () => {
       modelProfiles: {
         cheap: {
           enabled: false,
-          adapterConfig: { model: "old-cheap" },
+          adapterConfig: { model: "old-sovereign-cheap" },
         },
       },
     };
 
     const patch = buildAgentUpdatePatch(
+
       agent,
       makeOverlay({
         modelProfiles: {
@@ -163,7 +167,7 @@ describe("buildAgentUpdatePatch", () => {
     expect((patch.runtimeConfig as Record<string, unknown>).modelProfiles).toEqual({
       cheap: {
         enabled: true,
-        adapterConfig: { model: "old-cheap" },
+        adapterConfig: { model: "old-sovereign-cheap" },
       },
     });
   });
@@ -175,7 +179,7 @@ describe("buildAgentUpdatePatch", () => {
       modelProfiles: {
         cheap: {
           enabled: true,
-          adapterConfig: { model: "claude-haiku-4-5" },
+          adapterConfig: { model: "claude-sovereign-haiku" },
         },
       },
     };
@@ -198,10 +202,11 @@ describe("buildAgentUpdatePatch", () => {
       makeOverlay({
         adapterType: "codex_local",
         adapterConfig: {
-          model: "gpt-5.4",
+          model: "sovereign-codex",
           dangerouslyBypassApprovalsAndSandbox: true,
         },
       }),
+
     );
 
     expect(patch).toEqual({
@@ -214,10 +219,11 @@ describe("buildAgentUpdatePatch", () => {
           },
         },
         promptTemplate: "Work the issue.",
-        model: "gpt-5.4",
+        model: "sovereign-codex",
         dangerouslyBypassApprovalsAndSandbox: true,
       },
       replaceAdapterConfig: true,
     });
+
   });
 });

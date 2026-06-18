@@ -17,10 +17,10 @@ import {
   resolveAdapterExecutionTargetCwd,
   runAdapterExecutionTargetProcess,
 } from "@paperclipai/adapter-utils/execution-target";
-import { DEFAULT_GROK_LOCAL_MODEL } from "../index.js";
 import { parseGrokJsonl } from "./parse.js";
 
 export interface GrokModelsProbe {
+
   authenticated: boolean;
   defaultModel: string | null;
   models: string[];
@@ -164,10 +164,11 @@ export async function testEnvironment(
   const canRunProbe =
     checks.every((check) => check.code !== "grok_cwd_invalid" && check.code !== "grok_command_unresolvable");
 
-  const configuredModel = asString(config.model, DEFAULT_GROK_LOCAL_MODEL).trim();
+  const configuredModel = asString(config.model, "").trim();
 
   if (canRunProbe) {
     const modelsProbe = await runAdapterExecutionTargetProcess(
+
       runId,
       target,
       command,
@@ -249,10 +250,12 @@ export async function testEnvironment(
       "dontAsk",
       "--disable-web-search",
     ];
-    if (configuredModel && configuredModel !== DEFAULT_GROK_LOCAL_MODEL) {
+    if (configuredModel) {
       probeArgs.push("--model", configuredModel);
     }
     probeArgs.push("--single", "Respond with exactly hello.");
+
+
 
     const helloProbe = await runAdapterExecutionTargetProcess(
       runId,

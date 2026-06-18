@@ -37,16 +37,17 @@ describe("buildNewAgentRuntimeConfig", () => {
     const config = buildNewAgentRuntimeConfig({
       heartbeatEnabled: true,
       intervalSec: 600,
-      cheapModel: "claude-sonnet-4-6",
+      cheapModel: "claude-sovereign-sonnet",
       cheapModelEnabled: true,
     });
 
     expect(config.modelProfiles).toEqual({
       cheap: {
         enabled: true,
-        adapterConfig: { model: "claude-sonnet-4-6" },
+        adapterConfig: { model: "claude-sovereign-sonnet" },
       },
     });
+
     // primary heartbeat config still present
     expect(config.heartbeat).toMatchObject({ enabled: true, intervalSec: 600 });
   });
@@ -58,9 +59,10 @@ describe("buildNewAgentRuntimeConfig", () => {
 
   it("omits modelProfiles when cheap model is set but explicitly disabled", () => {
     const config = buildNewAgentRuntimeConfig({
-      cheapModel: "claude-sonnet-4-6",
+      cheapModel: "claude-sovereign-sonnet",
       cheapModelEnabled: false,
     });
     expect(config.modelProfiles).toBeUndefined();
   });
+
 });

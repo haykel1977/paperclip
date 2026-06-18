@@ -8,10 +8,11 @@ export const label = "Gemini CLI (local)";
 
 export const SANDBOX_INSTALL_COMMAND = buildSandboxNpmInstallCommand("@google/gemini-cli");
 
-export const DEFAULT_GEMINI_LOCAL_MODEL = "auto";
+const GEMINI_AUTO_MODEL_ID = "auto";
 
 export const models = [
-  { id: DEFAULT_GEMINI_LOCAL_MODEL, label: "Auto" },
+  { id: GEMINI_AUTO_MODEL_ID, label: "Auto" },
+
   { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
   { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
   { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite" },
@@ -23,10 +24,8 @@ export const modelProfiles: AdapterModelProfileDefinition[] = [
   {
     key: "cheap",
     label: "Cheap",
-    description: "Use Gemini Flash Lite as the budget Gemini CLI lane while preserving the primary model.",
-    adapterConfig: {
-      model: "gemini-2.5-flash-lite",
-    },
+    description: "Preserve the agent's sovereign primary model for the cheap lane until a sovereign budget model is configured.",
+    adapterConfig: {},
     source: "adapter_default",
   },
 ];
@@ -49,8 +48,9 @@ Core fields:
 - cwd (string, optional): default absolute working directory fallback for the agent process (created if missing when possible)
 - instructionsFilePath (string, optional): absolute path to a markdown instructions file prepended to the run prompt
 - promptTemplate (string, optional): run prompt template
-- model (string, optional): Gemini model id. Defaults to auto.
+- model (string, required): sovereign Gemini model id or label containing "sovereign" or "souverain"
 - sandbox (boolean, optional): run in sandbox mode (default: false, passes --sandbox=none)
+
 - command (string, optional): defaults to "gemini"
 - extraArgs (string[], optional): additional CLI args
 - env (object, optional): KEY=VALUE environment variables

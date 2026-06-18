@@ -320,7 +320,7 @@ describe("teamsCatalogService", () => {
     const svc = teamsCatalogService({} as any);
 
     const callerOverrides = {
-      cto: { adapterType: "opencode_local", adapterConfig: { model: "anthropic/claude-opus-4" } },
+      cto: { adapterType: "opencode_local", adapterConfig: { model: "anthropic/sovereign-claude-opus-4" } },
     };
     await svc.installCatalogTeam("company-1", "core-exec-team", {
       adapterOverrides: callerOverrides,
@@ -329,13 +329,14 @@ describe("teamsCatalogService", () => {
     const [importInput] = mockCompanyPortabilityService.importBundle.mock.calls.at(-1)!;
     expect(importInput.adapterOverrides).toEqual({
       ceo: { adapterType: "claude_local" },
-      cto: { adapterType: "opencode_local", adapterConfig: { model: "anthropic/claude-opus-4" } },
+      cto: { adapterType: "opencode_local", adapterConfig: { model: "anthropic/sovereign-claude-opus-4" } },
       qa: { adapterType: "claude_local" },
     });
     // Caller-supplied object must not be mutated in place.
     expect(callerOverrides).toEqual({
-      cto: { adapterType: "opencode_local", adapterConfig: { model: "anthropic/claude-opus-4" } },
+      cto: { adapterType: "opencode_local", adapterConfig: { model: "anthropic/sovereign-claude-opus-4" } },
     });
+
   });
 
   it("omits the default-adapter warning when every agent has an explicit override", async () => {

@@ -20,7 +20,7 @@ const cheapProfile: AdapterModelProfileDefinition = {
 };
 
 describe("heartbeat model profile application", () => {
-  it("does not apply a non-sovereign adapter cheap default", async () => {
+  it("applies sovereign-safe adapter cheap defaults without changing the model", async () => {
 
     const modelProfile = resolveModelProfileApplication({
       adapterModelProfiles: await listAdapterModelProfiles("codex_local"),
@@ -32,10 +32,10 @@ describe("heartbeat model profile application", () => {
     expect(modelProfile).toMatchObject({
       requested: "cheap",
       requestedBy: "issue_override",
-      applied: null,
-      configSource: null,
-      fallbackReason: "non_sovereign_model_profile",
-      adapterConfig: null,
+      applied: "cheap",
+      configSource: "adapter_default",
+      fallbackReason: null,
+      adapterConfig: { modelReasoningEffort: "low" },
     });
   });
 
@@ -109,7 +109,7 @@ describe("heartbeat model profile application", () => {
         modelProfiles: {
           cheap: {
             adapterConfig: {
-              model: "agent-cheap",
+              model: "agent-sovereign-cheap",
             },
           },
         },
@@ -120,8 +120,9 @@ describe("heartbeat model profile application", () => {
 
     const merged = mergeModelProfileAdapterConfig({
       baseConfig: {
-        model: "primary",
+        model: "primary-sovereign",
       },
+
       modelProfile,
       issueAdapterConfig: null,
     });
@@ -132,10 +133,11 @@ describe("heartbeat model profile application", () => {
       fallbackReason: "adapter_profile_not_supported",
       adapterConfig: null,
     });
-    expect(merged).toEqual({ model: "primary" });
+    expect(merged).toEqual({ model: "primary-sovereign" });
   });
 
   it("normalizes a wake payload model profile into run context", () => {
+
     const contextSnapshot = normalizeModelProfileWakeContext({
       contextSnapshot: {},
       payload: { modelProfile: "cheap" },

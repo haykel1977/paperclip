@@ -1,10 +1,10 @@
 export const type = "grok_local";
 export const label = "Grok Build (local)";
 
-export const DEFAULT_GROK_LOCAL_MODEL = "grok-build";
+const GROK_BUILD_MODEL_ID = "grok-build";
 
 export const models = [
-  { id: DEFAULT_GROK_LOCAL_MODEL, label: DEFAULT_GROK_LOCAL_MODEL },
+  { id: GROK_BUILD_MODEL_ID, label: GROK_BUILD_MODEL_ID },
 ];
 
 export const agentConfigurationDoc = `# grok_local agent configuration
@@ -25,8 +25,9 @@ Core fields:
 - cwd (string, optional): default absolute working directory fallback for the agent process (created if missing when possible)
 - instructionsFilePath (string, optional): absolute path to a markdown instructions file. Paperclip stages it into the execution workspace as \`Agents.md\` when safe, otherwise falls back to \`--rules @file\`
 - promptTemplate (string, optional): run prompt template
-- model (string, optional): Grok model id. Defaults to grok-build.
+- model (string, required): sovereign Grok model id or label containing "sovereign" or "souverain"
 - permissionMode (string, optional): Grok permission mode. Defaults to \`dontAsk\`
+
 - reasoningEffort (string, optional): Grok reasoning effort passed via \`--reasoning-effort\`
 - maxTurns (number, optional): maximum agent turns for the run
 - command (string, optional): defaults to "grok"
