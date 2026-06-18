@@ -112,15 +112,19 @@ export function resolvePaperclipInstanceRootForAdapter(input: {
 
 const PAPERCLIP_REPO_PR_CI_CONTRACT =
   "For repo work, PR creation is a review handoff rather than completion; inspect and report relevant PR checks/CI when available, and do not mark work `done` while required or relevant checks are red, missing, or pending.";
+const PAPERCLIP_MODEL_SOVEREIGNTY_CONTRACT =
+  "Use only sovereign agent models; do not select, delegate to, or switch work onto non-sovereign hosted models unless an authorized human explicitly changes this policy.";
 
 const PAPERCLIP_WAKE_EXECUTION_CONTRACT = [
   "Execution contract: take concrete action in this heartbeat when the issue is actionable; do not stop at a plan unless planning was requested. Leave durable progress and then give the issue a clear final disposition before ending the heartbeat: `done`, `in_review` with a real reviewer/approval/interaction path, `blocked` with first-class blockers or a named unblock owner/action, delegated follow-up issues with blockers, or `in_progress` only when a live continuation path exists. Use child issues for long or parallel delegated work instead of polling. Comments, documents, screenshots, work products, and `Remaining` bullets are evidence, not valid liveness paths by themselves.",
   PAPERCLIP_REPO_PR_CI_CONTRACT,
+  PAPERCLIP_MODEL_SOVEREIGNTY_CONTRACT,
 ].join(" ");
 
 const PAPERCLIP_SOURCE_CONTROL_CONTRACT_LINES = [
   "Source control contract:",
   "- When changing a repository, keep task work on the assigned Paperclip workspace branch or worktree; do not make task changes directly on the protected/base branch.",
+
   "- If a PR already exists for this task, continue on that branch and include the PR URL in your Paperclip update.",
   `- ${PAPERCLIP_REPO_PR_CI_CONTRACT}`,
   "- Open or present a PR only when the change is complete, review-ready, and has passing required/relevant checks when those checks are available; if incomplete or blocked, report the branch and remaining work instead.",
@@ -144,19 +148,28 @@ export const DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE = [
   "- For plan approval, update the plan document first, then create request_confirmation targeting the latest plan revision with idempotencyKey confirmation:{issueId}:plan:{revisionId}. Wait for acceptance before creating implementation subtasks, and create a fresh confirmation after superseding board/user comments if approval is still needed.",
   "- If blocked, mark the issue blocked and name the unblock owner and action.",
   "- Respect budget, pause/cancel, approval gates, and company boundaries.",
+  `- ${PAPERCLIP_MODEL_SOVEREIGNTY_CONTRACT}`,
   "",
   ...PAPERCLIP_SOURCE_CONTROL_CONTRACT_LINES,
 ].join("\n");
 
 export const PAPERCLIP_SOURCE_CONTROL_CONTRACT_PROMPT = PAPERCLIP_SOURCE_CONTROL_CONTRACT_LINES.join("\n");
+export const PAPERCLIP_MODEL_SOVEREIGNTY_CONTRACT_PROMPT = `Model sovereignty contract:\n- ${PAPERCLIP_MODEL_SOVEREIGNTY_CONTRACT}`;
 
 export function resolvePaperclipAgentPromptTemplate(value: unknown): string {
   const prompt = asString(value, DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE);
-  if (prompt.includes(PAPERCLIP_REPO_PR_CI_CONTRACT)) return prompt;
-  return joinPromptSections([prompt, PAPERCLIP_SOURCE_CONTROL_CONTRACT_PROMPT]);
+  if (prompt.includes(PAPERCLIP_REPO_PR_CI_CONTRACT) && prompt.includes(PAPERCLIP_MODEL_SOVEREIGNTY_CONTRACT)) {
+    return prompt;
+  }
+  return joinPromptSections([
+    prompt,
+    prompt.includes(PAPERCLIP_MODEL_SOVEREIGNTY_CONTRACT) ? "" : PAPERCLIP_MODEL_SOVEREIGNTY_CONTRACT_PROMPT,
+    prompt.includes(PAPERCLIP_REPO_PR_CI_CONTRACT) ? "" : PAPERCLIP_SOURCE_CONTROL_CONTRACT_PROMPT,
+  ]);
 }
 
 export interface PaperclipSkillEntry {
+
   key: string;
   runtimeName: string;
   source: string;

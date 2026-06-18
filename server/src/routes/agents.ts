@@ -25,11 +25,15 @@ import {
   wakeAgentSchema,
   updateAgentSchema,
   supportedEnvironmentDriversForAdapter,
+  filterSovereignAgentModels,
+  isSovereignAgentModel,
+  isSovereignAgentModelValue,
   LOW_TRUST_REVIEW_PRESET,
 } from "@paperclipai/shared";
 import {
   readPaperclipSkillSyncPreference,
   writePaperclipSkillSyncPreference,
+
 } from "@paperclipai/adapter-utils/server-utils";
 import { trackAgentCreated } from "@paperclipai/shared/telemetry";
 import { validate } from "../middleware/validate.js";
@@ -85,14 +89,9 @@ import {
   DEFAULT_ACPX_LOCAL_NON_INTERACTIVE_PERMISSIONS,
   DEFAULT_ACPX_LOCAL_PERMISSION_MODE,
 } from "@paperclipai/adapter-acpx-local";
-import {
-  DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
-  DEFAULT_CODEX_LOCAL_MODEL,
-} from "@paperclipai/adapter-codex-local";
-import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
-import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
-import { DEFAULT_OPENCODE_LOCAL_MODEL } from "@paperclipai/adapter-opencode-local";
+import { DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX } from "@paperclipai/adapter-codex-local";
 import { requireOpenCodeModelId } from "@paperclipai/adapter-opencode-local/server";
+
 import {
   loadDefaultAgentInstructionsBundle,
   resolveDefaultAgentInstructionsBundleRole,
@@ -1065,10 +1064,12 @@ export function agentRoutes(
           ...adapterDefaultConfig,
         },
       });
+      await assertSovereignAgentModel(adapterType, normalizedAdapterConfig, `${entry.path}.model`);
       normalizedModelProfiles[entry.profileKey] = {
         ...entry.profile,
         adapterConfig: normalizedAdapterConfig,
       };
+
     }
 
     return normalizedRuntimeConfig;
@@ -1111,9 +1112,6 @@ export function agentRoutes(
       return ensureGatewayDeviceKey(adapterType, next);
     }
     if (adapterType === "codex_local") {
-      if (!asNonEmptyString(next.model)) {
-        next.model = DEFAULT_CODEX_LOCAL_MODEL;
-      }
       const hasBypassFlag =
         typeof next.dangerouslyBypassApprovalsAndSandbox === "boolean" ||
         typeof next.dangerouslyBypassSandbox === "boolean";
@@ -1122,24 +1120,34 @@ export function agentRoutes(
       }
       return ensureGatewayDeviceKey(adapterType, next);
     }
-    if (adapterType === "gemini_local" && !asNonEmptyString(next.model)) {
-      next.model = DEFAULT_GEMINI_LOCAL_MODEL;
-      return ensureGatewayDeviceKey(adapterType, next);
-    }
-    if (adapterType === "opencode_local" && !asNonEmptyString(next.model)) {
-      next.model = DEFAULT_OPENCODE_LOCAL_MODEL;
-      return ensureGatewayDeviceKey(adapterType, next);
-    }
-    if (adapterType === "cursor" && !asNonEmptyString(next.model)) {
-      next.model = DEFAULT_CURSOR_LOCAL_MODEL;
-    }
     return ensureGatewayDeviceKey(adapterType, next);
+  }
+
+  async function assertSovereignAgentModel(
+    adapterType: string | null | undefined,
+    adapterConfig: Record<string, unknown>,
+    pathLabel = "adapterConfig.model",
+  ) {
+    const model = asNonEmptyString(adapterConfig.model);
+    if (!model) return;
+    if (isSovereignAgentModelValue(model)) return;
+
+    const knownModel = adapterType
+      ? (await listAdapterModels(adapterType)).find((entry) => entry.id === model)
+      : undefined;
+    if (knownModel && isSovereignAgentModel(knownModel)) return;
+
+    throw unprocessable(
+      `${pathLabel} must be a sovereign model. Use a model id or label containing "sovereign" or "souverain".`,
+    );
   }
 
   async function assertAdapterConfigConstraints(
     adapterType: string | null | undefined,
     adapterConfig: Record<string, unknown>,
+    pathLabel = "adapterConfig.model",
   ) {
+    await assertSovereignAgentModel(adapterType, adapterConfig, pathLabel);
     if (adapterType !== "opencode_local") return;
     try {
       requireOpenCodeModelId(adapterConfig.model);
@@ -1154,6 +1162,7 @@ export function agentRoutes(
     if (path.isAbsolute(trimmed)) return trimmed;
 
     const cwd = asNonEmptyString(adapterConfig.cwd);
+
     if (!cwd) {
       throw unprocessable(
         "Relative instructions path requires adapterConfig.cwd to be set to an absolute path",
@@ -1463,13 +1472,13 @@ export function agentRoutes(
     }
     if (type === "opencode_local" && environment && environment.driver !== "local") {
       const adapter = requireServerAdapter(type);
-      res.json(adapter.models ?? []);
+      res.json(filterSovereignAgentModels(adapter.models ?? []));
       return;
     }
     const models = refresh
       ? await refreshAdapterModels(type)
       : await listAdapterModels(type);
-    res.json(models);
+    res.json(filterSovereignAgentModels(models));
   });
 
   router.get("/companies/:companyId/adapters/:type/model-profiles", async (req, res) => {
@@ -1477,7 +1486,12 @@ export function agentRoutes(
     assertCompanyAccess(req, companyId);
     const type = assertKnownAdapterType(req.params.type as string);
     const profiles = await listAdapterModelProfiles(type);
-    res.json(profiles);
+    res.json(profiles.filter((profile) => {
+      const adapterConfig = profile.adapterConfig && typeof profile.adapterConfig === "object"
+        ? profile.adapterConfig as Record<string, unknown>
+        : {};
+      return !asNonEmptyString(adapterConfig.model) || isSovereignAgentModelValue(adapterConfig.model);
+    }));
   });
 
   router.get("/companies/:companyId/adapters/:type/detect-model", async (req, res) => {
@@ -1486,11 +1500,12 @@ export function agentRoutes(
     const type = assertKnownAdapterType(req.params.type as string);
 
     const detected = await detectAdapterModel(type);
-    res.json(detected);
+    res.json(detected && isSovereignAgentModelValue(detected.model) ? detected : null);
   });
 
   router.post(
     "/companies/:companyId/adapters/:type/test-environment",
+
     validate(testAdapterEnvironmentSchema),
     async (req, res) => {
       const companyId = req.params.companyId as string;

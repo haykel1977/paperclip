@@ -7,9 +7,15 @@ import type {
   EnvBinding,
   Environment,
 } from "@paperclipai/shared";
-import { AGENT_DEFAULT_MAX_CONCURRENT_RUNS, supportedEnvironmentDriversForAdapter } from "@paperclipai/shared";
+import {
+  AGENT_DEFAULT_MAX_CONCURRENT_RUNS,
+  filterSovereignAgentModels,
+  isSovereignAgentModelValue,
+  supportedEnvironmentDriversForAdapter,
+} from "@paperclipai/shared";
 import type { AdapterModel } from "../api/agents";
 import { agentsApi } from "../api/agents";
+
 import { environmentsApi } from "../api/environments";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { secretsApi } from "../api/secrets";
@@ -194,10 +200,10 @@ function clampDelayMsFromSeconds(value: number) {
   return clampInteger(value, 0, MAX_TURN_CONTINUATION_MAX_DELAY_SEC) * 1000;
 }
 
-
 /* ---- Form ---- */
 
 export function AgentConfigForm(props: AgentConfigFormProps) {
+
   const { mode, adapterModels: externalModels } = props;
   const isCreate = mode === "create";
   const cards = props.sectionLayout === "cards";
@@ -373,15 +379,18 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
         : eff("adapterConfig", "agent", String(config.agent ?? "claude"))
       : "";
   const models = useMemo(
-    () => adapterType === "acpx_local"
-      ? filterAcpxModelsByAgent(rawModels, acpxAgent)
-      : rawModels,
+    () => filterSovereignAgentModels(
+      adapterType === "acpx_local"
+        ? filterAcpxModelsByAgent(rawModels, acpxAgent)
+        : rawModels,
+    ),
     [adapterType, rawModels, acpxAgent],
   );
   const {
     data: detectedModelData,
     refetch: refetchDetectedModel,
   } = useQuery({
+
     queryKey: selectedCompanyId
       ? queryKeys.agents.detectModel(selectedCompanyId, adapterType)
       : ["agents", "none", "detect-model", adapterType],
@@ -1437,10 +1446,12 @@ function ModelDropdown({
   const canCreateManualModel = Boolean(
     creatable &&
       manualModel &&
+      isSovereignAgentModelValue(manualModel) &&
       !models.some((m) => m.id.toLowerCase() === manualModel.toLowerCase()),
   );
   // Model IDs already shown as detected/candidate badges — exclude from regular list
   const promotedModelIds = useMemo(() => {
+
     const set = new Set<string>();
     if (detectedModel) set.add(detectedModel);
     for (const c of detectedModelCandidates ?? []) {
@@ -1491,7 +1502,7 @@ function ModelDropdown({
     setDetectingModel(true);
     try {
       const nextModel = await onDetectModel();
-      if (nextModel) {
+      if (nextModel && isSovereignAgentModelValue(nextModel)) {
         onChange(nextModel);
         onOpenChange(false);
         setModelSearch("");
@@ -1499,6 +1510,7 @@ function ModelDropdown({
     } finally {
       setDetectingModel(false);
     }
+
   }
 
   return (
@@ -1595,7 +1607,7 @@ function ModelDropdown({
               </span>
             </button>
           )}
-          {detectedModel && detectedModel !== value && (
+          {detectedModel && detectedModel !== value && isSovereignAgentModelValue(detectedModel) && (
             <button
               type="button"
               className={cn(
@@ -1615,8 +1627,9 @@ function ModelDropdown({
             </button>
           )}
           {detectedModelCandidates
-            ?.filter((candidate) => candidate && candidate !== detectedModel && candidate !== value)
+            ?.filter((candidate) => candidate && candidate !== detectedModel && candidate !== value && isSovereignAgentModelValue(candidate))
             .map((candidate) => {
+
               const entry = models.find((m) => m.id === candidate);
               return (
                 <button
@@ -1700,10 +1713,11 @@ function ModelDropdown({
               <div className="px-2 py-2 space-y-2">
                 <p className="text-xs text-muted-foreground">
                   {onDetectModel
-                    ? (emptyDetectHint ?? "No model detected yet. Enter a provider/model manually.")
-                    : "No models found."}
+                    ? (emptyDetectHint ?? "No sovereign model detected yet. Enter a sovereign model manually.")
+                    : "No sovereign models found."}
                 </p>
               </div>
+
             )}
           </div>
         </PopoverContent>

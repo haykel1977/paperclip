@@ -10,10 +10,12 @@
 - Use shadcn/ui library for UI components (already installed)
 - Use Tailwind CSS for styling with extensive use of Tailwind classes
 - Use lucide-react package for icons
+- Only sovereign agent models are allowed; UI, server validation, and prompts should preserve this constraint.
 
 ## Library Usage Rules
 
 - Use prebuilt components from the shadcn/ui library after importing them
+
 - Do not modify the shadcn/ui component files directly
 - Create new components if you need to customize shadcn/ui components
 - Use lucide-react for all icon needs

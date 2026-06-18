@@ -626,15 +626,17 @@ describe("renderPaperclipWakePrompt", () => {
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("red, missing, or pending");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("PR/CI status when available");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("PR URL if one exists");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("Use only sovereign agent models");
   });
 
-  it("adds the source control contract to custom prompt templates", () => {
+  it("adds baseline contracts to custom prompt templates", () => {
     const prompt = resolvePaperclipAgentPromptTemplate("Custom heartbeat instructions.");
 
     expect(prompt).toContain("Custom heartbeat instructions.");
     expect(prompt).toContain("Source control contract");
     expect(prompt).toContain("PR creation is a review handoff rather than completion");
     expect(prompt).toContain("PR checks/CI when available");
+    expect(prompt).toContain("Use only sovereign agent models");
   });
 
   it("does not duplicate the source control contract when resolving compliant prompt templates", () => {
