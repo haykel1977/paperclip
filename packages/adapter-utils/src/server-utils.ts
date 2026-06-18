@@ -168,7 +168,6 @@ export interface PaperclipSkillEntry {
 }
 
 export interface InstalledSkillTarget {
-
   targetPath: string | null;
   kind: "symlink" | "directory" | "file";
 }
@@ -179,6 +178,7 @@ export interface MaterializedPaperclipSkillCopyResult {
 }
 
 interface PersistentSkillSnapshotOptions {
+
   adapterType: string;
   availableEntries: PaperclipSkillEntry[];
   desiredSkills: string[];

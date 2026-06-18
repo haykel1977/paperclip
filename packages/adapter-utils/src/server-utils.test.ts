@@ -637,6 +637,17 @@ describe("renderPaperclipWakePrompt", () => {
     expect(prompt).toContain("PR checks/CI when available");
   });
 
+  it("does not duplicate the source control contract when resolving compliant prompt templates", () => {
+    const defaultPrompt = resolvePaperclipAgentPromptTemplate(undefined);
+    const compliantCustomPrompt = resolvePaperclipAgentPromptTemplate(
+      "Custom heartbeat instructions.\n\nFor repo work, PR creation is a review handoff rather than completion; inspect and report relevant PR checks/CI when available, and do not mark work `done` while required or relevant checks are red, missing, or pending.",
+    );
+
+    expect(defaultPrompt).toBe(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE);
+    expect(defaultPrompt.match(/Source control contract/g)).toHaveLength(1);
+    expect(compliantCustomPrompt.match(/Source control contract/g)).toBeNull();
+  });
+
   it("adds the execution contract to scoped wake prompts", () => {
     const payload = {
       reason: "issue_assigned",
@@ -651,7 +662,6 @@ describe("renderPaperclipWakePrompt", () => {
         includedCount: 0,
         missingCount: 0,
       },
-
       comments: [],
       fallbackFetchNeeded: false,
     };
@@ -660,7 +670,6 @@ describe("renderPaperclipWakePrompt", () => {
 
     expect(prompt).toContain("## Paperclip Wake Payload");
     expect(prompt).toContain("Execution contract: take concrete action in this heartbeat");
-
     expect(prompt).toContain("clear final disposition");
     expect(prompt).toContain("evidence, not valid liveness paths by themselves");
     expect(prompt).toContain("Use child issues for long or parallel delegated work instead of polling");
