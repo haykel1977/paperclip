@@ -69,6 +69,15 @@ Each criterion needs evidence on the verification pass:
 
 "Looks good to me" without evidence is not a pass.
 
+## Automation and CI boundary
+
+QA acceptance does not replace automated quality gates. For a PR to be review-ready:
+
+- Required CI checks must be green, or the blocker must be explicitly external and owned.
+- Manual QA evidence should cover user-visible behavior that tests and CI cannot prove alone.
+- A failed acceptance criterion should become either a code fix in the PR or a tracked, owner-approved deferral. Do not mark the PR green by silently narrowing the acceptance bar.
+- If CI is red for a scenario covered by the acceptance plan, prioritize fixing CI before continuing manual validation.
+
 ## Quarantine and follow-up
 
 - A failing criterion blocks acceptance unless explicitly waived by the owner with a tracked follow-up issue.
