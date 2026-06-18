@@ -1,11 +1,35 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const SKIP_LLM = process.env.PAPERCLIP_E2E_SKIP_LLM !== "false";
 
 const AGENT_NAME = "CEO";
 const TASK_TITLE = "PAP-3413 planning mode evidence";
+const SOVEREIGN_MODEL = "sovereign-e2e-planning-claude";
+
+async function mockAdapterEnvironmentPass(page: Page) {
+  await page.route("**/api/companies/*/adapters/*/test-environment", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        adapterType: "claude_local",
+        status: "pass",
+        checks: [],
+        testedAt: new Date().toISOString(),
+      }),
+    });
+  });
+}
+
+async function selectManualSovereignModel(page: Page) {
+  await page.getByRole("button", { name: /Select sovereign model/ }).click();
+  await page.locator('input[placeholder="Search models..."]').fill(SOVEREIGN_MODEL);
+  await page.getByRole("button", { name: /Use manual sovereign model/ }).click();
+  await expect(page.getByRole("button", { name: SOVEREIGN_MODEL })).toBeVisible();
+}
 
 test("captures planning mode UI for desktop and mobile", async ({ page }) => {
+  await mockAdapterEnvironmentPass(page);
   const timestamp = Date.now();
   const companyName = `PAP-3413-${timestamp}`;
   const screenshotDir = "test-results/planning-mode";
@@ -18,6 +42,7 @@ test("captures planning mode UI for desktop and mobile", async ({ page }) => {
 
   await expect(page.locator("h3", { hasText: "Create your first agent" })).toBeVisible({ timeout: 30_000 });
   await expect(page.locator('input[placeholder="CEO"]')).toHaveValue(AGENT_NAME);
+  await selectManualSovereignModel(page);
   await page.getByRole("button", { name: "Next" }).click();
 
   await expect(page.locator("h3", { hasText: "Give it something to do" })).toBeVisible({ timeout: 30_000 });
