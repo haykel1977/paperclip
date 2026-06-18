@@ -215,6 +215,7 @@ describe("executeDeliveryHook", () => {
       runProc,
     });
     const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
+    expect(createCall).toBeDefined();
     expect(createCall).toContain("agent-pr");
     expect(createCall).toContain("truth-first");
     expect(createCall).toContain("bot-merge-ready");

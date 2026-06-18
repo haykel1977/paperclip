@@ -93,7 +93,7 @@ describe("gemini-local delivery hook", () => {
     expect(calls.some((call) => call[0] === "gh")).toBe(false);
   });
 
-  it("flag ON + gate vert -> bot-merge-ready avec token bot", async () => {
+  it("flag ON + gate vert -> bot-merge-ready avec token bot et commit signé", async () => {
     const worktreeCwd = mkWorktree();
     const calls: string[][] = [];
     const envCalls: Array<{ cmd: string; args: string[]; env: Record<string, string> }> = [];
@@ -120,8 +120,11 @@ describe("gemini-local delivery hook", () => {
       runProc,
     });
     const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
+    expect(createCall).toBeDefined();
     expect(createCall).toContain("bot-merge-ready");
     expect(createCall).not.toContain("human-gate-required");
+    expect(calls).toContainEqual(expect.arrayContaining(["git", "commit", "-S"]));
+    expect(calls).toContainEqual(["git", "log", "-1", "--format=%G?"]);
     expect(calls.some((call) => call.includes("--add-reviewer"))).toBe(false);
     const pushEnv = envCalls.find((call) => call.cmd === "git" && call.args[0] === "push")?.env;
     expect(pushEnv?.GH_TOKEN).toBe("bot-token");
