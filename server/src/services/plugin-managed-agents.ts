@@ -12,7 +12,9 @@ import type {
   PluginManagedAgentDeclaration,
   PluginManagedAgentResolution,
 } from "@paperclipai/shared";
-import { notFound } from "../errors.js";
+import { isSovereignAgentModelValue } from "@paperclipai/shared";
+import { notFound, unprocessable } from "../errors.js";
+
 import { agentService } from "./agents.js";
 import { approvalService } from "./approvals.js";
 import { logActivity } from "./activity-log.js";
@@ -21,6 +23,28 @@ import { agentInstructionsService } from "./agent-instructions.js";
 const MANAGED_AGENT_ENTITY_TYPE = "managed_agent";
 const DEFAULT_MANAGED_AGENT_ADAPTER_TYPE = "process";
 const LEGACY_PROMPT_TEMPLATE_PATH = "promptTemplate.legacy.md";
+
+const SOVEREIGN_MODEL_REQUIRED_ADAPTER_TYPES = new Set([
+  "acpx_local",
+  "claude_local",
+  "codex_local",
+  "cursor",
+  "gemini_local",
+  "grok_local",
+  "opencode_local",
+  "pi_local",
+]);
+
+const SOVEREIGN_MANAGED_AGENT_MODEL_BY_ADAPTER_TYPE: Record<string, string> = {
+  acpx_local: "sovereign-managed-acpx",
+  claude_local: "sovereign-managed-claude",
+  codex_local: "sovereign-managed-codex",
+  cursor: "sovereign-managed-cursor",
+  gemini_local: "sovereign-managed-gemini",
+  grok_local: "sovereign-managed-grok",
+  opencode_local: "openai/sovereign-managed-opencode",
+  pi_local: "openai/sovereign-managed-pi",
+};
 
 interface PluginManagedAgentServiceOptions {
   pluginId: string;
@@ -117,16 +141,69 @@ function selectPreferredAdapterType(
   return selected?.adapterType ?? fallback;
 }
 
+function managedAgentAdapterConfig(
+  declaration: PluginManagedAgentDeclaration,
+  adapterType: string,
+): Record<string, unknown> {
+  const adapterConfig = { ...(declaration.adapterConfig ?? {}) };
+  if (!SOVEREIGN_MODEL_REQUIRED_ADAPTER_TYPES.has(adapterType)) return adapterConfig;
+
+  const model = typeof adapterConfig.model === "string" ? adapterConfig.model.trim() : "";
+  if (!model) {
+    const defaultModel = SOVEREIGN_MANAGED_AGENT_MODEL_BY_ADAPTER_TYPE[adapterType];
+    if (defaultModel) adapterConfig.model = defaultModel;
+    return adapterConfig;
+  }
+  if (isSovereignAgentModelValue(model)) {
+    adapterConfig.model = model;
+    return adapterConfig;
+  }
+
+  throw unprocessable(
+    `Plugin managed agent ${declaration.agentKey} adapterConfig.model must be a sovereign model`,
+  );
+}
+
+function managedAgentRuntimeConfig(
+  declaration: PluginManagedAgentDeclaration,
+  adapterType: string,
+): Record<string, unknown> {
+  const runtimeConfig = { ...(declaration.runtimeConfig ?? {}) } as Record<string, unknown>;
+  if (!SOVEREIGN_MODEL_REQUIRED_ADAPTER_TYPES.has(adapterType)) return runtimeConfig;
+  const modelProfiles = runtimeConfig.modelProfiles;
+  if (typeof modelProfiles !== "object" || modelProfiles === null || Array.isArray(modelProfiles)) {
+    return runtimeConfig;
+  }
+
+  const normalizedProfiles: Record<string, unknown> = { ...(modelProfiles as Record<string, unknown>) };
+  for (const [profileKey, rawProfile] of Object.entries(normalizedProfiles)) {
+    if (typeof rawProfile !== "object" || rawProfile === null || Array.isArray(rawProfile)) continue;
+    const profile = { ...(rawProfile as Record<string, unknown>) };
+    if (typeof profile.adapterConfig !== "object" || profile.adapterConfig === null || Array.isArray(profile.adapterConfig)) {
+      normalizedProfiles[profileKey] = profile;
+      continue;
+    }
+    const adapterConfig = { ...(profile.adapterConfig as Record<string, unknown>) };
+    if ("model" in adapterConfig && !isSovereignAgentModelValue(adapterConfig.model)) {
+      delete adapterConfig.model;
+    }
+    normalizedProfiles[profileKey] = { ...profile, adapterConfig };
+  }
+
+  return { ...runtimeConfig, modelProfiles: normalizedProfiles };
+}
+
 function declarationPatch(declaration: PluginManagedAgentDeclaration, input: { adapterType?: string } = {}) {
+  const adapterType = input.adapterType ?? fallbackAdapterType(declaration);
   return {
     name: declaration.displayName,
     role: declaration.role ?? "general",
     title: declaration.title ?? null,
     icon: declaration.icon ?? null,
     capabilities: declaration.capabilities ?? null,
-    adapterType: input.adapterType ?? fallbackAdapterType(declaration),
-    adapterConfig: declaration.adapterConfig ?? {},
-    runtimeConfig: declaration.runtimeConfig ?? {},
+    adapterType,
+    adapterConfig: managedAgentAdapterConfig(declaration, adapterType),
+    runtimeConfig: managedAgentRuntimeConfig(declaration, adapterType),
     permissions: declaration.permissions ?? {},
     budgetMonthlyCents: declaration.budgetMonthlyCents ?? 0,
   };
@@ -136,6 +213,7 @@ function applyInstructionTemplateVariables(
   content: string,
   variables: Record<string, string | null | undefined>,
 ) {
+
   let next = content;
   for (const [key, value] of Object.entries(variables)) {
     next = next.replaceAll(`{{${key}}}`, value?.trim() || "(not configured)");
@@ -238,12 +316,14 @@ export function pluginManagedAgentService(
       capabilities: declaration.capabilities ?? null,
       adapterType,
       adapterPreference: declaration.adapterPreference ?? null,
-      adapterConfig: declaration.adapterConfig ?? {},
-      runtimeConfig: declaration.runtimeConfig ?? {},
+      adapterConfig: managedAgentAdapterConfig(declaration, adapterType),
+      runtimeConfig: managedAgentRuntimeConfig(declaration, adapterType),
       permissions: declaration.permissions ?? {},
       budgetMonthlyCents: declaration.budgetMonthlyCents ?? 0,
       instructions: declaration.instructions ?? null,
+
     };
+
     const managedResource = await db
       .select({ id: pluginManagedResources.id })
       .from(pluginManagedResources)

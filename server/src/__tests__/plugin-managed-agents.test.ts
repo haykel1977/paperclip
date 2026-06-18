@@ -239,11 +239,31 @@ describeEmbeddedPostgres("plugin-managed agents", () => {
 
     expect(created.status).toBe("created");
     expect(created.agent?.adapterType).toBe("codex_local");
+    expect(created.agent?.adapterConfig).toMatchObject({ model: "sovereign-managed-codex" });
+    expect(created.agent?.runtimeConfig).toMatchObject({
+      modelProfiles: { cheap: { enabled: true, adapterConfig: {} } },
+    });
+  });
+
+  it("rejects plugin-managed agents with explicit non-sovereign models", async () => {
+    const pluginManifest = manifest();
+
+    pluginManifest.agents![0] = {
+      ...pluginManifest.agents![0]!,
+      adapterType: "claude_local",
+      adapterConfig: { model: "claude-sonnet-4-6" },
+    };
+    const { companyId, services } = await seedCompanyAndPlugin({ manifest: pluginManifest });
+
+    await expect(
+      services.agents.managedReconcile({ companyId, agentKey: "wiki-maintainer" }),
+    ).rejects.toThrow("adapterConfig.model must be a sovereign model");
   });
 
   it("materializes declared managed agent instructions with local folder paths", async () => {
     const previousHome = process.env.PAPERCLIP_HOME;
     const previousInstance = process.env.PAPERCLIP_INSTANCE_ID;
+
     const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-managed-agent-home-"));
     const wikiRoot = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-managed-agent-wiki-")));
     process.env.PAPERCLIP_HOME = tempHome;
@@ -295,8 +315,10 @@ describeEmbeddedPostgres("plugin-managed agents", () => {
 
       const created = await services.agents.managedReconcile({ companyId, agentKey: "wiki-maintainer" });
 
+      expect(created.agent?.adapterConfig).toMatchObject({ model: "sovereign-managed-claude" });
       const instructionsFilePath = created.agent?.adapterConfig.instructionsFilePath;
       expect(typeof instructionsFilePath).toBe("string");
+
       const content = await fs.readFile(instructionsFilePath as string, "utf8");
       expect(content).toContain("You are the LLM Wiki Maintainer.");
       expect(content).toContain(`Wiki root: \`${wikiRoot}\``);
