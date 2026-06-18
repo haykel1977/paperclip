@@ -6,7 +6,7 @@ import { printCursorStreamEvent } from "@paperclipai/adapter-cursor-local/cli";
 describe("cursor parser", () => {
   it("extracts session, summary, usage, cost, and terminal error message", () => {
     const stdout = [
-      JSON.stringify({ type: "system", subtype: "init", session_id: "chat_123", model: "gpt-5" }),
+      JSON.stringify({ type: "system", subtype: "init", session_id: "chat_123", model: "sovereign-gpt-5" }),
       JSON.stringify({
         type: "assistant",
         message: {
@@ -293,7 +293,7 @@ describe("cursor cli formatter", () => {
 
     try {
       printCursorStreamEvent(
-        JSON.stringify({ type: "system", subtype: "init", session_id: "chat_abc", model: "gpt-5" }),
+        JSON.stringify({ type: "system", subtype: "init", session_id: "chat_abc", model: "sovereign-gpt-5" }),
         false,
       );
       printCursorStreamEvent(

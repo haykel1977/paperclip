@@ -580,7 +580,7 @@ describe("codex execute", () => {
         config: {
           command: commandPath,
           cwd: workspace,
-          model: "gpt-5.3-codex-spark",
+          model: "sovereign-gpt-5.3-codex-spark",
           promptTemplate: "Follow the paperclip heartbeat.",
         },
         context: {},
@@ -640,7 +640,7 @@ describe("codex execute", () => {
           command: commandPath,
           cwd: workspace,
           fastMode: true,
-          model: "gpt-5.4",
+          model: "sovereign-gpt-5.4",
           env: {
             PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
           },

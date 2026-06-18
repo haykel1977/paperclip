@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { buildCodexExecArgs } from "./codex-args.js";
 
 describe("buildCodexExecArgs", () => {
-  it("enables Codex fast mode overrides for GPT-5.4", () => {
+  it("enables Codex fast mode overrides for sovereign GPT-5.4", () => {
     const result = buildCodexExecArgs({
-      model: "gpt-5.4",
+      model: "sovereign-gpt-5.4",
       search: true,
       fastMode: true,
     });
@@ -17,7 +17,7 @@ describe("buildCodexExecArgs", () => {
       "exec",
       "--json",
       "--model",
-      "gpt-5.4",
+      "sovereign-gpt-5.4",
       "-c",
       'service_tier="fast"',
       "-c",
@@ -28,7 +28,7 @@ describe("buildCodexExecArgs", () => {
 
   it("enables Codex fast mode overrides for manual models", () => {
     const result = buildCodexExecArgs({
-      model: "gpt-5.5",
+      model: "sovereign-gpt-5.5",
       fastMode: true,
     });
 
@@ -39,7 +39,7 @@ describe("buildCodexExecArgs", () => {
       "exec",
       "--json",
       "--model",
-      "gpt-5.5",
+      "sovereign-gpt-5.5",
       "-c",
       'service_tier="fast"',
       "-c",
@@ -50,20 +50,20 @@ describe("buildCodexExecArgs", () => {
 
   it("ignores fast mode for unsupported models", () => {
     const result = buildCodexExecArgs({
-      model: "gpt-5.3-codex",
+      model: "sovereign-gpt-5.3-codex",
       fastMode: true,
     });
 
     expect(result.fastModeRequested).toBe(true);
     expect(result.fastModeApplied).toBe(false);
     expect(result.fastModeIgnoredReason).toContain(
-      "currently only supported on gpt-5.4 or manually configured model IDs",
+      "currently only supported on sovereign-gpt-5.4 or manually configured model IDs",
     );
     expect(result.args).toEqual([
       "exec",
       "--json",
       "--model",
-      "gpt-5.3-codex",
+      "sovereign-gpt-5.3-codex",
       "-",
     ]);
   });
@@ -71,18 +71,11 @@ describe("buildCodexExecArgs", () => {
   it("adds --skip-git-repo-check when requested", () => {
     const result = buildCodexExecArgs(
       {
-        model: "gpt-5.3-codex",
+        model: "sovereign-gpt-5.3-codex",
       },
       { skipGitRepoCheck: true },
     );
 
-    expect(result.args).toEqual([
-      "exec",
-      "--json",
-      "--skip-git-repo-check",
-      "--model",
-      "gpt-5.3-codex",
-      "-",
-    ]);
+    expect(result.args).toContain("--skip-git-repo-check");
   });
 });

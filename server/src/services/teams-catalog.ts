@@ -688,6 +688,7 @@ const SOVEREIGN_CATALOG_MODEL_BY_ADAPTER_TYPE: Record<string, string> = {
   claude_local: "sovereign-catalog-claude",
   codex_local: "sovereign-catalog-codex",
   cursor: "sovereign-catalog-cursor",
+  cursor_cloud: "sovereign-catalog-cursor-cloud",
   gemini_local: "sovereign-catalog-gemini",
   grok_local: "sovereign-catalog-grok",
   opencode_local: "openai/sovereign-catalog-opencode",

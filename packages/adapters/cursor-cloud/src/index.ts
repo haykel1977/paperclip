@@ -22,7 +22,7 @@ Core fields:
 - instructionsFilePath (string, optional): agent instructions file prepended to the prompt
 - promptTemplate (string, optional): heartbeat prompt template
 - bootstrapPromptTemplate (string, optional): first-run-only bootstrap prompt template
-- model (string, optional): Cursor model id; omit to use the account default
+- model (string, required): sovereign Cursor model id or label containing "sovereign" or "souverain"
 - env.CURSOR_API_KEY (string, required): Cursor API key
 - env.* (optional): additional env vars injected into the cloud agent shell
 

@@ -1,10 +1,10 @@
 export const type = "grok_local";
 export const label = "Grok Build (local)";
 
-const GROK_BUILD_MODEL_ID = "grok-build";
+const GROK_BUILD_MODEL_ID = "sovereign-grok-build";
 
 export const models = [
-  { id: GROK_BUILD_MODEL_ID, label: GROK_BUILD_MODEL_ID },
+  { id: GROK_BUILD_MODEL_ID, label: "Sovereign Grok Build" },
 ];
 
 export const agentConfigurationDoc = `# grok_local agent configuration

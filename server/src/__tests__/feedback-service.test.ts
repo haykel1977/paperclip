@@ -176,7 +176,7 @@ describe("feedbackService.saveIssueVote", () => {
       adapterType: "codex_local",
       adapterConfig: writePaperclipSkillSyncPreference(
         {
-          model: "gpt-5.4",
+          model: "sovereign-gpt-5.4",
           instructionsBundleMode: "external",
           instructionsRootPath: instructionsDir,
           instructionsEntryFile: "AGENTS.md",
@@ -213,7 +213,7 @@ describe("feedbackService.saveIssueVote", () => {
       finishedAt: new Date("2026-03-30T10:05:00.000Z"),
       usageJson: {
         provider: "openai",
-        model: "gpt-5.4",
+        model: "sovereign-gpt-5.4",
         inputTokens: 123,
         outputTokens: 45,
         costUsd: 0.12,
@@ -229,7 +229,7 @@ describe("feedbackService.saveIssueVote", () => {
       provider: "openai",
       biller: "openai",
       billingType: "metered",
-      model: "gpt-5.4",
+      model: "sovereign-gpt-5.4",
       inputTokens: 123,
       cachedInputTokens: 0,
       outputTokens: 45,

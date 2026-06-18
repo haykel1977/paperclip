@@ -38,7 +38,7 @@ function createMockRun(options: MockRunOptions = {}) {
     id: runId,
     status,
     result: "Done\nWith detail",
-    model: { id: "gpt-5.4" },
+    model: { id: "sovereign-gpt-5.4" },
     durationMs: 1234,
   };
   const streamMessages = options.streamMessages ?? [];
@@ -104,7 +104,7 @@ function createContext(
     repoStartingRef: "main",
     runtimeEnvType: "cloud",
     promptTemplate: "Do the work for {{agent.name}}",
-    model: "gpt-5.4",
+    model: "sovereign-gpt-5.4",
   };
   const context = overrides.context ?? {
     taskId: "issue-1",
@@ -166,7 +166,7 @@ describe("cursor_cloud execute", () => {
     expect(createMock.mock.calls[0]?.[0]).toMatchObject({
       apiKey: "cursor-secret",
       name: "Paperclip Cursor Cloud Agent",
-      model: { id: "gpt-5.4" },
+      model: { id: "sovereign-gpt-5.4" },
       cloud: {
         env: { type: "cloud" },
         repos: [{ url: "https://github.com/paperclipai/paperclip.git", startingRef: "main" }],
@@ -226,7 +226,7 @@ describe("cursor_cloud execute", () => {
       errorMessage: null,
 
       sessionId: "agent-fresh",
-      model: "gpt-5.4",
+      model: "sovereign-gpt-5.4",
 
       summary: "Done",
       sessionParams: {
@@ -344,7 +344,7 @@ describe("cursor_cloud execute", () => {
         id: "run-attached",
         status: "finished",
         result: "Prior result",
-        model: { id: "gpt-5.4" },
+        model: { id: "sovereign-gpt-5.4" },
       },
       streamMessages: [
         {
@@ -362,7 +362,7 @@ describe("cursor_cloud execute", () => {
         id: "run-followup",
         status: "finished",
         result: "Follow-up result",
-        model: { id: "gpt-5.4" },
+        model: { id: "sovereign-gpt-5.4" },
       },
     });
     const sdkAgent = createMockSdkAgent({ agentId: "agent-attached", sendRun: followUpRun });
@@ -423,7 +423,7 @@ describe("cursor_cloud execute", () => {
         id: "run-cancelled",
         status: "cancelled",
         result: "",
-        model: { id: "gpt-5.4" },
+        model: { id: "sovereign-gpt-5.4" },
       },
     });
     const sdkAgent = createMockSdkAgent({ agentId: "agent-cancelled", sendRun: cancelledRun });

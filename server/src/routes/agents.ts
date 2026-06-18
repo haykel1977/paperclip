@@ -149,6 +149,7 @@ export function agentRoutes(
     "claude_local",
     "codex_local",
     "cursor",
+    "cursor_cloud",
     "gemini_local",
     "grok_local",
     "opencode_local",

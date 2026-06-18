@@ -5,9 +5,9 @@ export const label = "Codex (local)";
 
 export const SANDBOX_INSTALL_COMMAND = "npm install -g @openai/codex";
 
-const CODEX_LOCAL_FALLBACK_MODEL = "gpt-5.3-codex";
+const CODEX_LOCAL_FALLBACK_MODEL = "sovereign-gpt-5.3-codex";
 export const DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX = true;
-export const CODEX_LOCAL_FAST_MODE_SUPPORTED_MODELS = ["gpt-5.4"] as const;
+export const CODEX_LOCAL_FAST_MODE_SUPPORTED_MODELS = ["sovereign-gpt-5.4"] as const;
 
 function normalizeModelId(model: string | null | undefined): string {
   return typeof model === "string" ? model.trim() : "";
@@ -33,17 +33,17 @@ export function isCodexLocalFastModeSupported(model: string | null | undefined):
 }
 
 export const models = [
-  { id: "gpt-5.4", label: "gpt-5.4" },
+  { id: "sovereign-gpt-5.4", label: "sovereign-gpt-5.4" },
   { id: CODEX_LOCAL_FALLBACK_MODEL, label: CODEX_LOCAL_FALLBACK_MODEL },
-  { id: "gpt-5.3-codex-spark", label: "gpt-5.3-codex-spark" },
+  { id: "sovereign-gpt-5.3-codex-spark", label: "sovereign-gpt-5.3-codex-spark" },
 
-  { id: "gpt-5", label: "gpt-5" },
-  { id: "o3", label: "o3" },
-  { id: "o4-mini", label: "o4-mini" },
-  { id: "gpt-5-mini", label: "gpt-5-mini" },
-  { id: "gpt-5-nano", label: "gpt-5-nano" },
-  { id: "o3-mini", label: "o3-mini" },
-  { id: "codex-mini-latest", label: "Codex Mini" },
+  { id: "sovereign-gpt-5", label: "sovereign-gpt-5" },
+  { id: "sovereign-o3", label: "sovereign-o3" },
+  { id: "sovereign-o4-mini", label: "sovereign-o4-mini" },
+  { id: "sovereign-gpt-5-mini", label: "sovereign-gpt-5-mini" },
+  { id: "sovereign-gpt-5-nano", label: "sovereign-gpt-5-nano" },
+  { id: "sovereign-o3-mini", label: "sovereign-o3-mini" },
+  { id: "sovereign-codex-mini-latest", label: "Sovereign Codex Mini" },
 ];
 
 export const modelProfiles: AdapterModelProfileDefinition[] = [

@@ -1,4 +1,5 @@
 import type { CreateConfigValues } from "@paperclipai/adapter-utils";
+import { isSovereignAgentModelValue } from "@paperclipai/shared";
 
 function parseEnvVars(text: string): Record<string, string> {
   const env: Record<string, string> = {};
@@ -50,7 +51,8 @@ export function buildCursorCloudConfig(values: CreateConfigValues): Record<strin
   if (values.instructionsFilePath) config.instructionsFilePath = values.instructionsFilePath;
   if (values.promptTemplate) config.promptTemplate = values.promptTemplate;
   if (values.bootstrapPrompt) config.bootstrapPromptTemplate = values.bootstrapPrompt;
-  if (values.model?.trim()) config.model = values.model.trim();
+  const model = values.model?.trim() ?? "";
+  if (isSovereignAgentModelValue(model)) config.model = model;
 
   const env = parseEnvBindings(values.envBindings);
   const legacy = parseEnvVars(values.envVars);

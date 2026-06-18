@@ -1269,7 +1269,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       errorMessage:
         "Error running remote compact task: We're currently experiencing high demand, which may cause temporary errors.",
       provider: "openai",
-      model: "gpt-5.4",
+      model: "sovereign-gpt-5.4",
       resultJson: {
         errorFamily: "transient_upstream",
       },

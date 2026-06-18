@@ -44,7 +44,7 @@ export const SANDBOX_INSTALL_COMMAND =
   'fi; ' +
   'fi';
 
-const OPENCODE_LOCAL_FALLBACK_MODEL = "openai/gpt-5.2-codex";
+const OPENCODE_LOCAL_FALLBACK_MODEL = "openai/sovereign-gpt-5.2-codex";
 
 export function isValidOpenCodeModelId(value: unknown): value is string {
 
@@ -56,11 +56,11 @@ export function isValidOpenCodeModelId(value: unknown): value is string {
 
 export const models: Array<{ id: string; label: string }> = [
   { id: OPENCODE_LOCAL_FALLBACK_MODEL, label: OPENCODE_LOCAL_FALLBACK_MODEL },
-  { id: "openai/gpt-5.4", label: "openai/gpt-5.4" },
+  { id: "openai/sovereign-gpt-5.4", label: "openai/sovereign-gpt-5.4" },
 
-  { id: "openai/gpt-5.2", label: "openai/gpt-5.2" },
-  { id: "openai/gpt-5.1-codex-max", label: "openai/gpt-5.1-codex-max" },
-  { id: "openai/gpt-5.1-codex-mini", label: "openai/gpt-5.1-codex-mini" },
+  { id: "openai/sovereign-gpt-5.2", label: "openai/sovereign-gpt-5.2" },
+  { id: "openai/sovereign-gpt-5.1-codex-max", label: "openai/sovereign-gpt-5.1-codex-max" },
+  { id: "openai/sovereign-gpt-5.1-codex-mini", label: "openai/sovereign-gpt-5.1-codex-mini" },
 ];
 
 export const modelProfiles: AdapterModelProfileDefinition[] = [

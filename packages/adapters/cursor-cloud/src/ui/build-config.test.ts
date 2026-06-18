@@ -37,13 +37,13 @@ function makeValues(overrides: Partial<CreateConfigValues> = {}): CreateConfigVa
 }
 
 describe("buildCursorCloudConfig", () => {
-  it("persists schema values and top-level prompt fields", () => {
+  it("persists schema values, sovereign model, and top-level prompt fields", () => {
     const config = buildCursorCloudConfig(
       makeValues({
         instructionsFilePath: ".cursor/AGENTS.md",
         promptTemplate: "hello {{agent.name}}",
         bootstrapPrompt: "bootstrap",
-        model: "gpt-5.4",
+        model: "sovereign-gpt-5.4",
         adapterSchemaValues: {
           repoUrl: "https://github.com/paperclipai/paperclip.git",
           runtimeEnvType: "pool",
@@ -57,12 +57,17 @@ describe("buildCursorCloudConfig", () => {
       instructionsFilePath: ".cursor/AGENTS.md",
       promptTemplate: "hello {{agent.name}}",
       bootstrapPromptTemplate: "bootstrap",
-      model: "gpt-5.4",
+      model: "sovereign-gpt-5.4",
       repoUrl: "https://github.com/paperclipai/paperclip.git",
       runtimeEnvType: "pool",
       runtimeEnvName: "trusted-workers",
       autoCreatePR: true,
     });
+  });
+
+  it("omits non-sovereign model values", () => {
+    const config = buildCursorCloudConfig(makeValues({ model: "gpt-5.4" }));
+    expect(config.model).toBeUndefined();
   });
 
   it("merges structured env bindings over legacy envVars text", () => {

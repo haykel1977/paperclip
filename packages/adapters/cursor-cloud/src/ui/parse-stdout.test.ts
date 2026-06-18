@@ -7,10 +7,10 @@ describe("parseCursorCloudStdoutLine", () => {
   it("parses init and status events", () => {
     expect(
       parseCursorCloudStdoutLine(
-        JSON.stringify({ type: "cursor_cloud.init", sessionId: "agent-123", model: "gpt-5.4" }),
+        JSON.stringify({ type: "cursor_cloud.init", sessionId: "agent-123", model: "sovereign-gpt-5.4" }),
         ts,
       ),
-    ).toEqual([{ kind: "init", ts, sessionId: "agent-123", model: "gpt-5.4" }]);
+    ).toEqual([{ kind: "init", ts, sessionId: "agent-123", model: "sovereign-gpt-5.4" }]);
 
     expect(
       parseCursorCloudStdoutLine(
@@ -120,7 +120,7 @@ describe("parseCursorCloudStdoutLine", () => {
   it("parses result events and preserves unknown lines as stdout", () => {
     expect(
       parseCursorCloudStdoutLine(
-        JSON.stringify({ type: "cursor_cloud.result", status: "finished", result: "Done", model: "gpt-5.4" }),
+        JSON.stringify({ type: "cursor_cloud.result", status: "finished", result: "Done", model: "sovereign-gpt-5.4" }),
         ts,
       ),
     ).toEqual([

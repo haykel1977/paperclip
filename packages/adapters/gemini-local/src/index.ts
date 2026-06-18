@@ -8,16 +8,16 @@ export const label = "Gemini CLI (local)";
 
 export const SANDBOX_INSTALL_COMMAND = buildSandboxNpmInstallCommand("@google/gemini-cli");
 
-const GEMINI_AUTO_MODEL_ID = "auto";
+const GEMINI_AUTO_MODEL_ID = "sovereign-auto";
 
 export const models = [
-  { id: GEMINI_AUTO_MODEL_ID, label: "Auto" },
+  { id: GEMINI_AUTO_MODEL_ID, label: "Sovereign Auto" },
 
-  { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
-  { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
-  { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite" },
-  { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
-  { id: "gemini-2.0-flash-lite", label: "Gemini 2.0 Flash Lite" },
+  { id: "sovereign-gemini-2.5-pro", label: "Sovereign Gemini 2.5 Pro" },
+  { id: "sovereign-gemini-2.5-flash", label: "Sovereign Gemini 2.5 Flash" },
+  { id: "sovereign-gemini-2.5-flash-lite", label: "Sovereign Gemini 2.5 Flash Lite" },
+  { id: "sovereign-gemini-2.0-flash", label: "Sovereign Gemini 2.0 Flash" },
+  { id: "sovereign-gemini-2.0-flash-lite", label: "Sovereign Gemini 2.0 Flash Lite" },
 ];
 
 export const modelProfiles: AdapterModelProfileDefinition[] = [

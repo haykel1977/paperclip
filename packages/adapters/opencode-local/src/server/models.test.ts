@@ -24,7 +24,7 @@ describe("openCode models", () => {
   });
 
   it("accepts a provider/model id without running discovery", () => {
-    expect(requireOpenCodeModelId("openai/gpt-5.2-codex")).toBe("openai/gpt-5.2-codex");
+    expect(requireOpenCodeModelId("openai/sovereign-gpt-5.2-codex")).toBe("openai/sovereign-gpt-5.2-codex");
   });
 
   it("rejects malformed provider/model ids before discovery", () => {
@@ -40,7 +40,7 @@ describe("openCode models", () => {
     process.env.PAPERCLIP_OPENCODE_COMMAND = "__paperclip_missing_opencode_command__";
     await expect(
       ensureOpenCodeModelConfiguredAndAvailable({
-        model: "openai/gpt-5",
+        model: "openai/sovereign-gpt-5",
       }),
     ).rejects.toThrow("Failed to start command");
   });

@@ -40,7 +40,7 @@ What this command does:
 - clones/updates `openclaw/openclaw` in `/tmp/openclaw-docker`
 - builds `openclaw:local` (unless `OPENCLAW_BUILD=0`)
 - writes isolated smoke config under `~/.openclaw-paperclip-smoke/openclaw.json` and Docker `.env`
-- pins agent model defaults to OpenAI (`openai/gpt-5.2` with OpenAI fallback)
+- pins agent model defaults to sovereign OpenAI-labeled models (`openai/sovereign-gpt-5.2` with sovereign OpenAI fallback)
 - starts `openclaw-gateway` via Compose (with required `/tmp` tmpfs override)
 - probes and prints a Paperclip host URL that is reachable from inside OpenClaw Docker
 - waits for health and prints:
@@ -57,8 +57,8 @@ Environment knobs:
 - `OPENCLAW_OPEN_BROWSER=1` to auto-open the URL on macOS
 - `OPENCLAW_DISABLE_DEVICE_AUTH=1` (default) disables Control UI device pairing for local smoke
 - `OPENCLAW_DISABLE_DEVICE_AUTH=0` keeps pairing enabled (then approve browser with `devices` CLI commands)
-- `OPENCLAW_MODEL_PRIMARY` (default `openai/gpt-5.2`)
-- `OPENCLAW_MODEL_FALLBACK` (default `openai/gpt-5.2-chat-latest`)
+- `OPENCLAW_MODEL_PRIMARY` (default `openai/sovereign-gpt-5.2`)
+- `OPENCLAW_MODEL_FALLBACK` (default `openai/sovereign-gpt-5.2-chat-latest`)
 - `OPENCLAW_CONFIG_DIR` (default `~/.openclaw-paperclip-smoke`)
 - `OPENCLAW_RESET_STATE=1` (default) resets smoke agent state on each run to avoid stale auth/session drift
 - `PAPERCLIP_HOST_PORT` (default `3100`)
@@ -135,8 +135,8 @@ cat > /home/node/.openclaw/openclaw.json << INNEREOF
   "agents": {
     "defaults": {
       "model": {
-        "primary": "openai/gpt-5.2",
-        "fallbacks": ["openai/gpt-5.2-chat-latest"]
+        "primary": "openai/sovereign-gpt-5.2",
+        "fallbacks": ["openai/sovereign-gpt-5.2-chat-latest"]
       },
       "workspace": "/home/node/.openclaw/workspace"
     }
@@ -224,8 +224,8 @@ cat > ~/.openclaw/openclaw.json << EOF
   "agents": {
     "defaults": {
       "model": {
-        "primary": "openai/gpt-5.2",
-        "fallbacks": ["openai/gpt-5.2-chat-latest"]
+        "primary": "openai/sovereign-gpt-5.2",
+        "fallbacks": ["openai/sovereign-gpt-5.2-chat-latest"]
       },
       "workspace": "/home/node/.openclaw/workspace"
     }
@@ -335,7 +335,7 @@ Config file: `~/.openclaw/openclaw.json` (JSON5 format)
 
 Key settings:
 - `gateway.auth.token` — the auth token for the web UI and API
-- `agents.defaults.model.primary` — the AI model (use `openai/gpt-5.2` or newer)
+- `agents.defaults.model.primary` — the sovereign AI model (use an id/label containing `sovereign` or `souverain`)
 - `env.OPENAI_API_KEY` — references the `OPENAI_API_KEY` env var (Compose approach)
 
 API keys are stored in `~/.secrets` and passed into containers via env vars.

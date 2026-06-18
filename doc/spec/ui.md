@@ -742,7 +742,7 @@ Right pane: Type, Status, Requested by, Requested at, Decided by, Decided at, De
 │                                                         │
 │ Recent Cost Events                                      │
 │ ┌──────────────────────────────────────────────────────┐│
-│ │ CEO  openai/gpt-5  1,234 in / 567 out  $0.89  2m ago│
+│ │ CEO  openai/sovereign-gpt-5  1,234 in / 567 out  $0.89  2m ago│
 │ │ ...                                                   │
 │ └──────────────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────────────┘

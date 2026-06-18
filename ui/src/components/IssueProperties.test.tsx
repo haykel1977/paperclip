@@ -914,8 +914,8 @@ describe("IssueProperties", () => {
       },
     ]);
     mockAgentsApi.adapterModels.mockResolvedValue([
-      { id: "gpt-5.5", label: "GPT-5.5" },
-      { id: "gpt-5.4", label: "GPT-5.4" },
+      { id: "sovereign-gpt-5.5", label: "Sovereign GPT-5.5" },
+      { id: "sovereign-gpt-5.4", label: "Sovereign GPT-5.4" },
     ]);
 
     const root = renderProperties(container, {
@@ -923,7 +923,7 @@ describe("IssueProperties", () => {
         assigneeAgentId: "agent-1",
         assigneeAdapterOverrides: {
           adapterConfig: {
-            model: "gpt-5.4",
+            model: "sovereign-gpt-5.4",
             modelReasoningEffort: "high",
           },
         },
@@ -934,11 +934,11 @@ describe("IssueProperties", () => {
     await flush();
     await flush();
 
-    expect(container.textContent).toContain("Custom · gpt-5.4 · high");
+    expect(container.textContent).toContain("Custom · sovereign-gpt-5.4 · high");
     expect(container.textContent).toContain("Model lane");
 
     const modelButton = Array.from(container.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("GPT-5.5"));
+      .find((button) => button.textContent?.includes("Sovereign GPT-5.5"));
     expect(modelButton).not.toBeUndefined();
 
     await act(async () => {
@@ -948,7 +948,7 @@ describe("IssueProperties", () => {
     expect(onUpdate).toHaveBeenCalledWith({
       assigneeAdapterOverrides: {
         adapterConfig: {
-          model: "gpt-5.5",
+          model: "sovereign-gpt-5.5",
           modelReasoningEffort: "high",
         },
       },
@@ -976,7 +976,7 @@ describe("IssueProperties", () => {
         assigneeAgentId: "agent-1",
         assigneeAdapterOverrides: {
           adapterConfig: {
-            model: "gpt-5.4",
+            model: "sovereign-gpt-5.4",
           },
         },
       }),

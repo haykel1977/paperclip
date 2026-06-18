@@ -8,7 +8,7 @@ function makeValues(overrides: Partial<CreateConfigValues> = {}): CreateConfigVa
     cwd: "",
     instructionsFilePath: "",
     promptTemplate: "",
-    model: "gpt-5.4",
+    model: "sovereign-gpt-5.4",
     thinkingEffort: "",
     chrome: false,
     dangerouslySkipPermissions: true,
@@ -45,7 +45,7 @@ describe("buildCodexLocalConfig", () => {
     );
 
     expect(config).toMatchObject({
-      model: "gpt-5.4",
+      model: "sovereign-gpt-5.4",
       search: true,
       fastMode: true,
       dangerouslyBypassApprovalsAndSandbox: true,

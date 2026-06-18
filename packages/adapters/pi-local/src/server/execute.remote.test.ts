@@ -130,7 +130,7 @@ describe("pi remote execution", () => {
       },
       config: {
         command: "pi",
-        model: "openai/gpt-5.4-mini",
+        model: "openai/sovereign-gpt-5.4-mini",
       },
       context: {
         paperclipWorkspace: {
@@ -266,7 +266,7 @@ describe("pi remote execution", () => {
       },
       config: {
         command: "pi",
-        model: "openai/gpt-5.4-mini",
+        model: "openai/sovereign-gpt-5.4-mini",
       },
       context: {
         paperclipWorkspace: {
@@ -343,7 +343,7 @@ describe("pi remote execution", () => {
       },
       config: {
         command: "pi",
-        model: "openai/gpt-5.4-mini",
+        model: "openai/sovereign-gpt-5.4-mini",
       },
       context: {
         paperclipWorkspace: {
@@ -414,7 +414,7 @@ describe("pi remote execution", () => {
         sessionDisplayId: "session-123",
         taskKey: null,
       },
-      config: { command: "pi", model: "openai/gpt-5.4-mini" },
+      config: { command: "pi", model: "openai/sovereign-gpt-5.4-mini" },
       context: {
         paperclipWorkspace: { cwd: workspaceDir, source: "project_primary" },
       },
@@ -483,7 +483,7 @@ describe("pi remote execution", () => {
         sessionDisplayId: "session-123",
         taskKey: null,
       },
-      config: { command: "pi", model: "openai/gpt-5.4-mini" },
+      config: { command: "pi", model: "openai/sovereign-gpt-5.4-mini" },
       context: {
         paperclipWorkspace: { cwd: workspaceDir, source: "project_primary" },
       },

@@ -156,7 +156,7 @@ describe("Agents", () => {
 
     mockAgentsApi.list.mockResolvedValue([
       makeAgent({
-        adapterConfig: { model: "gpt-5.4" },
+        adapterConfig: { model: "sovereign-gpt-5.4" },
         // Old enough that relativeTime() falls back to an absolute date string.
         lastHeartbeatAt: new Date("2026-01-15T00:00:00Z"),
       }),

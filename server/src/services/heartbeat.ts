@@ -1452,6 +1452,7 @@ const SOVEREIGN_MODEL_REQUIRED_ADAPTER_TYPES = new Set([
   "claude_local",
   "codex_local",
   "cursor",
+  "cursor_cloud",
   "gemini_local",
   "grok_local",
   "opencode_local",

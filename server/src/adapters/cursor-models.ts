@@ -22,7 +22,13 @@ function dedupeModels(models: AdapterModel[]): AdapterModel[] {
     const id = model.id.trim();
     if (!id || seen.has(id)) continue;
     seen.add(id);
-    deduped.push({ id, label: model.label.trim() || id });
+    const label = model.label.trim() || id;
+    deduped.push({
+      id,
+      label: label.toLowerCase().includes("sovereign") || label.toLowerCase().includes("souverain")
+        ? label
+        : `Sovereign ${label}`,
+    });
   }
   return deduped;
 }

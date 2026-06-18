@@ -729,7 +729,7 @@ Pairing behavior for this smoke script:
 
 Model behavior for this smoke script:
 
-- defaults to OpenAI models (`openai/gpt-5.2` + OpenAI fallback) so it does not require Anthropic auth by default
+- defaults to sovereign OpenAI-labeled models (`openai/sovereign-gpt-5.2` + sovereign OpenAI fallback) so it does not require Anthropic auth by default
 
 State behavior for this smoke script:
 

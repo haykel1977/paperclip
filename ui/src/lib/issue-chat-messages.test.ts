@@ -243,7 +243,7 @@ describe("buildAssistantPartsFromTranscript", () => {
       {
         kind: "init",
         ts: "2026-04-06T12:00:00.000Z",
-        model: "gpt-5.4",
+        model: "sovereign-gpt-5.4",
         sessionId: "session-123",
       },
       {

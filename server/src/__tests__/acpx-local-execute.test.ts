@@ -253,16 +253,16 @@ describe("acpx_local execute", () => {
           cwd: root,
           stateDir: path.join(root, "state"),
           promptTemplate: "Do the assigned work.",
-          model: "gpt-5.4",
+          model: "sovereign-gpt-5.4",
           modelReasoningEffort: "xhigh",
           fastMode: true,
         },
       }));
 
       expect(result.exitCode).toBe(0);
-      expect(result.model).toBe("gpt-5.4");
+      expect(result.model).toBe("sovereign-gpt-5.4");
       expect(runtime.setConfigInputs).toEqual([
-        expect.objectContaining({ key: "model", value: "gpt-5.4" }),
+        expect.objectContaining({ key: "model", value: "sovereign-gpt-5.4" }),
         expect.objectContaining({ key: "reasoning_effort", value: "xhigh" }),
         expect.objectContaining({ key: "service_tier", value: "fast" }),
         expect.objectContaining({ key: "features.fast_mode", value: "true" }),
@@ -288,7 +288,7 @@ describe("acpx_local execute", () => {
           cwd: root,
           stateDir: path.join(root, "state"),
           promptTemplate: "Do the assigned work.",
-          model: "gpt-5.4",
+          model: "sovereign-gpt-5.4",
         },
         onLog: async (stream, chunk) => logs.push({ stream, chunk }),
       }));

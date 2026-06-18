@@ -16,7 +16,7 @@ const baseAgent: AgentDetail = {
   capabilities: "Builds product features.",
   adapterType: "codex_local",
   adapterConfig: {
-    model: "gpt-5.3-codex",
+    model: "sovereign-gpt-5.3-codex",
     instructionsBundleMode: "managed",
     instructionsRootPath: "/tmp/original/instructions",
     instructionsEntryFile: "AGENTS.md",
