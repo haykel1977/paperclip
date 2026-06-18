@@ -47,6 +47,7 @@ import {
   issueCommentAuthorTypeSchema,
   issueCommentMetadataSchema,
   issueCommentPresentationSchema,
+  isSovereignAgentModel,
   isSovereignAgentModelValue,
   normalizeAgentUrlKey,
 } from "@paperclipai/shared";
@@ -56,7 +57,7 @@ import {
   writePaperclipSkillSyncPreference,
 } from "@paperclipai/adapter-utils/server-utils";
 import { requireOpenCodeModelId } from "@paperclipai/adapter-opencode-local/server";
-import { findServerAdapter } from "../adapters/index.js";
+import { findServerAdapter, listAdapterModels } from "../adapters/index.js";
 import { forbidden, notFound, unprocessable } from "../errors.js";
 import { ghFetch, gitHubApiBase, resolveRawGitHubUrl } from "./github-fetch.js";
 import type { StorageService } from "../storage/types.js";
@@ -3030,7 +3031,10 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
         throw unprocessable(`adapterConfig.model is required for ${adapterType}`);
       }
       if (!isSovereignAgentModelValue(model)) {
-        throw unprocessable("adapterConfig.model must be a sovereign model");
+        const knownModel = (await listAdapterModels(adapterType)).find((entry) => entry.id === model);
+        if (!knownModel || !isSovereignAgentModel(knownModel)) {
+          throw unprocessable("adapterConfig.model must be a sovereign model");
+        }
       }
     }
     if (adapterType !== "opencode_local") return;

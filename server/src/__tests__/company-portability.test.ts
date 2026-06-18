@@ -184,7 +184,7 @@ describe("company portability", () => {
           instructionsFilePath: "/tmp/ignored.md",
           cwd: "/tmp/ignored",
           command: "/Users/dotta/.local/bin/claude",
-          model: "claude-opus-4-6",
+          model: "sovereign-claude-opus-4-6",
           env: {
             ANTHROPIC_API_KEY: {
               type: "secret_ref",
@@ -225,6 +225,7 @@ describe("company portability", () => {
         adapterType: "claude_local",
         adapterConfig: {
           promptTemplate: "You are CMO.",
+          model: "sovereign-claude-sonnet-4",
         },
         runtimeConfig: {
           heartbeat: {
@@ -520,6 +521,7 @@ describe("company portability", () => {
         capabilities: null,
         adapterType: "codex_local",
         adapterConfig: {
+          model: "sovereign-codex",
           env: {
             OPENAI_API_KEY: "sk-inline-secret-value",
             NODE_ENV: {
@@ -1491,7 +1493,8 @@ describe("company portability", () => {
             "  coder:",
             "    adapter:",
             "      type: codex_local",
-            "      config: {}",
+            "      config:",
+            "        model: sovereign-codex",
             "    inputs:",
             "      env:",
             "        OPENAI_API_KEY:",
@@ -1593,7 +1596,8 @@ describe("company portability", () => {
             "  coder:",
             "    adapter:",
             "      type: codex_local",
-            "      config: {}",
+            "      config:",
+            "        model: sovereign-codex",
             "    inputs:",
             "      env:",
             "        OPENAI_API_KEY:",
@@ -2793,6 +2797,7 @@ describe("company portability", () => {
         claudecoder: {
           adapterType: "codex_local",
           adapterConfig: {
+            model: "sovereign-codex",
             dangerouslyBypassApprovalsAndSandbox: true,
             instructionsFilePath: "/tmp/should-not-survive.md",
           },
@@ -2900,6 +2905,7 @@ describe("company portability", () => {
         claudecoder: {
           adapterType: "codex_local",
           adapterConfig: {
+            model: "sovereign-codex",
             extraArgs: [],
             args: ["--legacy-arg"],
           },
@@ -3236,6 +3242,7 @@ describe("company portability", () => {
         claudecoder: {
           adapterType: "codex_local",
           adapterConfig: {
+            model: "sovereign-codex",
             dangerouslyBypassApprovalsAndSandbox: true,
           },
         },
@@ -3451,6 +3458,7 @@ describe("company portability", () => {
     agentSvc.list.mockResolvedValue([]);
     secretSvc.normalizeAdapterConfigForPersistence.mockResolvedValueOnce({
       normalized: true,
+      model: "sovereign-claude-opus-4-6",
       env: {
         OPENAI_API_KEY: {
           type: "secret_ref",
@@ -3517,6 +3525,7 @@ describe("company portability", () => {
 
     secretSvc.normalizeAdapterConfigForPersistence.mockResolvedValueOnce({
       normalized: "updated",
+      model: "sovereign-gpt-5.4",
     });
     agentSvc.update.mockImplementation(async (id: string, patch: Record<string, unknown>) => ({
       id,
@@ -3547,7 +3556,7 @@ describe("company portability", () => {
         claudecoder: {
           adapterType: "codex_local",
           adapterConfig: {
-            model: "gpt-5.4",
+            model: "sovereign-gpt-5.4",
           },
         },
       },
@@ -3556,7 +3565,7 @@ describe("company portability", () => {
     expect(secretSvc.normalizeAdapterConfigForPersistence).toHaveBeenCalledWith(
       "company-1",
       expect.objectContaining({
-        model: "gpt-5.4",
+        model: "sovereign-gpt-5.4",
         extraArgs: ["--skip-git-repo-check"],
       }),
       { strictMode: false },
@@ -3565,6 +3574,7 @@ describe("company portability", () => {
       adapterType: "codex_local",
       adapterConfig: {
         normalized: "updated",
+        model: "sovereign-gpt-5.4",
       },
     }));
   });
