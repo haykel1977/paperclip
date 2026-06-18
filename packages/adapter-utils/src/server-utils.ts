@@ -110,6 +110,23 @@ export function resolvePaperclipInstanceRootForAdapter(input: {
   return path.resolve(homeDir, "instances", instanceId);
 }
 
+const PAPERCLIP_REPO_PR_CI_CONTRACT =
+  "For repo work, PR creation is a review handoff rather than completion; inspect and report relevant PR checks/CI when available, and do not mark work `done` while required or relevant checks are red, missing, or pending.";
+
+const PAPERCLIP_WAKE_EXECUTION_CONTRACT = [
+  "Execution contract: take concrete action in this heartbeat when the issue is actionable; do not stop at a plan unless planning was requested. Leave durable progress and then give the issue a clear final disposition before ending the heartbeat: `done`, `in_review` with a real reviewer/approval/interaction path, `blocked` with first-class blockers or a named unblock owner/action, delegated follow-up issues with blockers, or `in_progress` only when a live continuation path exists. Use child issues for long or parallel delegated work instead of polling. Comments, documents, screenshots, work products, and `Remaining` bullets are evidence, not valid liveness paths by themselves.",
+  PAPERCLIP_REPO_PR_CI_CONTRACT,
+].join(" ");
+
+const PAPERCLIP_SOURCE_CONTROL_CONTRACT_LINES = [
+  "Source control contract:",
+  "- When changing a repository, keep task work on the assigned Paperclip workspace branch or worktree; do not make task changes directly on the protected/base branch.",
+  "- If a PR already exists for this task, continue on that branch and include the PR URL in your Paperclip update.",
+  `- ${PAPERCLIP_REPO_PR_CI_CONTRACT}`,
+  "- Open or present a PR only when the change is complete, review-ready, and has passing required/relevant checks when those checks are available; if incomplete or blocked, report the branch and remaining work instead.",
+  "- In the final Paperclip update for repo changes, include branch name, base branch, PR URL if one exists, verification evidence, and PR/CI status when available.",
+];
+
 export const DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE = [
   "You are agent {{agent.id}} ({{agent.name}}). Continue your Paperclip work.",
   "",
@@ -128,13 +145,7 @@ export const DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE = [
   "- If blocked, mark the issue blocked and name the unblock owner and action.",
   "- Respect budget, pause/cancel, approval gates, and company boundaries.",
   "",
-  "Source control contract:",
-  "- When changing a repository, keep task work on the assigned Paperclip workspace branch or worktree; do not make task changes directly on the protected/base branch.",
-  "- If a PR already exists for this task, continue on that branch and include the PR URL in your Paperclip update.",
-  "- Treat PR creation as a review handoff, not completion by itself; before marking repo work `done` or `in_review`, inspect and report relevant PR checks/CI when available.",
-  "- If required or relevant PR checks/CI are red, missing, or still pending, do not mark the issue `done`; fix them in the same branch, keep `in_progress` with the next concrete check/fix, or mark `blocked` with an external owner/action.",
-  "- Open or present a PR only when the change is complete, review-ready, and has passing required/relevant checks when those checks are available; if incomplete or blocked, report the branch and remaining work instead.",
-  "- In the final Paperclip update for repo changes, include branch name, base branch, PR URL if one exists, verification evidence, and PR/CI status when available.",
+  ...PAPERCLIP_SOURCE_CONTROL_CONTRACT_LINES,
 ].join("\n");
 
 export interface PaperclipSkillEntry {
@@ -150,6 +161,7 @@ export interface PaperclipSkillEntry {
 
 export interface InstalledSkillTarget {
   targetPath: string | null;
+
   kind: "symlink" | "directory" | "file";
 }
 
@@ -702,7 +714,7 @@ export function renderPaperclipWakePrompt(
         "Focus on the new wake delta below and continue the current task without restating the full heartbeat boilerplate.",
         "Fetch the API thread only when `fallbackFetchNeeded` is true or you need broader history than this batch.",
         "",
-        "Execution contract: take concrete action in this heartbeat when the issue is actionable; do not stop at a plan unless planning was requested. Leave durable progress and then give the issue a clear final disposition before ending the heartbeat: `done`, `in_review` with a real reviewer/approval/interaction path, `blocked` with first-class blockers or a named unblock owner/action, delegated follow-up issues with blockers, or `in_progress` only when a live continuation path exists. Use child issues for long or parallel delegated work instead of polling. Comments, documents, screenshots, work products, and `Remaining` bullets are evidence, not valid liveness paths by themselves. For repo work, PR creation is a review handoff rather than completion; inspect and report relevant PR checks/CI when available, and do not mark work `done` while required or relevant checks are red, missing, or pending.",
+        PAPERCLIP_WAKE_EXECUTION_CONTRACT,
         "",
         `- reason: ${normalized.reason ?? "unknown"}`,
         `- issue: ${normalized.issue?.identifier ?? normalized.issue?.id ?? "unknown"}${normalized.issue?.title ? ` ${normalized.issue.title}` : ""}`,
@@ -718,11 +730,13 @@ export function renderPaperclipWakePrompt(
         "Before generic repo exploration or boilerplate heartbeat updates, acknowledge the latest comment and explain how it changes your next action.",
         "Use this inline wake data first before refetching the issue thread.",
         "Only fetch the API thread when `fallbackFetchNeeded` is true or you need broader history than this batch.",
+
         "",
-        "Execution contract: take concrete action in this heartbeat when the issue is actionable; do not stop at a plan unless planning was requested. Leave durable progress and then give the issue a clear final disposition before ending the heartbeat: `done`, `in_review` with a real reviewer/approval/interaction path, `blocked` with first-class blockers or a named unblock owner/action, delegated follow-up issues with blockers, or `in_progress` only when a live continuation path exists. Use child issues for long or parallel delegated work instead of polling. Comments, documents, screenshots, work products, and `Remaining` bullets are evidence, not valid liveness paths by themselves. For repo work, PR creation is a review handoff rather than completion; inspect and report relevant PR checks/CI when available, and do not mark work `done` while required or relevant checks are red, missing, or pending.",
+        PAPERCLIP_WAKE_EXECUTION_CONTRACT,
         "",
         `- reason: ${normalized.reason ?? "unknown"}`,
         `- issue: ${normalized.issue?.identifier ?? normalized.issue?.id ?? "unknown"}${normalized.issue?.title ? ` ${normalized.issue.title}` : ""}`,
+
         `- pending comments: ${normalized.includedCount}/${normalized.requestedCount}`,
         `- latest comment id: ${normalized.latestCommentId ?? "unknown"}`,
         `- fallback fetch needed: ${normalized.fallbackFetchNeeded ? "yes" : "no"}`,

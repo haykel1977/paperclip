@@ -619,8 +619,9 @@ describe("renderPaperclipWakePrompt", () => {
     );
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("Source control contract");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("assigned Paperclip workspace branch or worktree");
-    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("PR creation as a review handoff");
-    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("red, missing, or still pending");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("PR creation is a review handoff rather than completion");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("PR checks/CI when available");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("red, missing, or pending");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("PR/CI status when available");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("PR URL if one exists");
   });
@@ -643,6 +644,7 @@ describe("renderPaperclipWakePrompt", () => {
       fallbackFetchNeeded: false,
     };
     const prompt = renderPaperclipWakePrompt(payload);
+
     const resumedPrompt = renderPaperclipWakePrompt(payload, { resumedSession: true });
 
     expect(prompt).toContain("## Paperclip Wake Payload");
