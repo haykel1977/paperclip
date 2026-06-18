@@ -21,6 +21,21 @@ const AGENT_NAME = "CEO";
 const TASK_TITLE = "E2E test task";
 const SOVEREIGN_MODEL = "sovereign-e2e-claude";
 
+async function mockAdapterEnvironmentPass(page: Page) {
+  await page.route("**/api/companies/*/adapters/*/test-environment", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        adapterType: "claude_local",
+        status: "pass",
+        checks: [],
+        testedAt: new Date().toISOString(),
+      }),
+    });
+  });
+}
+
 async function selectManualSovereignModel(page: Page) {
   await page.getByRole("button", { name: /Select sovereign model/ }).click();
   await page.locator('input[placeholder="Search models..."]').fill(SOVEREIGN_MODEL);
@@ -30,7 +45,7 @@ async function selectManualSovereignModel(page: Page) {
 
 test.describe("Onboarding wizard", () => {
   test("completes full wizard flow", async ({ page }) => {
-
+    await mockAdapterEnvironmentPass(page);
     await page.goto("/onboarding");
 
     const wizardHeading = page.locator("h3", { hasText: "Name your company" });
@@ -61,7 +76,6 @@ test.describe("Onboarding wizard", () => {
     await page.getByRole("button", { name: "Next" }).click();
 
     await expect(
-
       page.locator("h3", { hasText: "Give it something to do" })
     ).toBeVisible({ timeout: 30_000 });
 

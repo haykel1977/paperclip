@@ -14,6 +14,21 @@ const AGENT_NAME = "CEO";
 const TASK_TITLE = "Release smoke task";
 const SOVEREIGN_MODEL = "sovereign-smoke-claude";
 
+async function mockAdapterEnvironmentPass(page: Page) {
+  await page.route("**/api/companies/*/adapters/*/test-environment", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        adapterType: "claude_local",
+        status: "pass",
+        checks: [],
+        testedAt: new Date().toISOString(),
+      }),
+    });
+  });
+}
+
 async function selectManualSovereignModel(page: Page) {
   await page.getByRole("button", { name: /Select sovereign model/ }).click();
   await page.locator('input[placeholder="Search models..."]').fill(SOVEREIGN_MODEL);
@@ -49,6 +64,7 @@ test.describe("Docker authenticated onboarding smoke", () => {
   test("logs in, completes onboarding, and triggers the first CEO run", async ({
     page,
   }) => {
+    await mockAdapterEnvironmentPass(page);
     await signIn(page);
     await openOnboarding(page);
 
