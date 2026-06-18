@@ -624,6 +624,10 @@ describe("renderPaperclipWakePrompt", () => {
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("PR creation is a review handoff rather than completion");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("PR checks/CI when available");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("red, missing, or pending");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("PR readiness gate");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("keep the diff focused on the requested task");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("fill the repository PR template when one exists");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("confirm required/relevant CI is green");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("PR/CI status when available");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("PR URL if one exists");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("Use only sovereign agent models");
@@ -636,13 +640,15 @@ describe("renderPaperclipWakePrompt", () => {
     expect(prompt).toContain("Source control contract");
     expect(prompt).toContain("PR creation is a review handoff rather than completion");
     expect(prompt).toContain("PR checks/CI when available");
+    expect(prompt).toContain("PR readiness gate");
+    expect(prompt).toContain("fill the repository PR template when one exists");
     expect(prompt).toContain("Use only sovereign agent models");
   });
 
   it("does not duplicate the source control contract when resolving compliant prompt templates", () => {
     const defaultPrompt = resolvePaperclipAgentPromptTemplate(undefined);
     const compliantCustomPrompt = resolvePaperclipAgentPromptTemplate(
-      "Custom heartbeat instructions.\n\nFor repo work, PR creation is a review handoff rather than completion; inspect and report relevant PR checks/CI when available, and do not mark work `done` while required or relevant checks are red, missing, or pending.",
+      "Custom heartbeat instructions.\n\nFor repo work, PR creation is a review handoff rather than completion; inspect and report relevant PR checks/CI when available, and do not mark work `done` while required or relevant checks are red, missing, or pending.\n\nPR readiness gate: before opening or presenting a PR as review-ready, keep the diff focused on the requested task, fill the repository PR template when one exists, include verification evidence, and confirm required/relevant CI is green; if any item is missing, say exactly what is missing and leave the issue `in_review` or `blocked`, not `done`.",
     );
 
     expect(defaultPrompt).toBe(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE);
@@ -651,6 +657,7 @@ describe("renderPaperclipWakePrompt", () => {
   });
 
   it("adds the execution contract to scoped wake prompts", () => {
+
     const payload = {
       reason: "issue_assigned",
       issue: {
@@ -679,13 +686,16 @@ describe("renderPaperclipWakePrompt", () => {
     expect(prompt).toContain("PR creation is a review handoff rather than completion");
     expect(prompt).toContain("PR checks/CI when available");
     expect(prompt).toContain("red, missing, or pending");
+    expect(prompt).toContain("PR readiness gate");
     expect(resumedPrompt).toContain("## Paperclip Resume Delta");
     expect(resumedPrompt).toContain("PR creation is a review handoff rather than completion");
     expect(resumedPrompt).toContain("PR checks/CI when available");
     expect(resumedPrompt).toContain("red, missing, or pending");
+    expect(resumedPrompt).toContain("PR readiness gate");
   });
 
   it("preserves Chinese, Japanese, and Hindi issue and comment text in scoped wake prompts", () => {
+
     const title = "验证中文任务";
 
     const commentBody = [
