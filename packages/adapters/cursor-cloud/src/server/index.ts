@@ -49,14 +49,14 @@ export function getConfigSchema(): AdapterConfigSchema {
         label: "Work on current branch",
         type: "toggle",
         default: false,
-        hint: "Tell Cursor to continue on the current branch instead of making a new one.",
+        hint: "Leave off for isolated feature-branch work. Enable only when attaching the agent to an existing review branch.",
       },
       {
         key: "autoCreatePR",
         label: "Auto-create PR",
         type: "toggle",
         default: false,
-        hint: "Allow Cursor to automatically create a pull request for the work.",
+        hint: "Allow Cursor to open a pull request when the work is review-ready.",
       },
       {
         key: "skipReviewerRequest",
@@ -65,6 +65,7 @@ export function getConfigSchema(): AdapterConfigSchema {
         default: false,
         hint: "Suppress reviewer requests on auto-created pull requests.",
       },
+
     ],
   };
 }

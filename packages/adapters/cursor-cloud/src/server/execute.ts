@@ -431,6 +431,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       ? `Reusing Cursor cloud agent session ${session?.cursorAgentId ?? "unknown"}`
       : "Creating a new Cursor cloud agent session",
     `Repository: ${repoUrl}${repoStartingRef ? ` @ ${repoStartingRef}` : ""}`,
+    `Branch mode: ${workOnCurrentBranch ? "continue on current branch" : "Cursor-managed feature branch"}`,
+    `Pull request: ${autoCreatePR ? "auto-create enabled" : "auto-create disabled"}`,
+    ...(repoPullRequestUrl ? [`Attached PR: ${repoPullRequestUrl}`] : []),
     `Runtime target: ${envType}${envName ? ` (${envName})` : ""}`,
   ];
 
@@ -439,6 +442,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       adapterType: "cursor_cloud",
       command: "@cursor/sdk",
       commandNotes,
+
       prompt: finalPrompt,
       promptMetrics: {
         promptChars: finalPrompt.length,
@@ -454,6 +458,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           repoUrl,
           repoStartingRef,
           repoPullRequestUrl,
+          workOnCurrentBranch,
+          autoCreatePR,
+          skipReviewerRequest,
           canReuseSession,
         },
       },

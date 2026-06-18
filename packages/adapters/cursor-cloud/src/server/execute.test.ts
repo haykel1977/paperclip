@@ -202,10 +202,22 @@ describe("cursor_cloud execute", () => {
         expect.stringContaining('"type":"cursor_cloud.result"'),
       ]),
     );
+    expect(ctx.meta[0]?.commandNotes).toEqual(expect.arrayContaining([
+      "Branch mode: Cursor-managed feature branch",
+      "Pull request: auto-create disabled",
+    ]));
+    expect(ctx.meta[0]?.context).toMatchObject({
+      cursorCloud: {
+        workOnCurrentBranch: false,
+        autoCreatePR: false,
+        skipReviewerRequest: false,
+      },
+    });
   });
 
   it("resumes a matching saved session when no active run can be reattached", async () => {
     getRunMock.mockResolvedValue(createMockRun({ status: "finished" }));
+
     const resumedRun = createMockRun({ id: "run-resumed", agentId: "agent-resumed" });
     const sdkAgent = createMockSdkAgent({ agentId: "agent-resumed", sendRun: resumedRun });
     resumeMock.mockResolvedValue(sdkAgent);

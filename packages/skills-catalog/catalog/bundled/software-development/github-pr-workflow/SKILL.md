@@ -26,6 +26,13 @@ Ship a PR a reviewer can land without follow-up clarifying questions. The aim is
 - The change is not yet functionally complete. Finish the work first; draft PRs that bounce on review are noise.
 - The repository uses a non-GitHub forge. Adjust to that forge's conventions; do not force GitHub-isms.
 
+## Paperclip agent handoff
+
+- Work from an isolated feature branch or Paperclip worktree by default; do not make task changes directly on the protected/base branch.
+- If you are attached to an existing PR, keep using that branch and mention the PR URL in the task update.
+- If you create a new PR, include the PR URL, branch name, base branch, and verification evidence in the final Paperclip comment.
+- If the work is incomplete or blocked, do not open a normal ready-for-review PR; leave the branch pushed and clearly state what is missing.
+
 ## Branch hygiene before opening
 
 - Rebase or merge from the target base so the diff is current.

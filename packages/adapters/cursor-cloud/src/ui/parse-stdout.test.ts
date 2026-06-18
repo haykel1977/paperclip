@@ -138,6 +138,31 @@ describe("parseCursorCloudStdoutLine", () => {
       },
     ]);
 
+    expect(
+      parseCursorCloudStdoutLine(
+        JSON.stringify({
+          type: "cursor_cloud.result",
+          status: "finished",
+          result: "Done",
+          git: { branch: "agent/pap-123", pullRequestUrl: "https://github.com/acme/app/pull/42" },
+        }),
+        ts,
+      ),
+    ).toEqual([
+      {
+        kind: "result",
+        ts,
+        text: 'Done\n\nGit:\n{\n  "branch": "agent/pap-123",\n  "pullRequestUrl": "https://github.com/acme/app/pull/42"\n}',
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedTokens: 0,
+        costUsd: 0,
+        subtype: "finished",
+        isError: false,
+        errors: [],
+      },
+    ]);
+
     expect(parseCursorCloudStdoutLine("plain text", ts)).toEqual([{ kind: "stdout", ts, text: "plain text" }]);
   });
 });

@@ -27,11 +27,18 @@ function stringifyUnknown(value: unknown): string {
   }
 }
 
+function formatCursorResultText(parsed: Record<string, unknown>): string {
+  const result = asString(parsed.result).trim();
+  const git = parsed.git === undefined ? "" : stringifyUnknown(parsed.git).trim();
+  return [result, git ? `Git:\n${git}` : ""].filter(Boolean).join("\n\n");
+}
+
 function parseAssistantMessage(message: Record<string, unknown>, ts: string): TranscriptEntry[] {
   const content = Array.isArray(message.content) ? message.content : [];
   const entries: TranscriptEntry[] = [];
   for (const partRaw of content) {
     const part = asRecord(partRaw);
+
     if (!part) continue;
     const type = asString(part.type).trim();
     if (type === "text") {
@@ -171,7 +178,7 @@ export function parseCursorCloudStdoutLine(line: string, ts: string): Transcript
     return [{
       kind: "result",
       ts,
-      text: asString(parsed.result),
+      text: formatCursorResultText(parsed),
       inputTokens: 0,
       outputTokens: 0,
       cachedTokens: 0,
