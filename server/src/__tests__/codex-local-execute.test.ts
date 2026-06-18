@@ -1026,6 +1026,8 @@ describe("codex execute", () => {
       expect(capture.argv).toEqual(expect.arrayContaining(["resume", "codex-session-1", "-"]));
       expect(capture.prompt).toContain("## Paperclip Resume Delta");
       expect(capture.prompt).toContain("Do not switch to another issue until you have handled this wake.");
+      expect(capture.prompt).toContain("PR creation is a review handoff rather than completion");
+      expect(capture.prompt).toContain("PR checks/CI when available");
       expect(capture.prompt).toContain("Second comment");
       expect(capture.prompt).not.toContain("Follow the paperclip heartbeat.");
       expect(capture.prompt).not.toContain("You are managed instructions.");
@@ -1037,6 +1039,7 @@ describe("codex execute", () => {
       expect(promptMetrics.heartbeatPromptChars).toBe(0);
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
+
       else process.env.HOME = previousHome;
       await fs.rm(root, { recursive: true, force: true });
     }

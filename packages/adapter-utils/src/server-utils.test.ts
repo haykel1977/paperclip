@@ -626,10 +626,9 @@ describe("renderPaperclipWakePrompt", () => {
   });
 
   it("adds the execution contract to scoped wake prompts", () => {
-    const prompt = renderPaperclipWakePrompt({
+    const payload = {
       reason: "issue_assigned",
       issue: {
-
         id: "issue-1",
         identifier: "PAP-1580",
         title: "Update prompts",
@@ -642,7 +641,9 @@ describe("renderPaperclipWakePrompt", () => {
       },
       comments: [],
       fallbackFetchNeeded: false,
-    });
+    };
+    const prompt = renderPaperclipWakePrompt(payload);
+    const resumedPrompt = renderPaperclipWakePrompt(payload, { resumedSession: true });
 
     expect(prompt).toContain("## Paperclip Wake Payload");
     expect(prompt).toContain("Execution contract: take concrete action in this heartbeat");
@@ -650,10 +651,18 @@ describe("renderPaperclipWakePrompt", () => {
     expect(prompt).toContain("evidence, not valid liveness paths by themselves");
     expect(prompt).toContain("Use child issues for long or parallel delegated work instead of polling");
     expect(prompt).toContain("named unblock owner/action");
+    expect(prompt).toContain("PR creation is a review handoff rather than completion");
+    expect(prompt).toContain("PR checks/CI when available");
+    expect(prompt).toContain("red, missing, or pending");
+    expect(resumedPrompt).toContain("## Paperclip Resume Delta");
+    expect(resumedPrompt).toContain("PR creation is a review handoff rather than completion");
+    expect(resumedPrompt).toContain("PR checks/CI when available");
+    expect(resumedPrompt).toContain("red, missing, or pending");
   });
 
   it("preserves Chinese, Japanese, and Hindi issue and comment text in scoped wake prompts", () => {
     const title = "验证中文任务";
+
     const commentBody = [
       "请用中文回复。",
       "日本語: 次の手順を書いてください。",
