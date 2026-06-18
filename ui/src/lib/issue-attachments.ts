@@ -26,7 +26,8 @@ export function attachmentOpenPath(attachment: AttachmentPathLike) {
 }
 
 export function attachmentDownloadPath(attachment: AttachmentPathLike) {
-  return attachment.downloadPath ?? `${attachment.contentPath}?download=1`;
+  const separator = attachment.contentPath.includes("?") ? "&" : "?";
+  return attachment.downloadPath ?? `${attachment.contentPath}${separator}download=1`;
 }
 
 export function isImageAttachment(attachment: Pick<IssueAttachment, "contentType">) {

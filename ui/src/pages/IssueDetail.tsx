@@ -3005,7 +3005,8 @@ export function IssueDetail() {
         setGalleryOpen(true);
       } else {
         // Image not in attachment list — open in new tab
-        window.open(src, "_blank");
+        const opened = window.open(src, "_blank", "noopener,noreferrer");
+        if (opened) opened.opener = null;
       }
     },
     [imageAttachments],

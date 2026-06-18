@@ -10,25 +10,34 @@ interface ImageGalleryModalProps {
   onOpenChange: (open: boolean) => void;
 }
 
+function clampImageIndex(index: number, length: number) {
+  if (length <= 0) return 0;
+  return Math.min(Math.max(index, 0), length - 1);
+}
+
 export function ImageGalleryModal({
   images,
   initialIndex,
   open,
   onOpenChange,
 }: ImageGalleryModalProps) {
-  const [currentIndex, setCurrentIndex] = useState(initialIndex);
+  const [currentIndex, setCurrentIndex] = useState(() => clampImageIndex(initialIndex, images.length));
   const imageRef = useRef<HTMLImageElement>(null);
 
   useEffect(() => {
-    if (open) setCurrentIndex(initialIndex);
-  }, [open, initialIndex]);
+    if (open) setCurrentIndex(clampImageIndex(initialIndex, images.length));
+  }, [open, initialIndex, images.length]);
+
+  useEffect(() => {
+    if (open) setCurrentIndex((index) => clampImageIndex(index, images.length));
+  }, [open, images.length]);
 
   const goNext = useCallback(() => {
-    setCurrentIndex((i) => (i + 1) % images.length);
+    setCurrentIndex((i) => (images.length === 0 ? 0 : (i + 1) % images.length));
   }, [images.length]);
 
   const goPrev = useCallback(() => {
-    setCurrentIndex((i) => (i - 1 + images.length) % images.length);
+    setCurrentIndex((i) => (images.length === 0 ? 0 : (i - 1 + images.length) % images.length));
   }, [images.length]);
 
   useEffect(() => {
@@ -59,7 +68,8 @@ export function ImageGalleryModal({
 
   if (images.length === 0) return null;
 
-  const current = images[currentIndex];
+  const safeCurrentIndex = clampImageIndex(currentIndex, images.length);
+  const current = images[safeCurrentIndex];
   if (!current) return null;
 
   return (
@@ -71,6 +81,9 @@ export function ImageGalleryModal({
           className="fixed inset-0 z-50 flex flex-col outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 duration-200"
           onClick={handleBackdropClick}
         >
+          <DialogPrimitive.Title className="sr-only">
+            {current.originalFilename ? `Image attachment: ${current.originalFilename}` : "Image attachment preview"}
+          </DialogPrimitive.Title>
           {/* Top bar */}
           <div className="flex items-center justify-between px-5 py-3 text-white/80 text-sm shrink-0">
             <span className="truncate max-w-[50%] font-medium" title={current.originalFilename ?? undefined}>
@@ -78,7 +91,7 @@ export function ImageGalleryModal({
             </span>
             <div className="flex items-center gap-4">
               <span className="text-white/40 tabular-nums text-xs">
-                {currentIndex + 1} / {images.length}
+                {safeCurrentIndex + 1} / {images.length}
               </span>
               <a
                 href={current.contentPath}

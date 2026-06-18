@@ -56,7 +56,7 @@ function AttachmentActions({
   return (
     <div className="flex shrink-0 items-center gap-1">
       <Button asChild variant="ghost" size="icon-sm" title="Open in new tab">
-        <a href={attachmentOpenPath(attachment)} target="_blank" rel="noreferrer" aria-label={`Open ${filename}`}>
+        <a href={attachmentOpenPath(attachment)} target="_blank" rel="noopener noreferrer" aria-label={`Open ${filename}`}>
           <ExternalLink className="h-4 w-4" />
         </a>
       </Button>
@@ -172,7 +172,7 @@ function GenericAttachmentRow({
         <a
           href={attachmentOpenPath(attachment)}
           target="_blank"
-          rel="noreferrer"
+          rel="noopener noreferrer"
           className="block truncate text-sm font-medium text-foreground hover:underline"
           title={filename}
         >
@@ -258,16 +258,22 @@ export function IssueAttachmentsSection({
             <div
               key={attachment.id}
               id={`attachment-${attachment.id}`}
-              className="group relative aspect-square cursor-pointer scroll-mt-20 overflow-hidden rounded-lg border border-border bg-accent/10"
-              onClick={() => onImageClick(attachment)}
+              className="group relative aspect-square scroll-mt-20 overflow-hidden rounded-lg border border-border bg-accent/10"
             >
-              <img
-                src={attachment.contentPath}
-                alt={attachment.originalFilename ?? "attachment"}
-                className="h-full w-full object-cover"
-                loading="lazy"
-              />
-              <div className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/30" />
+              <button
+                type="button"
+                className="block h-full w-full cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                aria-label={`Open ${attachmentFilename(attachment)} preview`}
+                onClick={() => onImageClick(attachment)}
+              >
+                <img
+                  src={attachment.contentPath}
+                  alt={attachment.originalFilename ?? "attachment"}
+                  className="h-full w-full object-cover"
+                  loading="lazy"
+                />
+                <span className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/30" />
+              </button>
               {confirmDeleteId === attachment.id ? (
                 <div
                   className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-black/60"
@@ -301,12 +307,14 @@ export function IssueAttachmentsSection({
               ) : (
                 <button
                   type="button"
-                  className="absolute right-1.5 top-1.5 rounded-md bg-black/50 p-1 text-white opacity-0 transition-opacity hover:bg-destructive group-hover:opacity-100"
+                  className="absolute right-1.5 top-1.5 rounded-md bg-black/50 p-1 text-white opacity-0 transition-opacity hover:bg-destructive focus-visible:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100"
                   onClick={(event) => {
                     event.stopPropagation();
                     requestDelete(attachment.id);
                   }}
                   title="Delete attachment"
+                  aria-label={`Delete ${attachmentFilename(attachment)}`}
+                  disabled={deletePending}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>

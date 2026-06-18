@@ -36,7 +36,7 @@ export function OutputPrimaryCard({ item, creatorName }: OutputPrimaryCardProps)
         <a
           href={meta.openPath}
           target="_blank"
-          rel="noreferrer"
+          rel="noopener noreferrer"
           className="block aspect-video w-full overflow-hidden bg-black"
           aria-label={`Open ${filename}`}
         >
@@ -77,7 +77,7 @@ export function OutputPrimaryCard({ item, creatorName }: OutputPrimaryCardProps)
         {meta ? (
           <div className={cn("flex shrink-0 items-center gap-2", "max-md:w-full")}>
             <Button asChild variant="outline" size="sm" className="max-md:flex-1">
-              <a href={meta.openPath} target="_blank" rel="noreferrer">
+              <a href={meta.openPath} target="_blank" rel="noopener noreferrer">
                 <ExternalLink className="h-4 w-4" />
                 Open
               </a>
