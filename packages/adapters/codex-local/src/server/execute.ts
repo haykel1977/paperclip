@@ -34,13 +34,14 @@ import {
   readPaperclipRuntimeSkillEntries,
   readPaperclipIssueWorkModeFromContext,
   resolvePaperclipDesiredSkillNames,
+  resolvePaperclipAgentPromptTemplate,
   renderTemplate,
   renderPaperclipWakePrompt,
   stringifyPaperclipWakePayload,
-  DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
   joinPromptSections,
 } from "@paperclipai/adapter-utils/server-utils";
 import {
+
   parseCodexJsonl,
   extractCodexRetryNotBefore,
   isCodexTransientUpstreamError,
@@ -290,14 +291,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   const { runId, agent, runtime, config, context, onLog, onMeta, onSpawn, authToken } = ctx;
 
-  const promptTemplate = asString(
-    config.promptTemplate,
-    DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
-  );
+  const promptTemplate = resolvePaperclipAgentPromptTemplate(config.promptTemplate);
   const command = asString(config.command, "codex");
   const model = asString(config.model, "");
 
   const workspaceContext = parseObject(context.paperclipWorkspace);
+
   const workspaceCwd = asString(workspaceContext.cwd, "");
   const workspaceSource = asString(workspaceContext.source, "");
   const workspaceStrategy = asString(workspaceContext.strategy, "");

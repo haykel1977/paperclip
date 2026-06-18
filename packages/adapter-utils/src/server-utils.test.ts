@@ -13,9 +13,11 @@ import {
   materializePaperclipSkillCopy,
   refreshPaperclipWorkspaceEnvForExecution,
   renderPaperclipWakePrompt,
+  resolvePaperclipAgentPromptTemplate,
   runningProcesses,
   runChildProcess,
   sanitizeSshRemoteEnv,
+
   shapePaperclipWorkspaceEnvForExecution,
   rewriteWorkspaceCwdEnvVarsForExecution,
   stringifyPaperclipWakePayload,
@@ -626,6 +628,15 @@ describe("renderPaperclipWakePrompt", () => {
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("PR URL if one exists");
   });
 
+  it("adds the source control contract to custom prompt templates", () => {
+    const prompt = resolvePaperclipAgentPromptTemplate("Custom heartbeat instructions.");
+
+    expect(prompt).toContain("Custom heartbeat instructions.");
+    expect(prompt).toContain("Source control contract");
+    expect(prompt).toContain("PR creation is a review handoff rather than completion");
+    expect(prompt).toContain("PR checks/CI when available");
+  });
+
   it("adds the execution contract to scoped wake prompts", () => {
     const payload = {
       reason: "issue_assigned",
@@ -640,15 +651,16 @@ describe("renderPaperclipWakePrompt", () => {
         includedCount: 0,
         missingCount: 0,
       },
+
       comments: [],
       fallbackFetchNeeded: false,
     };
     const prompt = renderPaperclipWakePrompt(payload);
-
     const resumedPrompt = renderPaperclipWakePrompt(payload, { resumedSession: true });
 
     expect(prompt).toContain("## Paperclip Wake Payload");
     expect(prompt).toContain("Execution contract: take concrete action in this heartbeat");
+
     expect(prompt).toContain("clear final disposition");
     expect(prompt).toContain("evidence, not valid liveness paths by themselves");
     expect(prompt).toContain("Use child issues for long or parallel delegated work instead of polling");

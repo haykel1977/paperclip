@@ -45,10 +45,11 @@ import {
   rewriteWorkspaceCwdEnvVarsForExecution,
   shapePaperclipWorkspaceEnvForExecution,
   stringifyPaperclipWakePayload,
-  DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
+  resolvePaperclipAgentPromptTemplate,
 } from "@paperclipai/adapter-utils/server-utils";
 import { shellQuote } from "@paperclipai/adapter-utils/ssh";
 import {
+
   parseClaudeStreamJson,
   describeClaudeFailure,
   detectClaudeLoginRequired,
@@ -370,14 +371,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const executionTargetIsRemote = adapterExecutionTargetIsRemote(executionTarget);
   const executionTargetIsSandbox = executionTarget?.kind === "remote" && executionTarget.transport === "sandbox";
 
-  const promptTemplate = asString(
-    config.promptTemplate,
-    DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
-  );
+  const promptTemplate = resolvePaperclipAgentPromptTemplate(config.promptTemplate);
   const model = asString(config.model, "");
   const effort = asString(config.effort, "");
   const chrome = asBoolean(config.chrome, false);
   const maxTurns = asNumber(config.maxTurnsPerRun, 0);
+
   const dangerouslySkipPermissions = asBoolean(config.dangerouslySkipPermissions, true);
   const configEnv = parseObject(config.env);
   const workspaceContext = parseObject(context.paperclipWorkspace);

@@ -43,10 +43,12 @@ import {
   removeMaintainerOnlySkillSymlinks,
   renderTemplate,
   renderPaperclipWakePrompt,
+  resolvePaperclipAgentPromptTemplate,
   stringifyPaperclipWakePayload,
   DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
   runChildProcess,
 } from "@paperclipai/adapter-utils/server-utils";
+
 import { shellQuote } from "@paperclipai/adapter-utils/ssh";
 import { isPiUnknownSessionError, parsePiJsonl } from "./parse.js";
 import { ensurePiModelConfiguredAndAvailable } from "./models.js";
@@ -221,10 +223,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   });
   const executionTargetIsRemote = adapterExecutionTargetIsRemote(executionTarget);
 
-  const promptTemplate = asString(
-    config.promptTemplate,
-    DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
-  );
+  const promptTemplate = resolvePaperclipAgentPromptTemplate(config.promptTemplate);
   const command = asString(config.command, "pi");
   const model = asString(config.model, "").trim();
   const thinking = asString(config.thinking, "").trim();

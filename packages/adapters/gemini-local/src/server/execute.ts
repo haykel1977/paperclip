@@ -45,11 +45,12 @@ import {
   parseObject,
   renderTemplate,
   renderPaperclipWakePrompt,
+  resolvePaperclipAgentPromptTemplate,
   stringifyPaperclipWakePayload,
-  DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
   runChildProcess,
 } from "@paperclipai/adapter-utils/server-utils";
 import { DEFAULT_GEMINI_LOCAL_MODEL, SANDBOX_INSTALL_COMMAND } from "../index.js";
+
 import {
   describeGeminiFailure,
   detectGeminiAuthRequired,
@@ -181,10 +182,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   });
   const executionTargetIsRemote = adapterExecutionTargetIsRemote(executionTarget);
 
-  const promptTemplate = asString(
-    config.promptTemplate,
-    DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
-  );
+  const promptTemplate = resolvePaperclipAgentPromptTemplate(config.promptTemplate);
   const command = asString(config.command, "gemini");
   const model = asString(config.model, DEFAULT_GEMINI_LOCAL_MODEL).trim();
   const sandbox = asBoolean(config.sandbox, false);

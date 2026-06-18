@@ -7,8 +7,6 @@ import type { AdapterExecutionContext, AdapterExecutionResult } from "@paperclip
 import { createDeliveryLogRedactor, executeConfiguredDeliveryHook } from "@paperclipai/adapter-utils/delivery-hook";
 import { readAdapterExecutionTarget, adapterExecutionTargetSessionIdentity } from "@paperclipai/adapter-utils/execution-target";
 import {
-  DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
-
   applyPaperclipWorkspaceEnv,
   asNumber,
   asString,
@@ -23,9 +21,11 @@ import {
   readPaperclipIssueWorkModeFromContext,
   renderPaperclipWakePrompt,
   renderTemplate,
+  resolvePaperclipAgentPromptTemplate,
   resolvePaperclipInstanceRootForAdapter,
   resolvePaperclipDesiredSkillNames,
   rewriteWorkspaceCwdEnvVarsForExecution,
+
   shapePaperclipWorkspaceEnvForExecution,
   stringifyPaperclipWakePayload,
   runChildProcess,
@@ -1021,10 +1021,11 @@ async function buildPrompt(ctx: AdapterExecutionContext, resumedSession: boolean
   commandNotes: string[];
 }> {
   const { agent, runId, config, context, onLog } = ctx;
-  const promptTemplate = asString(config.promptTemplate, DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE);
+  const promptTemplate = resolvePaperclipAgentPromptTemplate(config.promptTemplate);
   const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
   const instructionsDir = instructionsFilePath ? `${path.dirname(instructionsFilePath)}/` : "";
   let instructionsPrefix = "";
+
   const commandNotes: string[] = [];
   if (instructionsFilePath) {
     try {

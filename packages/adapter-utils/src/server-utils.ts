@@ -148,6 +148,14 @@ export const DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE = [
   ...PAPERCLIP_SOURCE_CONTROL_CONTRACT_LINES,
 ].join("\n");
 
+export const PAPERCLIP_SOURCE_CONTROL_CONTRACT_PROMPT = PAPERCLIP_SOURCE_CONTROL_CONTRACT_LINES.join("\n");
+
+export function resolvePaperclipAgentPromptTemplate(value: unknown): string {
+  const prompt = asString(value, DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE);
+  if (prompt.includes(PAPERCLIP_REPO_PR_CI_CONTRACT)) return prompt;
+  return joinPromptSections([prompt, PAPERCLIP_SOURCE_CONTROL_CONTRACT_PROMPT]);
+}
+
 export interface PaperclipSkillEntry {
   key: string;
   runtimeName: string;
@@ -160,8 +168,8 @@ export interface PaperclipSkillEntry {
 }
 
 export interface InstalledSkillTarget {
-  targetPath: string | null;
 
+  targetPath: string | null;
   kind: "symlink" | "directory" | "file";
 }
 

@@ -39,10 +39,11 @@ import {
   refreshPaperclipWorkspaceEnvForExecution,
   renderTemplate,
   renderPaperclipWakePrompt,
+  resolvePaperclipAgentPromptTemplate,
   stringifyPaperclipWakePayload,
-  DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
   runChildProcess,
   readPaperclipRuntimeSkillEntries,
+
   readPaperclipIssueWorkModeFromContext,
   resolvePaperclipDesiredSkillNames,
 } from "@paperclipai/adapter-utils/server-utils";
@@ -204,10 +205,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   });
   const executionTargetIsRemote = adapterExecutionTargetIsRemote(executionTarget);
 
-  const promptTemplate = asString(
-    config.promptTemplate,
-    DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
-  );
+  const promptTemplate = resolvePaperclipAgentPromptTemplate(config.promptTemplate);
   const command = asString(config.command, "opencode");
   const model = asString(config.model, "").trim();
   const variant = asString(config.variant, "").trim();

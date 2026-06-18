@@ -11,7 +11,6 @@ import {
 } from "@cursor/sdk";
 import type { AdapterExecutionContext, AdapterExecutionResult, AdapterInvocationMeta } from "@paperclipai/adapter-utils";
 import {
-  DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
   asBoolean,
   asString,
   buildPaperclipEnv,
@@ -20,6 +19,7 @@ import {
   readPaperclipIssueWorkModeFromContext,
   renderPaperclipWakePrompt,
   renderTemplate,
+  resolvePaperclipAgentPromptTemplate,
   stringifyPaperclipWakePayload,
 } from "@paperclipai/adapter-utils/server-utils";
 
@@ -406,10 +406,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       }
     : null);
   const canReuseSession = sessionMatches(session, envType, envName, repos);
-  const promptTemplate = asString(config.promptTemplate, DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE);
+  const promptTemplate = resolvePaperclipAgentPromptTemplate(config.promptTemplate);
   const bootstrapPromptTemplate = asString(config.bootstrapPromptTemplate, "");
   const templateData = {
     agentId: agent.id,
+
     companyId: agent.companyId,
     runId,
     company: { id: agent.companyId },

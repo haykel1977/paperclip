@@ -42,11 +42,12 @@ import {
   removeMaintainerOnlySkillSymlinks,
   renderTemplate,
   renderPaperclipWakePrompt,
+  resolvePaperclipAgentPromptTemplate,
   stringifyPaperclipWakePayload,
-  DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
   joinPromptSections,
 } from "@paperclipai/adapter-utils/server-utils";
 import { DEFAULT_CURSOR_LOCAL_MODEL, SANDBOX_INSTALL_COMMAND } from "../index.js";
+
 import { parseCursorJsonl, isCursorUnknownSessionError } from "./parse.js";
 import { prepareCursorSandboxCommand } from "./remote-command.js";
 import { normalizeCursorStreamLine } from "../shared/stream.js";
@@ -203,10 +204,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   });
   const executionTargetIsRemote = adapterExecutionTargetIsRemote(executionTarget);
 
-  const promptTemplate = asString(
-    config.promptTemplate,
-    DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
-  );
+  const promptTemplate = resolvePaperclipAgentPromptTemplate(config.promptTemplate);
   let command = asString(config.command, "agent");
   const model = asString(config.model, DEFAULT_CURSOR_LOCAL_MODEL).trim();
   const mode = normalizeMode(asString(config.mode, ""));

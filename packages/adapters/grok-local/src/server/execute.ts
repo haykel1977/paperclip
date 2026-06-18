@@ -38,9 +38,10 @@ import {
   resolvePaperclipDesiredSkillNames,
   stringifyPaperclipWakePayload,
   refreshPaperclipWorkspaceEnvForExecution,
-  DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
+  resolvePaperclipAgentPromptTemplate,
 } from "@paperclipai/adapter-utils/server-utils";
 import { DEFAULT_GROK_LOCAL_MODEL } from "../index.js";
+
 import { isGrokUnknownSessionError, parseGrokJsonl } from "./parse.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
@@ -198,10 +199,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   });
   const executionTargetIsRemote = adapterExecutionTargetIsRemote(executionTarget);
 
-  const promptTemplate = asString(
-    config.promptTemplate,
-    DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
-  );
+  const promptTemplate = resolvePaperclipAgentPromptTemplate(config.promptTemplate);
   const command = asString(config.command, "grok");
   const model = asString(config.model, DEFAULT_GROK_LOCAL_MODEL).trim();
   const permissionMode = asString(config.permissionMode, "dontAsk").trim() || "dontAsk";
