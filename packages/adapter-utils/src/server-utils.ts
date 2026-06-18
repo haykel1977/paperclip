@@ -131,14 +131,17 @@ export const DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE = [
   "Source control contract:",
   "- When changing a repository, keep task work on the assigned Paperclip workspace branch or worktree; do not make task changes directly on the protected/base branch.",
   "- If a PR already exists for this task, continue on that branch and include the PR URL in your Paperclip update.",
-  "- Open or present a PR only when the change is complete and review-ready; if incomplete or blocked, report the branch and remaining work instead.",
-  "- In the final Paperclip update for repo changes, include branch name, base branch, PR URL if one exists, and the verification evidence you ran.",
+  "- Treat PR creation as a review handoff, not completion by itself; before marking repo work `done` or `in_review`, inspect and report relevant PR checks/CI when available.",
+  "- If required or relevant PR checks/CI are red, missing, or still pending, do not mark the issue `done`; fix them in the same branch, keep `in_progress` with the next concrete check/fix, or mark `blocked` with an external owner/action.",
+  "- Open or present a PR only when the change is complete, review-ready, and has passing required/relevant checks when those checks are available; if incomplete or blocked, report the branch and remaining work instead.",
+  "- In the final Paperclip update for repo changes, include branch name, base branch, PR URL if one exists, verification evidence, and PR/CI status when available.",
 ].join("\n");
 
 export interface PaperclipSkillEntry {
   key: string;
   runtimeName: string;
   source: string;
+
   sourceStatus?: "available" | "missing";
   missingDetail?: string | null;
   required?: boolean;

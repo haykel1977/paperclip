@@ -619,6 +619,9 @@ describe("renderPaperclipWakePrompt", () => {
     );
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("Source control contract");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("assigned Paperclip workspace branch or worktree");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("PR creation as a review handoff");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("red, missing, or still pending");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("PR/CI status when available");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("PR URL if one exists");
   });
 
@@ -626,6 +629,7 @@ describe("renderPaperclipWakePrompt", () => {
     const prompt = renderPaperclipWakePrompt({
       reason: "issue_assigned",
       issue: {
+
         id: "issue-1",
         identifier: "PAP-1580",
         title: "Update prompts",
