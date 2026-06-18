@@ -158,8 +158,8 @@ export function NewAgent() {
   function handleSubmit() {
     if (!selectedCompanyId || !name.trim()) return;
     setFormError(null);
-    if (configValues.model && !isSovereignAgentModelValue(configValues.model)) {
-      setFormError("Only sovereign agent models are allowed. Use a model id containing \"sovereign\" or \"souverain\".");
+    if (!isSovereignAgentModelValue(configValues.model)) {
+      setFormError("Only sovereign agent models are allowed. Enter a model id containing \"sovereign\" or \"souverain\".");
       return;
     }
     if (configValues.adapterType === "opencode_local") {
@@ -169,6 +169,7 @@ export function NewAgent() {
       }
     }
     createAgent.mutate(
+
       buildNewAgentHirePayload({
 
         name,

@@ -11,9 +11,11 @@ import {
   MODEL_PROFILE_KEYS,
   envBindingSchema,
   isEnvironmentDriverSupportedForAdapter,
+  isSovereignAgentModelValue,
   type BillingType,
   type EnvironmentLeaseStatus,
   type ExecutionWorkspace,
+
   type ExecutionWorkspaceConfig,
   type IssueExecutionMonitorClearReason,
   type IssueExecutionMonitorPolicy,
@@ -1533,16 +1535,29 @@ export function resolveModelProfileApplication(input: {
     };
   }
 
+  const adapterConfig = {
+    ...parseObject(adapterProfile.adapterConfig),
+    ...runtimeProfile.adapterConfig,
+  };
+  const model = readNonEmptyString(adapterConfig.model);
+  if (model && !isSovereignAgentModelValue(model)) {
+    return {
+      requested,
+      requestedBy,
+      applied: null,
+      configSource: null,
+      fallbackReason: "non_sovereign_model_profile",
+      adapterConfig: null,
+    };
+  }
+
   return {
     requested,
     requestedBy,
     applied: requested,
     configSource: runtimeProfile.configured ? "agent_runtime" : "adapter_default",
     fallbackReason: null,
-    adapterConfig: {
-      ...parseObject(adapterProfile.adapterConfig),
-      ...runtimeProfile.adapterConfig,
-    },
+    adapterConfig,
   };
 }
 
@@ -1551,10 +1566,16 @@ export function mergeModelProfileAdapterConfig(input: {
   modelProfile: ModelProfileApplication;
   issueAdapterConfig: Record<string, unknown> | null | undefined;
 }): Record<string, unknown> {
+  const issueAdapterConfig = { ...(input.issueAdapterConfig ?? {}) };
+  const issueModel = readNonEmptyString(issueAdapterConfig.model);
+  if (issueModel && !isSovereignAgentModelValue(issueModel)) {
+    delete issueAdapterConfig.model;
+  }
+
   return {
     ...input.baseConfig,
     ...(input.modelProfile.adapterConfig ?? {}),
-    ...(input.issueAdapterConfig ?? {}),
+    ...issueAdapterConfig,
   };
 }
 

@@ -1,9 +1,9 @@
 import type { CreateConfigValues } from "@paperclipai/adapter-utils";
-import { DEFAULT_CURSOR_LOCAL_MODEL } from "../index.js";
 
 function parseCommaArgs(value: string): string[] {
   return value
     .split(",")
+
     .map((item) => item.trim())
     .filter(Boolean);
 }
@@ -61,9 +61,10 @@ export function buildCursorLocalConfig(v: CreateConfigValues): Record<string, un
   const ac: Record<string, unknown> = {};
   if (v.cwd) ac.cwd = v.cwd;
   if (v.instructionsFilePath) ac.instructionsFilePath = v.instructionsFilePath;
-  ac.model = v.model || DEFAULT_CURSOR_LOCAL_MODEL;
+  if (v.model) ac.model = v.model;
   const mode = normalizeMode(v.thinkingEffort);
   if (mode) ac.mode = mode;
+
   ac.timeoutSec = 0;
   ac.graceSec = 15;
   const env = parseEnvBindings(v.envBindings);

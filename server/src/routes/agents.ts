@@ -144,6 +144,16 @@ export function agentRoutes(
     pi_local: "instructionsFilePath",
   };
   const DEFAULT_MANAGED_INSTRUCTIONS_ADAPTER_TYPES = new Set(Object.keys(DEFAULT_INSTRUCTIONS_PATH_KEYS));
+  const SOVEREIGN_MODEL_REQUIRED_ADAPTER_TYPES = new Set([
+    "acpx_local",
+    "claude_local",
+    "codex_local",
+    "cursor",
+    "gemini_local",
+    "grok_local",
+    "opencode_local",
+    "pi_local",
+  ]);
 
   /** Check if an adapter supports the managed instructions bundle. */
   function adapterSupportsInstructionsBundle(adapterType: string): boolean {
@@ -1129,7 +1139,14 @@ export function agentRoutes(
     pathLabel = "adapterConfig.model",
   ) {
     const model = asNonEmptyString(adapterConfig.model);
-    if (!model) return;
+    if (!model) {
+      if (adapterType && SOVEREIGN_MODEL_REQUIRED_ADAPTER_TYPES.has(adapterType)) {
+        throw unprocessable(
+          `${pathLabel} is required for ${adapterType}. Use a sovereign model id or label containing "sovereign" or "souverain".`,
+        );
+      }
+      return;
+    }
     if (isSovereignAgentModelValue(model)) return;
 
     const knownModel = adapterType
@@ -1149,6 +1166,7 @@ export function agentRoutes(
   ) {
     await assertSovereignAgentModel(adapterType, adapterConfig, pathLabel);
     if (adapterType !== "opencode_local") return;
+
     try {
       requireOpenCodeModelId(adapterConfig.model);
     } catch (err) {

@@ -1,9 +1,9 @@
 import type { CreateConfigValues } from "@paperclipai/adapter-utils";
-import { DEFAULT_GEMINI_LOCAL_MODEL } from "../index.js";
 
 function parseCommaArgs(value: string): string[] {
   return value
     .split(",")
+
     .map((item) => item.trim())
     .filter(Boolean);
 }
@@ -55,10 +55,11 @@ export function buildGeminiLocalConfig(v: CreateConfigValues): Record<string, un
   const ac: Record<string, unknown> = {};
   if (v.cwd) ac.cwd = v.cwd;
   if (v.instructionsFilePath) ac.instructionsFilePath = v.instructionsFilePath;
-  ac.model = v.model || DEFAULT_GEMINI_LOCAL_MODEL;
+  if (v.model) ac.model = v.model;
   ac.timeoutSec = 0;
   ac.graceSec = 15;
   const env = parseEnvBindings(v.envBindings);
+
   const legacy = parseEnvVars(v.envVars);
   for (const [key, value] of Object.entries(legacy)) {
     if (!Object.prototype.hasOwnProperty.call(env, key)) {
