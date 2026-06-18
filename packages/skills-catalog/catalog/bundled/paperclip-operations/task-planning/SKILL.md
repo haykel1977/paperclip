@@ -1,6 +1,6 @@
 ---
 name: task-planning
-description: Turn a Paperclip issue or request into a structured implementation plan with child task graph, blockers, owners, and acceptance criteria, then save it as the issue `plan` document.
+description: Turn a Paperclip issue or request into a structured implementation plan with child task graph, blockers, owners, acceptance criteria, and verification/CI gates, then save it as the issue `plan` document.
 key: paperclipai/bundled/paperclip-operations/task-planning
 recommendedForRoles:
   - manager
@@ -11,11 +11,12 @@ tags:
   - planning
   - issues
   - delegation
+  - ci
 ---
 
 # Task Planning
 
-Produce implementation plans that the Paperclip executor can actually run: explicit child issues, real blockers, named owners, and a defined acceptance bar. Avoid plans that read well but cannot be split into work.
+Produce implementation plans that the Paperclip executor can actually run: explicit child issues, real blockers, named owners, a defined acceptance bar, and the verification gates required for a green PR. Avoid plans that read well but cannot be split into work.
 
 ## When to use
 
@@ -51,10 +52,20 @@ Required sections, in order:
    - Owner specialty (Engineer, QA, Designer, Security, DevRel, Manager, etc.).
    - Scope and deliverables.
    - Acceptance criteria.
+   - Verification gates: relevant tests, typecheck, lint, build, migration dry-run, manual QA, or `N/A: <why>`.
+   - CI/PR readiness note: whether this child must produce a PR, feed another child, or only update docs/plan artifacts.
    - Blocks/blocked-by relationships expressed by phase letter or child title.
-6. **Acceptance** — the bar for the parent issue. How the user knows the whole thing is done.
+6. **Acceptance** — the bar for the parent issue. How the user knows the whole thing is done, including required CI checks green for repo-changing work.
 7. **Risks and mitigations** — short list. Skip if there are none.
 8. **Deferrals** — what is intentionally pushed to follow-up issues, with why.
+
+## Verification planning
+
+- Discover expected quality gates from repository workflows, scripts, and contribution docs during planning, not after implementation.
+- Put the smallest complete gate set on the child issue that owns the code change. Cross-cutting work should name the broader workspace gate expected to match CI.
+- Separate implementation children from QA/review children when manual validation or screenshots are required.
+- Do not plan acceptance as "PR opened". A repo-changing child is complete only when its required local gates are evidenced and the PR is green or an external blocker is explicitly named.
+- If a gate cannot be run in the agent environment because of secrets or external services, plan a blocker/owner instead of treating the gap as optional.
 
 ## Rules of thumb for splitting
 
@@ -80,5 +91,6 @@ When the plan is accepted, see the companion skill for converting accepted plans
 - Plan disguised as a description edit. Use the `plan` document.
 - "Phases A–Z" with no work breakdown inside the phases.
 - Children with descriptions that say "see parent" — they fail at delegation time.
-- Acceptance written as "code review approval". Reviewers need a behavior bar, not a process bar.
+- Acceptance written as "code review approval" or "open PR". Reviewers need a behavior bar and green-gate bar, not a process bar.
+- Verification listed as generic "run tests" without naming the relevant gates or scope.
 - Plans that bury blocker chains in prose. Use explicit blocked-by lines.
