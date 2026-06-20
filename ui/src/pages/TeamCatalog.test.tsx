@@ -151,6 +151,30 @@ function makeTeam(overrides: Partial<CatalogTeam> = {}): CatalogTeam {
   };
 }
 
+function makeQuantumTeam(): CatalogTeam {
+  return makeTeam({
+    id: quantumTeamId,
+    key: "paperclipai/bundled/software-development/quantum-core-banking-finalization",
+    slug: "quantum-core-banking-finalization",
+    name: "Quantum Core Banking Finalization",
+    description: "Quantum finalization swarm.",
+    category: "software-development",
+    counts: {
+      agents: 5,
+      projects: 1,
+      tasks: 5,
+      routines: 1,
+      localSkills: 0,
+      catalogSkills: 4,
+      externalSkillSources: 0,
+    },
+    rootAgentSlugs: [],
+    agentSlugs: ["quantum-cto", "core-banking-coder", "delivery-pipeline-coder", "quantum-qa", "quantum-security"],
+    projectSlugs: ["quantum-finalization"],
+    tags: ["quantum", "core-banking"],
+  });
+}
+
 function makePreview(): CatalogTeamImportPreviewResult {
   return {
     team: makeTeam(),
@@ -303,30 +327,7 @@ describe("TeamCatalog install preview path", () => {
 
   it("opens Quantum accelerator directly into the install preview", async () => {
     currentRoute = quantumTeamId;
-    mockTeamCatalogApi.catalogList.mockResolvedValue([
-      makeTeam(),
-      makeTeam({
-        id: quantumTeamId,
-        key: "paperclipai/bundled/software-development/quantum-core-banking-finalization",
-        slug: "quantum-core-banking-finalization",
-        name: "Quantum Core Banking Finalization",
-        description: "Quantum finalization swarm.",
-        category: "software-development",
-        counts: {
-          agents: 5,
-          projects: 1,
-          tasks: 5,
-          routines: 1,
-          localSkills: 0,
-          catalogSkills: 4,
-          externalSkillSources: 0,
-        },
-        rootAgentSlugs: [],
-        agentSlugs: ["quantum-cto", "core-banking-coder", "delivery-pipeline-coder", "quantum-qa", "quantum-security"],
-        projectSlugs: ["quantum-finalization"],
-        tags: ["quantum", "core-banking"],
-      }),
-    ]);
+    mockTeamCatalogApi.catalogList.mockResolvedValue([makeTeam(), makeQuantumTeam()]);
 
     await renderPage();
 
@@ -344,6 +345,34 @@ describe("TeamCatalog install preview path", () => {
       expect.objectContaining({ collisionStrategy: "rename" }),
     );
     expect(document.body.textContent).toContain("Summary");
+  });
+
+  it("opens an installed Quantum accelerator without starting install preview", async () => {
+    const quantumTeam = makeQuantumTeam();
+    mockTeamCatalogApi.catalogList.mockResolvedValue([makeTeam(), quantumTeam]);
+    mockTeamCatalogApi.installed.mockResolvedValue([
+      {
+        catalogId: quantumTeam.id,
+        catalogKey: quantumTeam.key,
+        present: true,
+        currentContentHash: quantumTeam.contentHash,
+        installedOriginHashes: [quantumTeam.contentHash],
+        agentCount: 5,
+        outOfDate: false,
+      },
+    ]);
+
+    await renderPage();
+
+    const open = findButton("Open Quantum team");
+    expect(open).toBeTruthy();
+    await act(async () => {
+      open!.click();
+    });
+    await flushReact();
+
+    expect(mockNavigate).toHaveBeenCalledWith(teamRoute(quantumTeamId));
+    expect(mockTeamCatalogApi.preview).not.toHaveBeenCalled();
   });
 
   it("requires and submits Step 4 secret values", async () => {
