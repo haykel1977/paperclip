@@ -93,16 +93,17 @@ test('detects raw memory dumps even with bulk exception label', () => {
   assert.ok(result.failures.some(failure => failure.includes('Raw agent memory')));
 });
 
-test('allows deleting raw memory files', () => {
+test('allows deleting raw memory files when the deletion is explicitly bulk-approved', () => {
   const result = checkPrGovernance(basePr({
+    labels: ['bulk-data-approved'],
     files: [file('memory/raw/old-session.json', { status: 'removed', additions: 0, deletions: 10_000, changes: 10_000 })],
   }));
 
-  assert.equal(result.passed, false);
-  assert.ok(result.failures.every(failure => !failure.includes('Raw agent memory')));
+  assert.equal(result.passed, true);
 });
 
 test('blocks auto-committed .ack proof files', () => {
+
   const result = checkPrGovernance(basePr({ files: [file('reviews/payment-change.ack')] }));
   assert.equal(result.passed, false);
   assert.ok(result.failures.some(failure => failure.includes('.ack proof')));

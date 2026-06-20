@@ -16,6 +16,7 @@ import { checkDedupSearch } from './check-pr-dedup-search.mjs';
 import { checkTestCoverage } from './check-pr-test-coverage.mjs';
 import { checkLockfile } from './check-pr-lockfile.mjs';
 import { checkDependencies } from './check-pr-dependencies.mjs';
+import { checkPrGovernance } from './check-pr-governance.mjs';
 
 const COMMENT_SIGNATURE = '— commitperclip';
 
@@ -111,13 +112,15 @@ async function main() {
 
   // Run all quality gates (pure functions run sync, deps check is async)
   const prTitle = pr.title ?? '';
-  const [templateResult, issueResult, dedupResult, testResult, lockfileResult, depsResult] =
+  const prLabels = (pr.labels ?? []).map(label => label.name).filter(Boolean);
+  const [templateResult, issueResult, dedupResult, testResult, lockfileResult, governanceResult, depsResult] =
     await Promise.all([
       Promise.resolve(checkTemplate(prBody)),
       Promise.resolve(checkLinkedIssue(prBody, prTitle)),
       Promise.resolve(checkDedupSearch(prBody, prTitle)),
       Promise.resolve(checkTestCoverage(files, prTitle)),
       Promise.resolve(checkLockfile(files, author, branch)),
+      Promise.resolve(checkPrGovernance({ title: prTitle, labels: prLabels, files, author })),
       checkDependencies(files, GH_TOKEN, GH_REPO, prNumber, pr.base?.ref),
     ]);
 
@@ -127,7 +130,9 @@ async function main() {
     ...dedupResult.failures,
     ...testResult.failures,
     ...lockfileResult.failures,
+    ...governanceResult.failures,
   ];
+
   const informational = depsResult.informational ?? [];
   const allPassed = allFailures.length === 0;
 
