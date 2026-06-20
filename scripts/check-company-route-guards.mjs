@@ -5,10 +5,17 @@ import { pathToFileURL } from "node:url";
 
 export const defaultRoutesDir = "server/src/routes";
 
-const routePattern = /router\.(get|post|patch|put|delete)\s*\(\s*(["'`])([^"'`]*:companyId[^"'`]*)\2/g;
+const routePattern = /router\.(get|post|patch|put|delete)\s*\(\s*(["'`])([^"'`]*)\2/g;
 const directGuardPatterns = [
   /\bassertCompanyAccess\s*\(\s*req\s*,/,
   /\bassertCompanyPermission\s*\(\s*req\s*,/,
+];
+const requestCompanyScopePatterns = [
+  /\breq\.query\.companyId\b/,
+  /\breq\.body\.companyId\b/,
+  /\bbody(?:\.|\?\.)companyId\b/,
+  /\bstringQuery\s*\(\s*req\.query\.companyId\s*,\s*["']companyId["']\s*\)/,
+  /\bstringBody\s*\(\s*req\.body\s*,\s*["']companyId["']\s*\)/,
 ];
 
 function escapeRegExp(value) {
@@ -90,8 +97,8 @@ function hasDirectCompanyGuard(text) {
 function collectCompanyGuardHelpers(text) {
   const helpers = [];
   const patterns = [
-    /(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\([^)]*\bcompanyId\b[^)]*\)\s*\{/g,
-    /(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\([^)]*\bcompanyId\b[^)]*\)\s*=>\s*\{/g,
+    /(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\([^)]*\bcompanyId\b[^)]*\)\s*(?::\s*[^{}]+)?\{/g,
+    /(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\([^)]*\bcompanyId\b[^)]*\)\s*(?::\s*[^=]+)?=>\s*\{/g,
   ];
 
   for (const pattern of patterns) {
@@ -131,6 +138,10 @@ function routeCallsGuardedHelper(routeBlock, helperNames) {
   return helperNames.some((name) => new RegExp(`\\b${escapeRegExp(name)}\\s*\\(`).test(routeBlock));
 }
 
+function routeUsesCompanyScope(route, routeBlock) {
+  return route.includes(":companyId") || requestCompanyScopePatterns.some((pattern) => pattern.test(routeBlock));
+}
+
 export function findUnguardedCompanyRoutesInText(text, filePath = "<input>") {
   const guardedHelpers = collectCompanyGuardHelpers(text);
   const routeMatches = [...text.matchAll(routePattern)];
@@ -140,7 +151,12 @@ export function findUnguardedCompanyRoutesInText(text, filePath = "<input>") {
     const match = routeMatches[index];
     const start = match.index ?? 0;
     const end = index + 1 < routeMatches.length ? routeMatches[index + 1].index ?? text.length : text.length;
+    const route = match[3];
     const routeBlock = text.slice(start, end);
+
+    if (!routeUsesCompanyScope(route, routeBlock)) {
+      continue;
+    }
 
     if (hasDirectCompanyGuard(routeBlock) || routeCallsGuardedHelper(routeBlock, guardedHelpers)) {
       continue;
@@ -150,7 +166,7 @@ export function findUnguardedCompanyRoutesInText(text, filePath = "<input>") {
       filePath,
       lineNumber: lineNumberAt(text, start),
       method: match[1].toUpperCase(),
-      route: match[3],
+      route,
     });
   }
 

@@ -83,6 +83,41 @@ test("does not treat unguarded helpers as company access guards", () => {
   assert.equal(findUnguardedCompanyRoutesInText(text).length, 1);
 });
 
+test("accepts non-path companyId scopes guarded by typed helper", () => {
+  const text = `
+    function assertPluginBridgeScope(req: Request, companyId: unknown): string | undefined {
+      assertCompanyAccess(req, companyId);
+      return companyId;
+    }
+
+    router.post("/plugins/:pluginId/actions/:key", async (req, res) => {
+      const body = req.body;
+      const companyId = assertPluginBridgeScope(req, body.companyId);
+      res.json(await callPlugin(companyId));
+    });
+  `;
+
+  assert.deepEqual(findUnguardedCompanyRoutesInText(text), []);
+});
+
+test("reports non-path companyId scopes without company access guard", () => {
+  const text = `
+    router.get("/cloud-upstreams", async (req, res) => {
+      const companyId = req.query.companyId;
+      res.json(await service.list(companyId));
+    });
+  `;
+
+  assert.deepEqual(findUnguardedCompanyRoutesInText(text, "routes/cloud-upstreams.ts"), [
+    {
+      filePath: "routes/cloud-upstreams.ts",
+      lineNumber: 2,
+      method: "GET",
+      route: "/cloud-upstreams",
+    },
+  ]);
+});
+
 test("runCompanyRouteGuardCheck scans route files", () => {
   withTempDir((dir) => {
     const routesDir = join(dir, "server", "src", "routes");
