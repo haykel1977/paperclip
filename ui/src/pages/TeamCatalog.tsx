@@ -111,6 +111,7 @@ import {
 // Matches design §11 breakpoints. Module-level so stories and the page agree.
 const DESKTOP_MIN = 1024;
 const MOBILE_MAX = 767;
+const QUANTUM_FINALIZATION_TEAM_ID = "paperclipai:bundled:software-development:quantum-core-banking-finalization";
 
 function useMediaQuery(query: string): boolean {
   const [matches, setMatches] = useState(() =>
@@ -2212,6 +2213,10 @@ export function TeamCatalog() {
   });
 
   const teams = catalogQuery.data ?? [];
+  const quantumTeam = useMemo(
+    () => teams.find((team) => team.id === QUANTUM_FINALIZATION_TEAM_ID) ?? null,
+    [teams],
+  );
 
   const categories = useMemo(
     () => Array.from(new Set(teams.map((t) => t.category))).sort(),
@@ -2270,6 +2275,7 @@ export function TeamCatalog() {
     }
     return map;
   }, [installedQuery.data]);
+  const quantumInstalled = quantumTeam ? installedById.get(quantumTeam.id) ?? null : null;
 
   function setFilterParam(key: string, value: string | null) {
     setSearchParams((current) => {
@@ -2400,6 +2406,35 @@ export function TeamCatalog() {
             !isDesktop && selectedTeam && "hidden",
           )}
         >
+          {quantumTeam && (
+            <div className="border-b border-border bg-gradient-to-br from-primary/10 via-background to-background p-3">
+              <div className="rounded-lg border border-primary/20 bg-card/80 p-3 shadow-sm">
+                <div className="flex items-start gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                    <Cpu className="h-4 w-4" />
+                  </span>
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <p className="text-sm font-semibold">Quantum accelerator</p>
+                      <Badge variant="secondary" className="gap-1 text-[10px]">
+                        <ShieldCheck className="h-3 w-3" /> Secure swarm
+                      </Badge>
+                      {quantumInstalled && (
+                        <Badge variant="outline" className="text-[10px]">Installed</Badge>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Deploy CTO + 2 coders + QA + security for Core-Banking-Factory-BIS finalization.
+                    </p>
+                    <Button size="sm" className="mt-1 h-8" onClick={() => navigate(teamRoute(quantumTeam.id))}>
+                      {quantumInstalled ? <Eye className="h-3.5 w-3.5" /> : <Download className="h-3.5 w-3.5" />}
+                      {quantumInstalled ? "Open Quantum team" : "Deploy Quantum swarm"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
           {catalogQuery.isLoading ? (
             <div className="space-y-2 p-3">
               {Array.from({ length: 6 }).map((_, i) => (
