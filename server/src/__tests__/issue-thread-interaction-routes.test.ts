@@ -25,6 +25,12 @@ const mockHeartbeatService = vi.hoisted(() => ({
   wakeup: vi.fn(async () => undefined),
 }));
 
+const mockAccessService = vi.hoisted(() => ({
+  canUser: vi.fn(),
+  decide: vi.fn(),
+  hasPermission: vi.fn(),
+}));
+
 const mockLogActivity = vi.hoisted(() => vi.fn(async () => undefined));
 const mockDbSelectWhere = vi.hoisted(() => vi.fn(() => ({
   then: (onFulfilled: (rows: unknown[]) => unknown, onRejected?: (reason: unknown) => unknown) =>
@@ -53,16 +59,7 @@ function registerModuleMocks() {
     companyService: () => ({
       getById: vi.fn(async () => ({ id: "company-1", attachmentMaxBytes: 10 * 1024 * 1024 })),
     }),
-    accessService: () => ({
-      canUser: vi.fn(async () => true),
-      decide: vi.fn(async (input: { action?: string }) => ({
-        allowed: true,
-        action: input.action,
-        reason: "allow_explicit_grant",
-        explanation: "Allowed by test grant.",
-      })),
-      hasPermission: vi.fn(async () => true),
-    }),
+    accessService: () => mockAccessService,
     agentService: () => ({
       getById: vi.fn(async () => ({ id: CREATED_AGENT_ID, companyId: "company-1", permissions: null })),
       resolveByReference: vi.fn(async (_companyId: string, raw: string) => ({
@@ -174,6 +171,14 @@ describe.sequential("issue thread interaction routes", () => {
     vi.doUnmock("../services/index.js");
     registerModuleMocks();
     vi.clearAllMocks();
+    mockAccessService.canUser.mockResolvedValue(true);
+    mockAccessService.hasPermission.mockResolvedValue(true);
+    mockAccessService.decide.mockImplementation(async (input: { action?: string }) => ({
+      allowed: true,
+      action: input.action,
+      reason: "allow_explicit_grant",
+      explanation: "Allowed by test grant.",
+    }));
     mockIssueService.getById.mockResolvedValue(createIssue());
     mockInteractionService.listForIssue.mockResolvedValue([]);
     mockInteractionService.expireRequestConfirmationsSupersededByHistoricalComments.mockResolvedValue([]);
@@ -381,6 +386,27 @@ describe.sequential("issue thread interaction routes", () => {
         }),
       }),
     );
+  });
+
+  it("denies GET interactions for an issue outside the actor's authorization boundary (403)", async () => {
+    mockInteractionService.listForIssue.mockResolvedValue([
+      { id: "interaction-1", kind: "suggest_tasks", status: "pending" },
+    ]);
+    mockAccessService.decide.mockResolvedValue({
+      allowed: false,
+      action: "issue:read",
+      reason: "deny_outside_boundary",
+      explanation: "Issue is outside this actor's authorization boundary",
+    });
+    const app = await createApp();
+
+    const res = await request(app).get("/api/issues/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/interactions");
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain("authorization boundary");
+    // The guard must run before any interaction data is read or expired.
+    expect(mockInteractionService.listForIssue).not.toHaveBeenCalled();
+    expect(mockInteractionService.expireRequestConfirmationsSupersededByHistoricalComments).not.toHaveBeenCalled();
   });
 
   it("accepts suggested tasks and wakes created assignees plus the current assignee", async () => {

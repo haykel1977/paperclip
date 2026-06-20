@@ -10,6 +10,7 @@ const mockIssueService = vi.hoisted(() => ({
   getByIdentifier: vi.fn(),
   createAttachment: vi.fn(),
   getAttachmentById: vi.fn(),
+  listAttachments: vi.fn(),
   removeAttachment: vi.fn(),
 }));
 const mockCompanyService = vi.hoisted(() => ({
@@ -22,6 +23,12 @@ const mockWorkProductService = vi.hoisted(() => ({
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn(async () => undefined));
+
+const mockAccessService = vi.hoisted(() => ({
+  canUser: vi.fn(),
+  hasPermission: vi.fn(),
+  decide: vi.fn(),
+}));
 
 function registerRouteMocks() {
   vi.doMock("@paperclipai/shared/telemetry", () => ({
@@ -42,10 +49,7 @@ function registerRouteMocks() {
   }));
 
   vi.doMock("../services/index.js", () => ({
-    accessService: () => ({
-      canUser: vi.fn(),
-      hasPermission: vi.fn(),
-    }),
+    accessService: () => mockAccessService,
     agentService: () => ({
       getById: vi.fn(),
     }),
@@ -237,6 +241,23 @@ describe("issue attachment routes", () => {
     mockCompanyService.getById.mockResolvedValue({
       id: "company-1",
       attachmentMaxBytes: 1024 * 1024 * 1024,
+    });
+    // Default: every attachment's parent issue resolves and is readable. Tests
+    // that exercise cross-issue denial override decide/getById explicitly.
+    mockAccessService.decide.mockResolvedValue({
+      allowed: true,
+      reason: "allow_explicit_grant",
+      explanation: "Allowed by test grant.",
+    });
+    mockIssueService.getById.mockResolvedValue({
+      id: "11111111-1111-4111-8111-111111111111",
+      companyId: "company-1",
+      projectId: null,
+      parentId: null,
+      assigneeAgentId: null,
+      assigneeUserId: null,
+      status: "open",
+      identifier: "PAP-1",
     });
     mockIssueService.removeAttachment.mockReset();
     mockWorkProductService.createForIssue.mockReset();
@@ -683,5 +704,115 @@ describe("issue attachment routes", () => {
         },
       }),
     );
+  });
+});
+
+describe("issue attachment object-scoped read authorization", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.doUnmock("@paperclipai/shared/telemetry");
+    vi.doUnmock("../telemetry.js");
+    vi.doUnmock("../services/issues.js");
+    vi.doUnmock("../services/index.js");
+    vi.doUnmock("../services/activity-log.js");
+    vi.doUnmock("../routes/issues.js");
+    vi.doUnmock("../routes/authz.js");
+    vi.doUnmock("../middleware/index.js");
+    registerRouteMocks();
+    vi.clearAllMocks();
+    mockLogActivity.mockResolvedValue(undefined);
+    mockAccessService.decide.mockResolvedValue({
+      allowed: true,
+      reason: "allow_explicit_grant",
+      explanation: "Allowed by test grant.",
+    });
+    mockIssueService.getById.mockResolvedValue({
+      id: "11111111-1111-4111-8111-111111111111",
+      companyId: "company-1",
+      projectId: null,
+      parentId: null,
+      assigneeAgentId: null,
+      assigneeUserId: null,
+      status: "open",
+      identifier: "PAP-1",
+    });
+    mockIssueService.listAttachments.mockResolvedValue([]);
+  });
+
+  it("returns attachment content when the parent issue is within the actor's boundary", async () => {
+    const storage = createStorageService();
+    mockIssueService.getAttachmentById.mockResolvedValue(makeAttachment("image/png", "preview.png"));
+
+    const app = await createApp(storage);
+    const res = await request(app).get("/api/attachments/attachment-1/content");
+
+    expect(res.status).toBe(200);
+    // Authorization is decided against the attachment's *parent issue*, not just company.
+    expect(mockIssueService.getById).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111");
+    expect(mockAccessService.decide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "issue:read",
+        resource: expect.objectContaining({ issueId: "11111111-1111-4111-8111-111111111111" }),
+      }),
+    );
+  });
+
+  it("denies attachment content for a parent issue outside the actor's boundary (403) without streaming bytes", async () => {
+    const storage = createStorageService();
+    mockIssueService.getAttachmentById.mockResolvedValue(makeAttachment("image/png", "preview.png"));
+    mockAccessService.decide.mockResolvedValue({
+      allowed: false,
+      reason: "deny_outside_boundary",
+      explanation: "Issue is outside this actor's authorization boundary",
+    });
+
+    const app = await createApp(storage);
+    const res = await request(app).get("/api/attachments/attachment-1/content");
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain("authorization boundary");
+    expect(storage.getObject).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when the attachment's parent issue cannot be resolved", async () => {
+    const storage = createStorageService();
+    mockIssueService.getAttachmentById.mockResolvedValue(makeAttachment("image/png", "preview.png"));
+    mockIssueService.getById.mockResolvedValue(null);
+
+    const app = await createApp(storage);
+    const res = await request(app).get("/api/attachments/attachment-1/content");
+
+    expect(res.status).toBe(404);
+    expect(storage.getObject).not.toHaveBeenCalled();
+  });
+
+  it("lists attachments when the parent issue is within the actor's boundary", async () => {
+    const storage = createStorageService();
+    mockIssueService.listAttachments.mockResolvedValue([makeAttachment("image/png", "preview.png")]);
+
+    const app = await createApp(storage);
+    const res = await request(app).get("/api/issues/11111111-1111-4111-8111-111111111111/attachments");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(1);
+    expect(mockAccessService.decide).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "issue:read" }),
+    );
+  });
+
+  it("denies the attachment list for an issue outside the actor's boundary (403)", async () => {
+    const storage = createStorageService();
+    mockIssueService.listAttachments.mockResolvedValue([makeAttachment("image/png", "preview.png")]);
+    mockAccessService.decide.mockResolvedValue({
+      allowed: false,
+      reason: "deny_outside_boundary",
+      explanation: "Issue is outside this actor's authorization boundary",
+    });
+
+    const app = await createApp(storage);
+    const res = await request(app).get("/api/issues/11111111-1111-4111-8111-111111111111/attachments");
+
+    expect(res.status).toBe(403);
+    expect(mockIssueService.listAttachments).not.toHaveBeenCalled();
   });
 });
