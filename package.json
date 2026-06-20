@@ -45,9 +45,11 @@
     "test:check-docker-pinned-tools": "node --test scripts/check-docker-pinned-tools.test.mjs",
     "test:check-pnpm-build-allowlist": "node --test scripts/check-pnpm-build-allowlist.test.mjs",
     "test:check-company-route-guards": "node --test scripts/check-company-route-guards.test.mjs",
+    "test:check-pr-governance": "node --test .github/scripts/tests/check-pr-governance.test.mjs",
     "docs:dev": "cd docs && npx mintlify dev",
     "smoke:openclaw-join": "./scripts/smoke/openclaw-join.sh",
     "smoke:openclaw-docker-ui": "./scripts/smoke/openclaw-docker-ui.sh",
+
     "smoke:openclaw-sse-standalone": "./scripts/smoke/openclaw-sse-standalone.sh",
 
     "smoke:terminal-bench-loop-skill": "node scripts/smoke/terminal-bench-loop-skill-smoke.mjs",
