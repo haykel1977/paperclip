@@ -60,12 +60,16 @@ export function NewAgent() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const presetAdapterType = searchParams.get("adapterType");
+  const presetRole = searchParams.get("role");
+  const presetName = searchParams.get("name");
+  const presetTitle = searchParams.get("title");
 
   const [name, setName] = useState("");
   const [title, setTitle] = useState("");
   const [role, setRole] = useState("general");
   const [reportsTo, setReportsTo] = useState<string | null>(null);
   const [configValues, setConfigValues] = useState<CreateConfigValues>(defaultCreateValues);
+
   const [permissions, setPermissions] = useState<Partial<AgentPermissions>>(
     buildPermissionsForTrustPreset(null, "standard"),
   );
@@ -128,6 +132,20 @@ export function NewAgent() {
   }, [isFirstAgent]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    if (presetRole && (AGENT_ROLES as readonly string[]).includes(presetRole)) {
+      setRole(presetRole);
+    }
+    const requestedName = presetName?.trim();
+    if (requestedName) {
+      setName((current) => current || requestedName);
+    }
+    const requestedTitle = presetTitle?.trim();
+    if (requestedTitle) {
+      setTitle((current) => current || requestedTitle);
+    }
+  }, [presetName, presetRole, presetTitle]);
+
+  useEffect(() => {
     const requested = presetAdapterType;
     if (!requested) return;
     if (!isValidAdapterType(requested)) return;
@@ -144,6 +162,7 @@ export function NewAgent() {
       queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(selectedCompanyId!) });
       queryClient.invalidateQueries({ queryKey: queryKeys.approvals.list(selectedCompanyId!) });
       navigate(agentUrl(result.agent));
+
     },
     onError: (error) => {
       setFormError(error instanceof Error ? error.message : "Failed to create agent");

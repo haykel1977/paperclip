@@ -18,8 +18,22 @@ import { relativeTime, cn, agentRouteRef, agentUrl } from "../lib/utils";
 import { PageTabBar } from "../components/PageTabBar";
 import { Tabs } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { AlertTriangle, Bot, Plus, List, GitBranch } from "lucide-react";
-import { AGENT_ROLE_LABELS, type Agent } from "@paperclipai/shared";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  AlertTriangle,
+  Bot,
+  CheckCircle2,
+  ClipboardList,
+  Code2,
+  GitBranch,
+  GitPullRequestArrow,
+  List,
+  Plus,
+  ShieldCheck,
+  Sparkles,
+  TestTube2,
+} from "lucide-react";
+import { AGENT_ROLE_LABELS, type Agent, type AgentRole } from "@paperclipai/shared";
 import {
   resourceMembershipState,
   useResourceMembershipMutation,
@@ -51,10 +65,105 @@ function filterAgents(agents: Agent[], tab: FilterTab): Agent[] {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+type AcceleratorLane = {
+  id: string;
+  role: AgentRole;
+  label: string;
+  createName: string;
+  createTitle: string;
+  objective: string;
+  output: string;
+  promptLine: string;
+  Icon: typeof Sparkles;
+};
+
+const ACCELERATOR_LANES: AcceleratorLane[] = [
+  {
+    id: "triage",
+    role: "issue_triage",
+    label: "Issue Triage",
+    createName: "Issue Triage Agent",
+    createTitle: "Issue intake and prioritization",
+    objective: "Classer le bug, isoler le périmètre et identifier les fichiers suspects.",
+    output: "Résumé, sévérité, hypothèses et questions bloquantes.",
+    promptLine: "Commence par résumer l'issue, qualifier son impact et proposer le périmètre de recherche minimal.",
+    Icon: ClipboardList,
+  },
+  {
+    id: "planner",
+    role: "planner",
+    label: "Planner",
+    createName: "Planning Agent",
+    createTitle: "Implementation planner",
+    objective: "Transformer l'issue en plan court, séquencé et vérifiable.",
+    output: "Plan d'attaque, risques et ordre d'exécution.",
+    promptLine: "Produit un plan en étapes courtes, sans refactor hors-scope, avec critères de validation.",
+    Icon: GitBranch,
+  },
+  {
+    id: "coder",
+    role: "engineer",
+    label: "Coder",
+    createName: "Code Agent",
+    createTitle: "Focused implementation",
+    objective: "Appliquer le patch le plus petit possible en respectant le style existant.",
+    output: "Diff ciblé et notes d'implémentation.",
+    promptLine: "Implémente uniquement le correctif demandé, de façon chirurgicale, sans changements opportunistes.",
+    Icon: Code2,
+  },
+  {
+    id: "reviewer",
+    role: "code_reviewer",
+    label: "Code Reviewer",
+    createName: "Code Review Agent",
+    createTitle: "Patch review and risk detection",
+    objective: "Relire le patch, repérer les régressions et les problèmes de maintenabilité.",
+    output: "Checklist de revue, risques et demandes de correction.",
+    promptLine: "Relis le patch comme reviewer strict: bugs, sécurité, types, accessibilité et régressions potentielles.",
+    Icon: GitPullRequestArrow,
+  },
+  {
+    id: "tester",
+    role: "qa",
+    label: "QA Tester",
+    createName: "QA Agent",
+    createTitle: "Regression testing",
+    objective: "Définir les vérifications et tests nécessaires pour fermer l'issue.",
+    output: "Scénarios de test, cas limites et commande de validation interne.",
+    promptLine: "Déduis les scénarios de test essentiels, les cas limites et les signaux attendus après correction.",
+    Icon: TestTube2,
+  },
+  {
+    id: "security",
+    role: "security",
+    label: "Security",
+    createName: "Security Review Agent",
+    createTitle: "Secure code review",
+    objective: "Contrôler les risques OWASP, secrets, accès et validation des entrées.",
+    output: "Points de sécurité à vérifier avant merge.",
+    promptLine: "Vérifie que le correctif n'introduit pas de XSS, injection, fuite de secret ou contournement d'accès.",
+    Icon: ShieldCheck,
+  },
+];
+
+function agentMatchesLane(agent: Agent, lane: AcceleratorLane): boolean {
+  return agent.role === lane.role && !HIDDEN_AGENT_STATUSES.has(agent.status);
+}
+
+function createAgentPresetHref(lane: AcceleratorLane): string {
+  const params = new URLSearchParams({
+    role: lane.role,
+    name: lane.createName,
+    title: lane.createTitle,
+  });
+  return `/agents/new?${params.toString()}`;
+}
+
 function getConfiguredModel(agent: Agent): string | null {
   const value = agent.adapterConfig?.model;
   if (typeof value !== "string") return null;
   const model = value.trim();
+
   return model.length > 0 ? model : null;
 }
 
@@ -191,6 +300,8 @@ export function Agents() {
           </Button>
         </div>
       </div>
+
+      <IssueAccelerationSquad agents={agents ?? []} />
 
       {filtered.length > 0 && (
         <p className="text-xs text-muted-foreground">{filtered.length} agent{filtered.length !== 1 ? "s" : ""}</p>
@@ -353,6 +464,206 @@ export function Agents() {
   );
 }
 
+function IssueAccelerationSquad({ agents }: { agents: Agent[] }) {
+  const [selectedLaneIds, setSelectedLaneIds] = useState<string[]>([
+    "triage",
+    "planner",
+    "coder",
+    "reviewer",
+    "tester",
+  ]);
+  const [issueDraft, setIssueDraft] = useState("");
+  const [generatedIssue, setGeneratedIssue] = useState<string | null>(null);
+
+  const selectedLanes = useMemo(
+    () => ACCELERATOR_LANES.filter((lane) => selectedLaneIds.includes(lane.id)),
+    [selectedLaneIds],
+  );
+
+  const handoffPrompt = useMemo(() => {
+    if (!generatedIssue) return null;
+    const roleInstructions = selectedLanes
+      .map((lane, index) => `${index + 1}. ${lane.label}: ${lane.promptLine}`)
+      .join("\n");
+    return [
+      "Use only configured sovereign agent models for this workflow.",
+      "Issue to resolve:",
+      generatedIssue,
+      "",
+      "Multi-agent handoff:",
+      roleInstructions,
+      "",
+      "Keep the patch focused, explain verification, and stop if a system boundary requires more information.",
+    ].join("\n");
+  }, [generatedIssue, selectedLanes]);
+
+  const toggleLane = (laneId: string) => {
+    setSelectedLaneIds((current) => {
+      if (current.includes(laneId)) {
+        return current.filter((id) => id !== laneId);
+      }
+      return [...current, laneId];
+    });
+  };
+
+  const generatePlan = () => {
+    const trimmed = issueDraft.trim();
+    if (!trimmed || selectedLanes.length === 0) return;
+    setGeneratedIssue(trimmed);
+  };
+
+  const resetPlan = () => {
+    setIssueDraft("");
+    setGeneratedIssue(null);
+  };
+
+  return (
+    <section className="border border-border bg-card/40">
+      <div className="border-b border-border px-4 py-3">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-primary" />
+              <h2 className="text-sm font-semibold">Issue acceleration squad</h2>
+            </div>
+            <p className="mt-1 max-w-2xl text-xs text-muted-foreground">
+              Compose une équipe d'agents spécialisés pour analyser, coder, reviewer et tester les corrections d'issues plus vite.
+            </p>
+          </div>
+          <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-border px-2 py-1 text-[11px] text-muted-foreground">
+            <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+            Sovereign models only
+          </span>
+        </div>
+      </div>
+
+      <div className="space-y-4 p-4">
+        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+          {ACCELERATOR_LANES.map((lane) => {
+            const enabled = selectedLaneIds.includes(lane.id);
+            const matches = agents.filter((agent) => agentMatchesLane(agent, lane));
+            const Icon = lane.Icon;
+            return (
+              <div
+                key={lane.id}
+                className={cn(
+                  "flex h-full flex-col gap-2 border p-3 text-left transition-colors",
+                  enabled
+                    ? "border-primary/50 bg-primary/5"
+                    : "border-border bg-background hover:bg-accent/30",
+                )}
+              >
+                <button
+                  type="button"
+                  className="flex flex-1 flex-col gap-2 text-left"
+                  onClick={() => toggleLane(lane.id)}
+                  aria-pressed={enabled}
+                >
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <span className="truncate text-sm font-medium">{lane.label}</span>
+                    </span>
+                    <span className="text-[11px] text-muted-foreground">
+                      {matches.length > 0 ? `${matches.length} ready` : "missing"}
+                    </span>
+                  </span>
+                  <span className="text-xs text-muted-foreground">{lane.objective}</span>
+                </button>
+                {matches.length === 0 ? (
+                  <Link
+                    to={createAgentPresetHref(lane)}
+                    className="mt-auto text-xs font-medium text-primary hover:underline"
+                  >
+                    Create {lane.label.toLowerCase()} agent
+                  </Link>
+                ) : (
+                  <span className="mt-auto truncate text-[11px] text-muted-foreground">
+                    Lead: {matches[0].name}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_18rem]">
+          <div className="space-y-2">
+            <label htmlFor="issue-acceleration-draft" className="text-xs font-medium">
+
+              Issue or bug to accelerate
+            </label>
+            <Textarea
+              id="issue-acceleration-draft"
+              value={issueDraft}
+              onChange={(event) => setIssueDraft(event.target.value)}
+              placeholder="Paste the issue summary, failing behavior, logs, or acceptance criteria..."
+              className="min-h-28 resize-y"
+            />
+          </div>
+          <div className="flex flex-col justify-between gap-3 border border-border bg-background p-3">
+            <div>
+              <p className="text-xs font-medium">Selected workflow</p>
+              <ol className="mt-2 space-y-1 text-xs text-muted-foreground">
+                {selectedLanes.length > 0 ? selectedLanes.map((lane) => (
+                  <li key={lane.id}>{lane.label} · {lane.output}</li>
+                )) : (
+                  <li>Select at least one agent role.</li>
+                )}
+              </ol>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                className="flex-1"
+                disabled={!issueDraft.trim() || selectedLanes.length === 0}
+                onClick={generatePlan}
+              >
+                Generate plan
+              </Button>
+              <Button size="sm" variant="outline" onClick={resetPlan}>
+                Clear
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        {generatedIssue && handoffPrompt ? (
+          <div className="grid gap-3 border border-border bg-background p-3 lg:grid-cols-[18rem_minmax(0,1fr)]">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Structured plan</p>
+              <ol className="mt-3 space-y-2 text-sm">
+                {selectedLanes.map((lane, index) => {
+                  const matches = agents.filter((agent) => agentMatchesLane(agent, lane));
+                  return (
+                    <li key={lane.id} className="flex gap-2">
+                      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
+                        {index + 1}
+                      </span>
+                      <span>
+                        <span className="font-medium">{lane.label}</span>
+                        <span className="block text-xs text-muted-foreground">
+                          {matches[0]?.name ?? "Create a matching agent first"} · {lane.output}
+                        </span>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ol>
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Draft handoff prompt</p>
+              <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap border border-border bg-muted/30 p-3 text-xs leading-relaxed text-foreground">
+                {handoffPrompt}
+              </pre>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 function OrgTreeNode({
   node,
   depth,
@@ -369,6 +680,7 @@ function OrgTreeNode({
   tab: FilterTab;
   memberships: ReturnType<typeof useResourceMemberships>["data"];
   membershipMutation: ReturnType<typeof useResourceMembershipMutation>;
+
 }) {
   const agent = agentMap.get(node.id);
   const hasInvalidOrgChain = Boolean(agent && agent.orgChainHealth?.status === "invalid_org_chain");

@@ -50,7 +50,7 @@ describe("dynamic adapter type validation schemas", () => {
     ).toBe("external_adapter");
   });
 
-  it("accepts the security agent role and exposes its UI label", () => {
+  it("accepts specialized issue-resolution agent roles and exposes their UI labels", () => {
     expect(
       createAgentSchema.parse({
         name: "Security Engineer",
@@ -59,6 +59,25 @@ describe("dynamic adapter type validation schemas", () => {
       }).role,
     ).toBe("security");
 
+    expect(
+      createAgentSchema.parse({
+        name: "Patch Reviewer",
+        role: "code_reviewer",
+        adapterType: "codex_local",
+      }).role,
+    ).toBe("code_reviewer");
+
+    expect(
+      createAgentSchema.parse({
+        name: "Issue Triage",
+        role: "issue_triage",
+        adapterType: "codex_local",
+      }).role,
+    ).toBe("issue_triage");
+
     expect(AGENT_ROLE_LABELS.security).toBe("Security");
+    expect(AGENT_ROLE_LABELS.code_reviewer).toBe("Code Reviewer");
+    expect(AGENT_ROLE_LABELS.issue_triage).toBe("Issue Triage");
+    expect(AGENT_ROLE_LABELS.planner).toBe("Planner");
   });
 });
