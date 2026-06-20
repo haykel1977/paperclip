@@ -50,6 +50,27 @@ By default the script is **report-only** and exits `0` even when protections are
 missing, so it is safe to run anywhere. Set `STRICT=1` if you want a missing
 protection to fail the command (e.g. in an audit job).
 
+## Current public API snapshot
+
+Checked on 2026-06-20 using GitHub's unauthenticated public API:
+
+- `haykel1977/paperclip` is a public fork of `paperclipai/paperclip`; its
+  default branch is `master`.
+- `GET /repos/haykel1977/paperclip/branches/master` reports
+  `protected: true` and exposes required status checks with enforcement level
+  `non_admins` and contexts: `verify`, `gitleaks`, `Build`, and
+  `Typecheck + Release Registry`.
+- `GET /repos/haykel1977/paperclip/branches/master/protection` returns
+  `401 Requires authentication` without a token, so the public API snapshot
+  cannot prove pull-request review requirements, admin enforcement, force-push
+  blocking, or deletion blocking. Use the read-only script above with
+  `GH_TOKEN`/`GITHUB_TOKEN` or authenticated `gh` to verify the complete
+  baseline.
+- The upstream `paperclipai/paperclip` also uses `master` and reports
+  `protected: true`, but its public branch summary exposes no required status
+  check contexts (`protection.enabled: false`). Treat that as an upstream
+  visibility gap unless verified with authenticated repository settings access.
+
 ## Apply the settings (manual)
 
 Maintainers apply protection via the GitHub UI, or with the API:
