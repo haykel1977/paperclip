@@ -92,11 +92,29 @@ function formatList(values) {
   return values.length === 0 ? "(empty)" : values.join(", ");
 }
 
-export function checkPnpmBuildAllowlist({ packageJsonText, workspaceText }) {
+export function parseLockfilePackageNames(lockfileText) {
+  const names = new Set();
+  for (const line of lockfileText.split(/\r?\n/)) {
+    const match = line.match(/^\s{2}((?:@[^/\s]+\/)?[^@\s:]+)@[^:\s]+:/);
+    if (match) names.add(match[1]);
+  }
+  return names;
+}
+
+export function checkPnpmBuildAllowlist({ packageJsonText, workspaceText, lockfileText = "" }) {
   const packageManager = parsePackageManager(packageJsonText);
   const onlyBuiltDependencies = parseYamlListSection(workspaceText, "onlyBuiltDependencies");
   const allowBuilds = parseYamlBooleanMapSection(workspaceText, "allowBuilds");
+  const lockfilePackageNames = parseLockfilePackageNames(lockfileText);
   const errors = [];
+
+  if (lockfileText) {
+    for (const dependency of expectedPnpmBuiltDependencies) {
+      if (!lockfilePackageNames.has(dependency)) {
+        errors.push(`pnpm-lock.yaml: expected lifecycle-build dependency ${dependency} is not present in the lockfile.`);
+      }
+    }
+  }
 
   if (packageManager.major < 11) {
     if (allowBuilds.present) {
@@ -144,7 +162,8 @@ export function runPnpmBuildAllowlistCheck({
 } = {}) {
   const packageJsonText = readFileSync(resolve(root, "package.json"), "utf8");
   const workspaceText = readFileSync(resolve(root, "pnpm-workspace.yaml"), "utf8");
-  const errors = checkPnpmBuildAllowlist({ packageJsonText, workspaceText });
+  const lockfileText = readFileSync(resolve(root, "pnpm-lock.yaml"), "utf8");
+  const errors = checkPnpmBuildAllowlist({ packageJsonText, workspaceText, lockfileText });
 
   if (errors.length > 0) {
     for (const message of errors) error(message);
