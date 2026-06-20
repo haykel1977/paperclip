@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from "express";
 import type { Db } from "@paperclipai/db";
 import { updateResourceMembershipSchema } from "@paperclipai/shared";
 import { validate } from "../middleware/validate.js";
-import { getActorInfo } from "./authz.js";
+import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { logActivity, resourceMembershipService } from "../services/index.js";
 
 function requireBoardUserId(req: Request, res: Response): string | null {
@@ -51,6 +51,7 @@ export function resourceMembershipRoutes(db: Db) {
 
   router.get("/companies/:companyId/resource-memberships/me", async (req, res) => {
     const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
     const userId = requireBoardUserId(req, res);
     if (!userId) return;
     res.json(await svc.listForUser(companyId, userId, req.actor));
@@ -61,6 +62,7 @@ export function resourceMembershipRoutes(db: Db) {
     validate(updateResourceMembershipSchema),
     async (req, res) => {
       const companyId = req.params.companyId as string;
+      assertCompanyAccess(req, companyId);
       const projectId = req.params.projectId as string;
       const userId = requireBoardUserId(req, res);
       if (!userId) return;
@@ -91,6 +93,7 @@ export function resourceMembershipRoutes(db: Db) {
     validate(updateResourceMembershipSchema),
     async (req, res) => {
       const companyId = req.params.companyId as string;
+      assertCompanyAccess(req, companyId);
       const agentId = req.params.agentId as string;
       const userId = requireBoardUserId(req, res);
       if (!userId) return;
