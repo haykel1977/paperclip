@@ -4,6 +4,7 @@ import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { IssueRecoveryAction } from "@paperclipai/shared";
 import { ActiveAgentsPanel } from "./ActiveAgentsPanel";
 
 const mockHeartbeatsApi = vi.hoisted(() => ({
@@ -92,7 +93,7 @@ function createIssueRun(index: number, issueId: string) {
   };
 }
 
-function createIssue(id: string, identifier: string, title: string) {
+function createIssue(id: string, identifier: string, title: string, activeRecoveryAction?: IssueRecoveryAction | null) {
   return {
     id,
     companyId: "company-1",
@@ -111,8 +112,41 @@ function createIssue(id: string, identifier: string, title: string) {
     labels: [],
     blockedByIssueIds: [],
     blocksIssueIds: [],
+    activeRecoveryAction: activeRecoveryAction ?? null,
     createdAt: "2026-04-24T12:00:00.000Z",
     updatedAt: "2026-04-24T12:00:00.000Z",
+  };
+}
+
+function createRecoveryAction(overrides: Partial<IssueRecoveryAction> = {}): IssueRecoveryAction {
+  return {
+    id: "recovery-1",
+    companyId: "company-1",
+    sourceIssueId: "issue-1",
+    recoveryIssueId: null,
+    kind: "missing_disposition",
+    status: "active",
+    ownerType: "agent",
+    ownerAgentId: "agent-1",
+    ownerUserId: null,
+    previousOwnerAgentId: "agent-1",
+    returnOwnerAgentId: "agent-1",
+    cause: "missing_disposition",
+    fingerprint: "recovery-fingerprint",
+    evidence: {},
+    nextAction: "Choose and record a valid issue disposition.",
+    wakePolicy: { type: "wake_owner" },
+    monitorPolicy: null,
+    attemptCount: 1,
+    maxAttempts: null,
+    timeoutAt: null,
+    lastAttemptAt: "2026-04-24T12:00:00.000Z",
+    outcome: null,
+    resolutionNote: null,
+    resolvedAt: null,
+    createdAt: "2026-04-24T12:00:00.000Z",
+    updatedAt: "2026-04-24T12:00:00.000Z",
+    ...overrides,
   };
 }
 
@@ -226,6 +260,80 @@ describe("ActiveAgentsPanel", () => {
       );
       expect(issueLink?.textContent).toBe("PAP-3562 - Phase 4B: Implement LLM Wiki distillation UI");
       expect(issueLink?.getAttribute("href")).toBe("/issues/PAP-3562");
+    });
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("shows active recovery work as in progress on live run cards", async () => {
+    mockHeartbeatsApi.liveRunsForCompany.mockResolvedValue([
+      createIssueRun(1, "issue-1"),
+    ]);
+    mockIssuesApi.get.mockResolvedValue(createIssue(
+      "issue-1",
+      "PAP-4100",
+      "Recover missing disposition",
+      createRecoveryAction(),
+    ));
+
+    const root = createRoot(container);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <ActiveAgentsPanel companyId="company-1" />
+        </QueryClientProvider>,
+      );
+    });
+
+    await waitForMicrotaskAssertion(() => {
+      const chip = container.querySelector("[data-testid='active-agent-run-recovery-indicator']");
+      expect(chip?.getAttribute("data-recovery-state")).toBe("in_progress");
+      expect(chip?.textContent).toContain("Recovery in progress");
+    });
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("keeps finished run recovery actions marked as needed", async () => {
+    mockHeartbeatsApi.liveRunsForCompany.mockResolvedValue([
+      {
+        ...createIssueRun(1, "issue-1"),
+        status: "failed",
+        finishedAt: "2026-04-24T12:05:00.000Z",
+      },
+    ]);
+    mockIssuesApi.get.mockResolvedValue(createIssue(
+      "issue-1",
+      "PAP-4100",
+      "Recover missing disposition",
+      createRecoveryAction(),
+    ));
+
+    const root = createRoot(container);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <ActiveAgentsPanel companyId="company-1" />
+        </QueryClientProvider>,
+      );
+    });
+
+    await waitForMicrotaskAssertion(() => {
+      const chip = container.querySelector("[data-testid='active-agent-run-recovery-indicator']");
+      expect(chip?.getAttribute("data-recovery-state")).toBe("needed");
+      expect(chip?.textContent).toContain("Recovery needed");
     });
 
     await act(async () => {
