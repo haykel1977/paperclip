@@ -76,6 +76,12 @@ jobs:
       - name: Test company-scoped route guard check
         run: node --test ./scripts/check-company-route-guards.test.mjs
 
+      - name: Validate issue read route guards
+        run: node ./scripts/check-issue-read-route-guards.mjs
+
+      - name: Test issue read route guard check
+        run: node --test ./scripts/check-issue-read-route-guards.test.mjs
+
       - name: Reject unexpected root-level app artifacts
         run: node ./scripts/check-root-artifacts.mjs
 
