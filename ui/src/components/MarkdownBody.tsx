@@ -75,6 +75,14 @@ function loadMermaid() {
   return mermaidLoaderPromise;
 }
 
+export function sanitizeMermaidSvg(svg: string): string {
+  return svg
+    .replace(/<\s*(script|foreignObject|iframe|object|embed|link)\b[\s\S]*?<\s*\/\s*\1\s*>/gi, "")
+    .replace(/<\s*(script|foreignObject|iframe|object|embed|link)\b[^>]*\/?>/gi, "")
+    .replace(/\s+on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+    .replace(/\s+(href|xlink:href)\s*=\s*(['"])\s*(?:javascript|data):[\s\S]*?\2/gi, "");
+}
+
 const wrapAnywhereStyle: React.CSSProperties = {
   overflowWrap: "anywhere",
   wordBreak: "break-word",
@@ -524,11 +532,12 @@ function MermaidDiagramBlock({ source, darkMode }: { source: string; darkMode: b
         });
         const rendered = await mermaid.render(`paperclip-mermaid-${renderId}`, source);
         if (!active) return;
-        setSvg(rendered.svg);
+        setSvg(sanitizeMermaidSvg(rendered.svg));
       })
       .catch((err) => {
         if (!active) return;
         const message =
+
           err instanceof Error && err.message
             ? err.message
             : "Failed to render Mermaid diagram.";

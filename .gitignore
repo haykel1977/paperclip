@@ -40,11 +40,19 @@ tmp/
 feedback-export-*
 diagnostics/
 
+# Accidental root-level app artifacts. Paperclip app code belongs under ui/, server/, cli/, or packages/.
+/src/
+/go.mod
+/go.sum
+/money.go
+/money_test.go
+
 # Editor / tool temp files
 *.tmp
 .vscode/
 .claude/settings.local.json
 .paperclip-local/
+
 /.idea/
 /.agents/
 

@@ -13,10 +13,11 @@ import {
   buildUserMentionHref,
 } from "@paperclipai/shared";
 import { ThemeProvider } from "../context/ThemeContext";
-import { MarkdownBody } from "./MarkdownBody";
+import { MarkdownBody, sanitizeMermaidSvg } from "./MarkdownBody";
 import { queryKeys } from "../lib/queryKeys";
 
 const mockIssuesApi = vi.hoisted(() => ({
+
   get: vi.fn(),
 }));
 
@@ -78,9 +79,25 @@ function renderMarkdown(
 }
 
 describe("MarkdownBody", () => {
+  it("removes unsafe Mermaid SVG elements, event handlers, and scriptable links", () => {
+    const svg = sanitizeMermaidSvg(
+      '<svg><script>alert(1)</script><foreignObject><iframe src="https://example.com"></iframe></foreignObject><a href="javascript:alert(1)" onclick="steal()">x</a><path onload="steal()" xlink:href="data:text/html,evil" /></svg>',
+    );
+
+    expect(svg).not.toContain("<script");
+    expect(svg).not.toContain("foreignObject");
+    expect(svg).not.toContain("iframe");
+    expect(svg).not.toContain("javascript:");
+    expect(svg).not.toContain("data:text/html");
+    expect(svg).not.toContain("onclick");
+    expect(svg).not.toContain("onload");
+    expect(svg).toContain("<svg>");
+  });
+
   it("renders markdown images without a resolver", () => {
     const html = renderToStaticMarkup(
       <QueryClientProvider client={new QueryClient()}>
+
         <ThemeProvider>
           <MarkdownBody>{"![](/api/attachments/test/content)"}</MarkdownBody>
         </ThemeProvider>
