@@ -28,6 +28,17 @@ const PR_READINESS_FIELDS = [
   'CI status',
 ];
 
+const DISALLOWED_CI_STATUS_CLAIMS = [
+  {
+    pattern: /\bcodeql\b/i,
+    label: 'CodeQL',
+  },
+  {
+    pattern: /\bdraft(?:\s|-)*pr\s+guard\b/i,
+    label: 'draft PR guard',
+  },
+];
+
 function extractSectionContent(body, heading) {
   const idx = body.indexOf(heading);
   if (idx === -1) return null;
@@ -96,6 +107,15 @@ export function checkTemplate(body) {
         const value = readReadinessField(content, field);
         if (isPlaceholderReadinessValue(value)) {
           failures.push(`**PR Readiness Gate** missing value for ${field}`);
+        }
+      }
+
+      const ciStatus = readReadinessField(content, 'CI status');
+      for (const claim of DISALLOWED_CI_STATUS_CLAIMS) {
+        if (claim.pattern.test(ciStatus)) {
+          failures.push(
+            `**PR Readiness Gate** CI status mentions ${claim.label}, which is not a configured required PR check here — cite actual checks or state that CI is pending.`,
+          );
         }
       }
     }

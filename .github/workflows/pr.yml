@@ -70,6 +70,9 @@ jobs:
       - name: Test PR template quality gate
         run: node --test ./.github/scripts/tests/check-pr-template.test.mjs
 
+      - name: Test PR linked-issue quality gate
+        run: node --test ./.github/scripts/tests/check-pr-linked-issue.test.mjs
+
       - name: Validate release package manifest
         run: node ./scripts/release-package-map.mjs check
 

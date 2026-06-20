@@ -4,8 +4,10 @@ import { checkLinkedIssue, hasInlineIssueDescription } from '../check-pr-linked-
 
 // Existing tests with title parameter added (defaults to no prefix, so still required)
 
-test('passes with bare #NNN reference', () => {
-  assert.equal(checkLinkedIssue('This fixes the bug in #123', 'fix: something').passed, true);
+test('fails with bare #NNN reference because it does not close backlog', () => {
+  const result = checkLinkedIssue('This fixes the bug in #123', 'fix: something');
+  assert.equal(result.passed, false);
+  assert.ok(result.failures[0].includes('will not close backlog automatically'));
 });
 
 test('passes with "Fixes #NNN"', () => {
@@ -20,24 +22,28 @@ test('passes with "Resolves #NNN"', () => {
   assert.equal(checkLinkedIssue('Resolves #101', 'fix: something').passed, true);
 });
 
-test('passes with "Refs #NNN"', () => {
-  assert.equal(checkLinkedIssue('Refs #202', 'fix: something').passed, true);
+test('fails with "Refs #NNN" because it does not close backlog', () => {
+  const result = checkLinkedIssue('Refs #202', 'fix: something');
+  assert.equal(result.passed, false);
+  assert.ok(result.failures[0].includes('will not close backlog automatically'));
 });
 
-test('passes with "refs #NNN" (case-insensitive)', () => {
-  assert.equal(checkLinkedIssue('refs #303', 'fix: something').passed, true);
+test('fails with "refs #NNN" (case-insensitive) because it does not close backlog', () => {
+  const result = checkLinkedIssue('refs #303', 'fix: something');
+  assert.equal(result.passed, false);
+  assert.ok(result.failures[0].includes('will not close backlog automatically'));
 });
 
-test('passes with full github.com URL', () => {
+test('fails with full github.com URL without a closing keyword', () => {
   assert.equal(
     checkLinkedIssue('See https://github.com/paperclipai/paperclip/issues/202', 'fix: bug').passed,
-    true
+    false
   );
 });
 
-test('passes with a full github.com URL followed by punctuation', () => {
+test('passes with a closing keyword and full github.com URL followed by punctuation', () => {
   assert.equal(
-    checkLinkedIssue('See (https://github.com/paperclipai/paperclip/issues/202).', 'fix: bug').passed,
+    checkLinkedIssue('Closes https://github.com/paperclipai/paperclip/issues/202.', 'fix: bug').passed,
     true
   );
 });

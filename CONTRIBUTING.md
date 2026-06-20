@@ -66,13 +66,13 @@ If any item is missing, do not ask for review or call the work done. Push the br
 
 We do not gate PRs on a pre-existing issue. Two acceptable paths:
 
-1. **Issue exists** — search the [Issues database](https://github.com/paperclipai/paperclip/issues) for anything this PR addresses and tag each one with `Fixes: #123` / `Closes #123` / `Refs #123` so GitHub auto-links them. If there are **duplicate or closely related issues**, link all of them, not just the one you picked. If there are **related PRs** (prior attempts, dependent work, follow-ups, abandoned predecessors), link those too.
+1. **Issue exists** — search the [Issues database](https://github.com/paperclipai/paperclip/issues) for anything this PR resolves and tag each resolved issue with `Fixes #123`, `Closes #123`, or `Resolves #123` so GitHub closes it automatically. `Refs #123`, bare `#123`, or a pasted issue URL are useful context, but they are not enough for resolved work because they leave backlog items open. If there are **duplicate or closely related issues**, link all of them, not just the one you picked. If there are **related PRs** (prior attempts, dependent work, follow-ups, abandoned predecessors), link those too.
 2. **No issue exists** — describe the problem directly in your PR body, following one of our [issue templates](.github/ISSUE_TEMPLATE/) so a reviewer has the same fields they'd get from a filed issue:
    - **Bug fix:** what happened, expected behavior, steps to reproduce, Paperclip version/commit, deployment mode. See [`bug_report.yml`](.github/ISSUE_TEMPLATE/bug_report.yml).
    - **Feature:** problem/motivation, proposed solution, alternatives considered, roadmap alignment. See [`feature_request.yml`](.github/ISSUE_TEMPLATE/feature_request.yml).
    - **New adapter:** agent or provider, why it's useful, how it's invoked. See [`adapter_request.yml`](.github/ISSUE_TEMPLATE/adapter_request.yml).
 
-Either way, a reviewer should be able to understand the underlying issue without leaving the PR. Commitperclip may check that one of these two paths is satisfied.
+Either way, a reviewer should be able to understand the underlying issue without leaving the PR. Commitperclip checks that one of these two paths is satisfied for non-maintenance PRs.
 
 ### Model Used (Required)
 

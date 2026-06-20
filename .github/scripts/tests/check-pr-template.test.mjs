@@ -120,6 +120,17 @@ test('fails when PR Readiness Gate fields are empty', () => {
   assert.ok(result.failures.some(f => f.includes('CI status')));
 });
 
+test('fails when PR Readiness Gate CI status cites hallucinated checks', () => {
+  const body = VALID_BODY.replace(
+    'CI status: Required checks are green.',
+    'CI status: CodeQL and the draft PR guard are green.',
+  );
+  const result = checkTemplate(body);
+  assert.equal(result.passed, false);
+  assert.ok(result.failures.some(f => f.includes('CodeQL')));
+  assert.ok(result.failures.some(f => f.includes('draft PR guard')));
+});
+
 test('fails when Model Used section is missing', () => {
   const body = VALID_BODY.replace('## Model Used', '## Removed');
   const result = checkTemplate(body);

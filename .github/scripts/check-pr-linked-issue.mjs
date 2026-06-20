@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 /**
  * check-pr-linked-issue.mjs
- * Checks that a PR body either links an existing issue/PR or inlines an
- * issue-template-shaped description. Respects conventional commit prefixes —
- * skips check for docs/chore/build/ci/style/test/revert prefixed PRs.
+ * Checks that a PR body either closes an existing issue or inlines an
+ * issue-template-shaped description. Bare `#123` / `Refs #123` references are
+ * intentionally not enough because they leave resolved backlog items open.
+ * Respects conventional commit prefixes — skips check for
+ * docs/chore/build/ci/style/test/revert prefixed PRs.
  *
  * Exports:
  *   checkLinkedIssue(prBody, prTitle) → { passed, failures }
@@ -11,9 +13,23 @@
  */
 import { fileURLToPath } from 'node:url';
 
-const ISSUE_PATTERNS = [
-  /(?:fixes|closes|resolves|refs)\s+#\d+/i,
-  /(?:^|[\s(])https:\/\/github\.com\/paperclipai\/paperclip\/issues\/\d+(?=$|[\s),:;!?]|[.](?![\w-]))/i,
+const PAPERCLIP_ISSUE_URL_PATTERN = String.raw`https:\/\/github\.com\/paperclipai\/paperclip\/issues\/\d+`;
+const PAPERCLIP_ISSUE_URL_BOUNDARY_PATTERN = String.raw`(?=$|[\s),:;!?]|[.](?![\w-]))`;
+
+const CLOSING_ISSUE_PATTERNS = [
+  /(?:fixes|closes|resolves)\s+#\d+/i,
+  new RegExp(
+    String.raw`(?:fixes|closes|resolves)\s+${PAPERCLIP_ISSUE_URL_PATTERN}${PAPERCLIP_ISSUE_URL_BOUNDARY_PATTERN}`,
+    'i',
+  ),
+];
+
+const ISSUE_REFERENCE_PATTERNS = [
+  /(?:refs|references|see)\s+#\d+/i,
+  new RegExp(
+    String.raw`(?:^|[\s(])${PAPERCLIP_ISSUE_URL_PATTERN}${PAPERCLIP_ISSUE_URL_BOUNDARY_PATTERN}`,
+    'i',
+  ),
   /(?<!\w)#\d+/,
 ];
 
@@ -98,18 +114,21 @@ export function checkLinkedIssue(body, prTitle = '') {
     return { passed: false, failures: ['PR body is empty — please fill out the PR template'] };
   }
 
-  const linked = ISSUE_PATTERNS.some(p => p.test(body));
+  const closingLinked = CLOSING_ISSUE_PATTERNS.some(p => p.test(body));
+  const onlyReferenced = !closingLinked && ISSUE_REFERENCE_PATTERNS.some(p => p.test(body));
   const inlined = hasInlineIssueDescription(body);
-  const passed = linked || inlined;
+  const passed = closingLinked || inlined;
 
   return {
     passed,
     failures: passed ? [] : [
-      'No linked issue or inline issue description found — either tag an existing issue ' +
-      'with `Fixes #NNN` / `Closes #NNN` / `Refs #NNN`, or describe the underlying issue ' +
-      'inline in the PR body following one of our issue templates ' +
-      '(https://github.com/paperclipai/paperclip/tree/master/.github/ISSUE_TEMPLATE). ' +
-      'See CONTRIBUTING.md → "Link Issues or Describe Them In-PR".',
+      onlyReferenced
+        ? 'Issue reference found, but it will not close backlog automatically — use `Fixes #NNN`, `Closes #NNN`, or `Resolves #NNN` when this PR resolves an existing issue, or include an inline issue-template description when it intentionally has no closing issue.'
+        : 'No closing issue link or inline issue description found — either tag an existing issue ' +
+          'with `Fixes #NNN` / `Closes #NNN` / `Resolves #NNN`, or describe the underlying issue ' +
+          'inline in the PR body following one of our issue templates ' +
+          '(https://github.com/paperclipai/paperclip/tree/master/.github/ISSUE_TEMPLATE). ' +
+          'See CONTRIBUTING.md → "Link Issues or Describe Them In-PR".',
     ],
   };
 }
