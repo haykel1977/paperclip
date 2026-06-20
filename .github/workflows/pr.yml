@@ -61,6 +61,12 @@ jobs:
       - name: Test pnpm lifecycle-build allowlist check
         run: node --test ./scripts/check-pnpm-build-allowlist.test.mjs
 
+      - name: Validate company-scoped route guards
+        run: node ./scripts/check-company-route-guards.mjs
+
+      - name: Test company-scoped route guard check
+        run: node --test ./scripts/check-company-route-guards.test.mjs
+
       - name: Reject unexpected root-level app artifacts
         run: node ./scripts/check-root-artifacts.mjs
 
