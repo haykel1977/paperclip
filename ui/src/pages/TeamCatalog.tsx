@@ -2197,6 +2197,7 @@ export function TeamCatalog() {
   );
 
   const [installOpen, setInstallOpen] = useState(false);
+  const [pendingInstallTeamId, setPendingInstallTeamId] = useState<string | null>(null);
   const isDesktop = useMediaQuery(`(min-width: ${DESKTOP_MIN}px)`);
 
   useEffect(() => {
@@ -2237,6 +2238,12 @@ export function TeamCatalog() {
     () => teams.find((t) => t.id === selectedRef || t.key === selectedRef || t.slug === selectedRef) ?? null,
     [teams, selectedRef],
   );
+
+  useEffect(() => {
+    if (!pendingInstallTeamId || selectedTeam?.id !== pendingInstallTeamId) return;
+    setInstallOpen(true);
+    setPendingInstallTeamId(null);
+  }, [pendingInstallTeamId, selectedTeam?.id]);
 
   // Auto-select the first team when none is in the route — desktop only. On
   // narrow viewports the list stands alone until the operator picks a team
@@ -2284,6 +2291,14 @@ export function TeamCatalog() {
       else next.set(key, value);
       return next;
     });
+  }
+
+  function handleQuantumAcceleratorClick() {
+    if (!quantumTeam) return;
+    if (!quantumInstalled) {
+      setPendingInstallTeamId(quantumTeam.id);
+    }
+    navigate(teamRoute(quantumTeam.id));
   }
 
   const anyFilterActive = q !== "" || kindFilter !== "all" || categoryFilter !== "" || riskFilter !== "any";
@@ -2426,7 +2441,7 @@ export function TeamCatalog() {
                     <p className="text-xs text-muted-foreground">
                       Deploy CTO + 2 coders + QA + security for Core-Banking-Factory-BIS finalization.
                     </p>
-                    <Button size="sm" className="mt-1 h-8" onClick={() => navigate(teamRoute(quantumTeam.id))}>
+                    <Button size="sm" className="mt-1 h-8" onClick={handleQuantumAcceleratorClick}>
                       {quantumInstalled ? <Eye className="h-3.5 w-3.5" /> : <Download className="h-3.5 w-3.5" />}
                       {quantumInstalled ? "Open Quantum team" : "Deploy Quantum swarm"}
                     </Button>

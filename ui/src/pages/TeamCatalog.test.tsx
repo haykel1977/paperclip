@@ -27,6 +27,7 @@ const mockAgentsApi = vi.hoisted(() => ({
 const mockPushToast = vi.hoisted(() => vi.fn());
 const mockSetBreadcrumbs = vi.hoisted(() => vi.fn());
 const mockNavigate = vi.hoisted(() => vi.fn());
+const quantumTeamId = "paperclipai:bundled:software-development:quantum-core-banking-finalization";
 
 vi.mock("../api/teamCatalog", () => ({ teamCatalogApi: mockTeamCatalogApi }));
 vi.mock("../api/agents", () => ({ agentsApi: mockAgentsApi }));
@@ -298,6 +299,51 @@ describe("TeamCatalog install preview path", () => {
 
     expect(mockTeamCatalogApi.install).toHaveBeenCalledTimes(1);
     expect(document.body.textContent).toContain("Team installed");
+  });
+
+  it("opens Quantum accelerator directly into the install preview", async () => {
+    currentRoute = quantumTeamId;
+    mockTeamCatalogApi.catalogList.mockResolvedValue([
+      makeTeam(),
+      makeTeam({
+        id: quantumTeamId,
+        key: "paperclipai/bundled/software-development/quantum-core-banking-finalization",
+        slug: "quantum-core-banking-finalization",
+        name: "Quantum Core Banking Finalization",
+        description: "Quantum finalization swarm.",
+        category: "software-development",
+        counts: {
+          agents: 5,
+          projects: 1,
+          tasks: 5,
+          routines: 1,
+          localSkills: 0,
+          catalogSkills: 4,
+          externalSkillSources: 0,
+        },
+        rootAgentSlugs: [],
+        agentSlugs: ["quantum-cto", "core-banking-coder", "delivery-pipeline-coder", "quantum-qa", "quantum-security"],
+        projectSlugs: ["quantum-finalization"],
+        tags: ["quantum", "core-banking"],
+      }),
+    ]);
+
+    await renderPage();
+
+    const deploy = findButton("Deploy Quantum swarm");
+    expect(deploy).toBeTruthy();
+    await act(async () => {
+      deploy!.click();
+    });
+    await flushReact();
+
+    expect(mockNavigate).toHaveBeenCalledWith(teamRoute(quantumTeamId));
+    expect(mockTeamCatalogApi.preview).toHaveBeenCalledWith(
+      "company-1",
+      quantumTeamId,
+      expect.objectContaining({ collisionStrategy: "rename" }),
+    );
+    expect(document.body.textContent).toContain("Summary");
   });
 
   it("requires and submits Step 4 secret values", async () => {
