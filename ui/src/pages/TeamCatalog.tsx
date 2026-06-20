@@ -2434,9 +2434,16 @@ export function TeamCatalog() {
                       <Badge variant="secondary" className="gap-1 text-[10px]">
                         <ShieldCheck className="h-3 w-3" /> Secure swarm
                       </Badge>
-                      {quantumInstalled && (
+                      {quantumInstalled?.outOfDate ? (
+                        <Badge
+                          variant="outline"
+                          className="gap-1 border-amber-500/40 bg-amber-500/10 text-[10px] text-amber-600 dark:text-amber-300"
+                        >
+                          <ChevronUp className="h-3 w-3" /> Update available
+                        </Badge>
+                      ) : quantumInstalled ? (
                         <Badge variant="outline" className="text-[10px]">Installed</Badge>
-                      )}
+                      ) : null}
                     </div>
                     <p className="text-xs text-muted-foreground">
                       Deploy CTO + 2 coders + QA + security for Core-Banking-Factory-BIS finalization.

@@ -364,6 +364,36 @@ describe("TeamCatalog install preview path", () => {
 
     await renderPage();
 
+    expect(document.body.textContent).toContain("Installed");
+    const open = findButton("Open Quantum team");
+    expect(open).toBeTruthy();
+    await act(async () => {
+      open!.click();
+    });
+    await flushReact();
+
+    expect(mockNavigate).toHaveBeenCalledWith(teamRoute(quantumTeamId));
+    expect(mockTeamCatalogApi.preview).not.toHaveBeenCalled();
+  });
+
+  it("shows update status for an out-of-date installed Quantum accelerator", async () => {
+    const quantumTeam = makeQuantumTeam();
+    mockTeamCatalogApi.catalogList.mockResolvedValue([makeTeam(), quantumTeam]);
+    mockTeamCatalogApi.installed.mockResolvedValue([
+      {
+        catalogId: quantumTeam.id,
+        catalogKey: quantumTeam.key,
+        present: true,
+        currentContentHash: quantumTeam.contentHash,
+        installedOriginHashes: ["sha256:previous"],
+        agentCount: 5,
+        outOfDate: true,
+      },
+    ]);
+
+    await renderPage();
+
+    expect(document.body.textContent).toContain("Update available");
     const open = findButton("Open Quantum team");
     expect(open).toBeTruthy();
     await act(async () => {
