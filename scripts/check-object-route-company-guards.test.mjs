@@ -95,6 +95,50 @@ test("reports object routes without company boundary guard", () => {
   ]);
 });
 
+test("ignores object company boundary guards that only appear in comments", () => {
+  const text = `
+    router.get("/projects/:id", async (req, res) => {
+      const project = await svc.getById(req.params.id);
+      // assertCompanyAccess(req, project.companyId);
+      res.json(project);
+    });
+  `;
+
+  assert.deepEqual(findObjectRoutesMissingCompanyBoundaryGuardInText(text, "routes/projects.ts"), [
+    {
+      filePath: "routes/projects.ts",
+      lineNumber: 2,
+      method: "GET",
+      route: "/projects/:id",
+    },
+  ]);
+});
+
+test("ignores guarded helpers that only appear in comments", () => {
+  const text = `
+    async function requireProjectAccess(req, id) {
+      const project = await svc.getById(id);
+      assertCompanyAccess(req, project.companyId);
+      return project;
+    }
+
+    router.get("/projects/:id", async (req, res) => {
+      const project = await svc.getById(req.params.id);
+      // await requireProjectAccess(req, req.params.id);
+      res.json(project);
+    });
+  `;
+
+  assert.deepEqual(findObjectRoutesMissingCompanyBoundaryGuardInText(text, "routes/projects.ts"), [
+    {
+      filePath: "routes/projects.ts",
+      lineNumber: 8,
+      method: "GET",
+      route: "/projects/:id",
+    },
+  ]);
+});
+
 test("ignores company-scoped collection routes", () => {
   const text = `
     router.get("/companies/:companyId/projects", async (req, res) => {

@@ -122,6 +122,26 @@ test("reports issue read routes that only validate company access", () => {
   ]);
 });
 
+test("ignores issue read guards that only appear in comments", () => {
+  const text = `
+    router.get("/issues/:id/comments", async (req, res) => {
+      const issue = await svc.getById(req.params.id);
+      assertCompanyAccess(req, issue.companyId);
+      // if (!(await assertIssueReadAllowed(req, res, issue))) return;
+      res.json(await svc.listComments(issue.id));
+    });
+  `;
+
+  assert.deepEqual(findIssueReadRoutesMissingBoundaryGuardInText(text, "routes/issues.ts"), [
+    {
+      filePath: "routes/issues.ts",
+      lineNumber: 2,
+      method: "GET",
+      route: "/issues/:id/comments",
+    },
+  ]);
+});
+
 test("accepts board-only issue control-plane routes", () => {
   const text = `
     router.get("/issues/:id/tree-control/state", async (req, res) => {

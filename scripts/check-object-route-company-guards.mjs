@@ -106,8 +106,79 @@ function findMatchingBrace(text, openIndex) {
   return -1;
 }
 
+function stripComments(text) {
+  let output = "";
+  let inString = "";
+  let escaped = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+
+    if (inLineComment) {
+      if (char === "\n") {
+        inLineComment = false;
+        output += char;
+      } else {
+        output += " ";
+      }
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (char === "*" && next === "/") {
+        inBlockComment = false;
+        output += "  ";
+        index += 1;
+      } else {
+        output += char === "\n" ? char : " ";
+      }
+      continue;
+    }
+
+    if (inString) {
+      output += char;
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (char === inString) inString = "";
+      continue;
+    }
+
+    if (char === "/" && next === "/") {
+      inLineComment = true;
+      output += "  ";
+      index += 1;
+      continue;
+    }
+
+    if (char === "/" && next === "*") {
+      inBlockComment = true;
+      output += "  ";
+      index += 1;
+      continue;
+    }
+
+    if (char === '"' || char === "'" || char === "`") {
+      inString = char;
+    }
+
+    output += char;
+  }
+
+  return output;
+}
+
 function hasDirectCompanyBoundaryGuard(text) {
-  return directGuardPatterns.some((pattern) => pattern.test(text));
+  const code = stripComments(text);
+  return directGuardPatterns.some((pattern) => pattern.test(code));
 }
 
 function collectGuardedHelpers(text) {
@@ -136,9 +207,10 @@ function collectGuardedHelpers(text) {
     changed = false;
     for (const helper of helpers) {
       if (helper.guarded) continue;
-      const guardedByDirectCall = hasDirectCompanyBoundaryGuard(helper.body);
+      const helperCode = stripComments(helper.body);
+      const guardedByDirectCall = hasDirectCompanyBoundaryGuard(helperCode);
       const guardedByHelper = helpers.some(
-        (other) => other.guarded && new RegExp(`\\b${escapeRegExp(other.name)}\\s*\\(`).test(helper.body),
+        (other) => other.guarded && new RegExp(`\\b${escapeRegExp(other.name)}\\s*\\(`).test(helperCode),
       );
       if (guardedByDirectCall || guardedByHelper) {
         helper.guarded = true;
@@ -151,7 +223,8 @@ function collectGuardedHelpers(text) {
 }
 
 function routeCallsGuardedHelper(routeBlock, helperNames) {
-  return helperNames.some((name) => new RegExp(`\\b${escapeRegExp(name)}\\b`).test(routeBlock));
+  const code = stripComments(routeBlock);
+  return helperNames.some((name) => new RegExp(`\\b${escapeRegExp(name)}\\b`).test(code));
 }
 
 function routeUsesObjectScope(route) {
