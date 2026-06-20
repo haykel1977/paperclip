@@ -194,6 +194,7 @@ export function agentRoutes(
   });
   const recovery = recoveryService(db, { enqueueWakeup: heartbeat.wakeup });
   const issueApprovalsSvc = issueApprovalService(db);
+  const issuesSvc = issueService(db);
   const secretsSvc = secretService(db);
   const instructions = agentInstructionsService();
   const companySkills = companySkillService(db);
@@ -264,6 +265,33 @@ export function agentRoutes(
     if (decision.allowed) return true;
     res.status(403).json({ error: "Issue is outside this actor's authorization boundary" });
     return false;
+  }
+
+  async function assertCompanyRunReadAllowed(req: Request, res: Response, companyId: string) {
+    const decision = await access.decide({
+      actor: req.actor,
+      action: "company_scope:read",
+      resource: { type: "company", companyId },
+    });
+    if (decision.allowed) return true;
+    res.status(403).json({ error: "Heartbeat runs are outside this actor's authorization boundary" });
+    return false;
+  }
+
+  async function assertRunReadAllowed(
+    req: Request,
+    res: Response,
+    run: { companyId: string; contextSnapshot?: unknown; issueId?: string | null },
+  ) {
+    const context = asRecord(run.contextSnapshot);
+    const issueId = asNonEmptyString(run.issueId) ?? (context ? readRunIssueId(context) : null);
+    if (!issueId) return assertCompanyRunReadAllowed(req, res, run.companyId);
+
+    const issue = await issuesSvc.getById(issueId);
+    if (!issue || issue.companyId !== run.companyId) {
+      return assertCompanyRunReadAllowed(req, res, run.companyId);
+    }
+    return assertIssueReadAllowed(req, res, issue);
   }
 
   async function filterAgentsForActor<T extends Record<string, unknown>>(
@@ -3337,6 +3365,7 @@ export function agentRoutes(
   router.get("/companies/:companyId/heartbeat-runs", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
+    if (!(await assertCompanyRunReadAllowed(req, res, companyId))) return;
     const agentId = req.query.agentId as string | undefined;
     const limitParam = req.query.limit as string | undefined;
     const limit = limitParam ? Math.max(1, Math.min(1000, parseInt(limitParam, 10) || 200)) : undefined;
@@ -3347,6 +3376,7 @@ export function agentRoutes(
   router.get("/companies/:companyId/live-runs", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
+    if (!(await assertCompanyRunReadAllowed(req, res, companyId))) return;
 
     // `minCount` is a padding floor for callers that want a minimum number of
     // recent runs to render (e.g. dashboard cards). It must default to 0 so
@@ -3437,6 +3467,7 @@ export function agentRoutes(
       return;
     }
     assertCompanyAccess(req, run.companyId);
+    if (!(await assertRunReadAllowed(req, res, run))) return;
     const retryExhaustedReason = await heartbeat.getRetryExhaustedReason(runId);
     res.json(
       redactCurrentUserValue(
@@ -3514,6 +3545,7 @@ export function agentRoutes(
       return;
     }
     assertCompanyAccess(req, run.companyId);
+    if (!(await assertRunReadAllowed(req, res, run))) return;
 
     const afterSeq = Number(req.query.afterSeq ?? 0);
     const limit = Number(req.query.limit ?? 200);
@@ -3536,6 +3568,7 @@ export function agentRoutes(
       return;
     }
     assertCompanyAccess(req, run.companyId);
+    if (!(await assertRunReadAllowed(req, res, run))) return;
 
     const offset = Number(req.query.offset ?? 0);
     const limitBytes = readRunLogLimitBytes(req.query.limitBytes);
@@ -3556,6 +3589,7 @@ export function agentRoutes(
       return;
     }
     assertCompanyAccess(req, run.companyId);
+    if (!(await assertRunReadAllowed(req, res, run))) return;
 
     const context = asRecord(run.contextSnapshot);
     const executionWorkspaceId = asNonEmptyString(context?.executionWorkspaceId);

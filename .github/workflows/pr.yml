@@ -82,6 +82,12 @@ jobs:
       - name: Test issue read route guard check
         run: node --test ./scripts/check-issue-read-route-guards.test.mjs
 
+      - name: Validate heartbeat run route guards
+        run: node ./scripts/check-heartbeat-run-route-guards.mjs
+
+      - name: Test heartbeat run route guard check
+        run: node --test ./scripts/check-heartbeat-run-route-guards.test.mjs
+
       - name: Reject unexpected root-level app artifacts
         run: node ./scripts/check-root-artifacts.mjs
 
