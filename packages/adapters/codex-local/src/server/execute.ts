@@ -283,14 +283,90 @@ export async function ensureCodexSkillsInjected(
 }
 
 /**
+ * Sacred / operator-gated path prefixes. A dev-test (no-human) delivery whose
+ * diff touches any of these is forced back onto the human gate, because these
+ * surfaces carry the security- and tenancy-critical advisories enumerated in
+ * `.github/scripts/check-pr-security.mjs` (SENSITIVE_PATHS). Keep this list in
+ * sync with that security gate.
+ */
+export const SACRED_PATH_PREFIXES = [
+  "packages/adapters/codex-local/",
+  "server/src/services/workspace-realization.ts",
+  "server/src/routes/execution-workspaces.ts",
+  "server/src/routes/workspace-command-authz.ts",
+  "server/src/routes/agents.ts",
+  "server/src/routes/approvals.ts",
+  "ui/src/components/MarkdownBody.tsx",
+  "server/src/routes/authz.ts",
+  "server/src/routes/companies.ts",
+  "server/src/routes/company-skills.ts",
+  "server/src/services/agent-instructions.ts",
+  ".github/",
+];
+
+/**
+ * Parse changed file paths from `git status --porcelain` output. Handles the
+ * two-char status prefix and rename arrows (`R  old -> new`), returning the
+ * post-rename path. Used to decide whether a diff touches a sacred path.
+ */
+export function parseChangedPathsFromPorcelain(porcelain: string): string[] {
+  const paths: string[] = [];
+  for (const raw of porcelain.split(/\r?\n/)) {
+    if (!raw.trim()) continue;
+    // Porcelain v1: XY<space>path, where XY is the 2-char status code.
+    let pathPart = raw.slice(3).trim();
+    const arrow = pathPart.indexOf(" -> ");
+    if (arrow >= 0) pathPart = pathPart.slice(arrow + 4).trim();
+    // Strip surrounding quotes git adds for paths with special characters.
+    if (pathPart.startsWith('"') && pathPart.endsWith('"')) {
+      pathPart = pathPart.slice(1, -1);
+    }
+    if (pathPart) paths.push(pathPart);
+  }
+  return paths;
+}
+
+/**
+ * Request GitHub native auto-merge for a no-human-lane PR. This is NOT a direct
+ * merge: `gh pr merge --auto` only queues the PR to merge once all required
+ * status checks pass and branch rules are satisfied. Best-effort and non-fatal —
+ * if auto-merge is not enabled on the repo, the PR simply waits for a human.
+ */
+async function requestAutoMerge(
+  runProc: (
+    cmd: string,
+    args: string[],
+    cwd: string,
+    env: Record<string, string>,
+  ) => Promise<{ exitCode: number; stdout: string; stderr: string }>,
+  worktreeCwd: string,
+  env: Record<string, string>,
+  url: string,
+  log: (stream: "stdout" | "stderr", chunk: string) => Promise<void>,
+  ts: () => string,
+): Promise<void> {
+  const am = await runProc("gh", ["pr", "merge", url, "--auto", "--squash"], worktreeCwd, env);
+  if (am.exitCode !== 0) {
+    await log(
+      "stderr",
+      `[delivery ${ts()}] auto-merge request failed (non-fatal; PR will wait): ${am.stderr}\n`,
+    );
+  } else {
+    await log("stdout", `[delivery ${ts()}] native auto-merge requested for ${url}\n`);
+  }
+}
+
+/**
  * executeDeliveryHook — deterministic post-run delivery (commit -> push -> PR).
  *
  * Why: Paperclip had no delivery hook; delivery was fully delegated to the model
  * (qwen3-coder:30b) which edits but does not reliably run the git sequence
  * (investigation C2+C3, 2026-06-08).
  *
- * Doctrine: NO LLM here. Pure git + gh CLI. Never merges (HAS-46 human review by
- * @haykel1977 is mandatory). Idempotent. Reviewer requested best-effort post-create
+ * Doctrine: NO LLM here. Pure git + gh CLI. Never merges directly — the
+ * production lane gates on human review (HAS-46), and the dev-test lane requests
+ * GitHub native auto-merge so the platform merges only after required checks
+ * pass. Idempotent. Reviewer requested best-effort post-create in the gated lane
  * (GitHub forbids self-review; branch protection enforces the human gate).
  */
 export async function executeDeliveryHook(input: {
@@ -312,6 +388,21 @@ export async function executeDeliveryHook(input: {
 }): Promise<{ delivered: boolean; prUrl: string | null; reason: string }> {
   const { worktreeCwd, branch, env, runProc, log } = input;
   const ts = () => new Date().toISOString();
+
+  // Delivery lane (ported from the no-human lane on `main`, PR #7). The default
+  // is the human-gated production lane: PRs carry `human-gate-required`, request
+  // human review, and a human merges. Operators may opt a run into the dev/test
+  // no-human lane with PAPERCLIP_DELIVERY_LANE=dev-test, which drops the
+  // human-gate label, skips the reviewer request, and asks GitHub to auto-merge
+  // once required checks are green. The hook itself NEVER merges: native
+  // auto-merge is GitHub's gate, and it only fires after checks pass.
+  //
+  // Safety override: a dev-test run whose diff touches a sacred / operator-gated
+  // path is forced back onto the human gate regardless of lane. The no-human
+  // lane is for ordinary agent/dependency changes, never for the security- and
+  // tenancy-critical surfaces enumerated in SACRED_PATH_PREFIXES.
+  const lane = (env.PAPERCLIP_DELIVERY_LANE ?? process.env.PAPERCLIP_DELIVERY_LANE ?? "production").trim();
+  const requestedDevTestLane = lane === "dev-test";
 
   const status = await runProc("git", ["status", "--porcelain"], worktreeCwd, env);
   if (status.exitCode !== 0) {
@@ -354,19 +445,56 @@ export async function executeDeliveryHook(input: {
     }
   }
 
+  // Resolve the effective lane. A dev-test run that touches a sacred /
+  // operator-gated path is downgraded to the human gate; the no-human lane only
+  // applies when the entire diff is outside these surfaces.
+  const changedPaths = parseChangedPathsFromPorcelain(status.stdout);
+  const sacredHits = changedPaths.filter((p) => SACRED_PATH_PREFIXES.some((prefix) => p.startsWith(prefix)));
+  const touchesSacred = sacredHits.length > 0;
+  const isDevTestLane = requestedDevTestLane && !touchesSacred;
+  const gateRequired = !isDevTestLane;
+  if (requestedDevTestLane && touchesSacred) {
+    await log(
+      "stderr",
+      `[delivery ${ts()}] dev-test lane requested but diff touches sacred path(s) — forcing human gate: ${sacredHits.join(", ")}\n`,
+    );
+  }
+
+  // Label set is lane-derived. The production/gated lane keeps the historical
+  // human-gate labels; the no-human lane swaps in agent-PR labels and a
+  // prod-gate-required marker is reserved for the gated lane only.
+  const deliveryLabels = gateRequired
+    ? ["factory-proof", "human-gate-required", "prod-gate-required"]
+    : ["factory-proof", "agent-pr", "automated", "truth-first"];
+  // Labels this lane must NOT carry — used to strip stale labels from an existing
+  // PR when its lane is downgraded/upgraded across re-delivery (e.g. a PR first
+  // opened in production then re-delivered in dev-test, or vice versa).
+  const ALL_LANE_LABELS = [
+    "human-gate-required",
+    "prod-gate-required",
+    "agent-pr",
+    "automated",
+    "truth-first",
+  ];
+  const labelsToStripForLane = ALL_LANE_LABELS.filter((l) => !deliveryLabels.includes(l));
+
   const title = `${input.issueIdentifier ?? "FACTORY"}: factory delivery`;
+  const mergePolicyLine = gateRequired
+    ? `HAS-46: human review required — never auto-merge.`
+    : `Lane: dev-test (no-human) — GitHub native auto-merge requested; merges only after required checks pass. The hook never merges directly.`;
   const body = [
     `Paperclip issue: ${input.issueIdentifier ?? "?"} (${input.issueId ?? "?"})`,
     `Run: ${input.runId}`,
     `Model: sovereign (qwen3-coder:30b @ Bifrost CCX43)`,
     `Factory: sovereign delivery hook (deterministic, no LLM)`,
+    `Lane: ${isDevTestLane ? "dev-test" : "production"}${touchesSacred ? " (sacred path → human gate)" : ""}`,
     ``,
     `## Truthfulness Boundary`,
     `This PR is produced by a deterministic delivery hook with no LLM in the delivery`,
     `path. Claims in this body are limited to factory metadata (issue, run, model) that`,
     `the hook can verify; it makes no assertions about the correctness of the diff.`,
     ``,
-    `HAS-46: human review required — never auto-merge.`,
+    mergePolicyLine,
   ].join("\n");
 
   const add = await runProc("git", ["add", "-A"], worktreeCwd, env);
@@ -405,8 +533,12 @@ export async function executeDeliveryHook(input: {
   );
   if (existing.exitCode === 0 && existing.stdout.trim()) {
     const existingUrl = existing.stdout.trim();
-    const labelsRequiredReco = ["factory-proof", "human-gate-required"];
-    let labelsToReconcile: string[] = [];
+    // Reconcile labels to the CURRENT lane. This is not additive-only: when a PR
+    // is re-delivered under a different lane (e.g. production -> dev-test, or a
+    // sacred-path edit forcing dev-test -> human gate), the stale lane labels are
+    // removed and the correct ones added. Only act on labels that actually exist
+    // in the repo (Phase -1) so `gh` does not error on unknown labels.
+    let repoLabels: string[] = [];
     const labelListReco = await runProc(
       "gh",
       ["label", "list", "--repo", input.repo, "--limit", "200", "--json", "name", "--jq", "[.[].name]"],
@@ -415,28 +547,44 @@ export async function executeDeliveryHook(input: {
     );
     if (labelListReco.exitCode === 0) {
       try {
-        const existingLabels: string[] = JSON.parse(labelListReco.stdout || "[]");
-        labelsToReconcile = labelsRequiredReco.filter((l) => existingLabels.includes(l));
+        repoLabels = JSON.parse(labelListReco.stdout || "[]");
       } catch (e) {
         await log("stderr", `[delivery ${ts()}] reco label parse failed: ${(e as Error).message}\n`);
       }
     }
-    if (labelsToReconcile.length > 0) {
+    const addLabels = deliveryLabels.filter((l) => repoLabels.includes(l));
+    const removeLabels = labelsToStripForLane.filter((l) => repoLabels.includes(l));
+    if (addLabels.length > 0 || removeLabels.length > 0) {
       const editArgs = ["pr", "edit", existingUrl];
-      for (const l of labelsToReconcile) editArgs.push("--add-label", l);
+      for (const l of addLabels) editArgs.push("--add-label", l);
+      for (const l of removeLabels) editArgs.push("--remove-label", l);
       const lr = await runProc("gh", editArgs, worktreeCwd, env);
       if (lr.exitCode !== 0) {
         await log("stderr", `[delivery ${ts()}] relabel existing PR failed (non-fatal): ${lr.stderr}\n`);
       }
     } else {
-      await log("stderr", `[delivery ${ts()}] reco skipped (no labels exist in repo, Phase -1 not done?)\n`);
+      await log("stderr", `[delivery ${ts()}] reco skipped (no lane labels exist in repo, Phase -1 not done?)\n`);
+    }
+    if (gateRequired) {
+      // Ensure the human reviewer is present on the gated lane (idempotent).
+      const rev = await runProc("gh", ["pr", "edit", existingUrl, "--add-reviewer", "haykel1977"], worktreeCwd, env);
+      if (rev.exitCode !== 0) {
+        await log("stderr", `[delivery ${ts()}] reco add-reviewer failed (non-fatal): ${rev.stderr}\n`);
+      }
+    } else {
+      // No-human lane: drop the human-gate reviewer left over from a prior
+      // production delivery, then (re)request native auto-merge.
+      const rev = await runProc("gh", ["pr", "edit", existingUrl, "--remove-reviewer", "haykel1977"], worktreeCwd, env);
+      if (rev.exitCode !== 0) {
+        await log("stderr", `[delivery ${ts()}] reco remove-reviewer failed (non-fatal): ${rev.stderr}\n`);
+      }
+      await requestAutoMerge(runProc, worktreeCwd, env, existingUrl, log, ts);
     }
     await log("stdout", `[delivery ${ts()}] PR already exists (idempotent): ${existingUrl}\n`);
     return { delivered: true, prUrl: existingUrl, reason: "pr_exists" };
   }
 
-  // Label pre-flight: only apply labels that exist in the repo (Phase -1).
-  const labelsRequired = ["factory-proof", "human-gate-required"];
+  // Label pre-flight: only apply lane labels that exist in the repo (Phase -1).
   let labelsToApply: string[] = [];
   const labelList = await runProc(
     "gh",
@@ -447,8 +595,8 @@ export async function executeDeliveryHook(input: {
   if (labelList.exitCode === 0) {
     try {
       const existingNames: string[] = JSON.parse(labelList.stdout || "[]");
-      labelsToApply = labelsRequired.filter((l) => existingNames.includes(l));
-      const missing = labelsRequired.filter((l) => !existingNames.includes(l));
+      labelsToApply = deliveryLabels.filter((l) => existingNames.includes(l));
+      const missing = deliveryLabels.filter((l) => !existingNames.includes(l));
       if (missing.length) {
         await log("stderr", `[delivery ${ts()}] labels missing (Phase -1 not done?): ${missing.join(",")}\n`);
       }
@@ -481,11 +629,16 @@ export async function executeDeliveryHook(input: {
     return { delivered: false, prUrl: null, reason: "pr_create_failed" };
   }
   const url = (pr.stdout.match(/https:\/\/github\.com\/\S+\/pull\/\d+/) || [null])[0];
-  if (url) {
+  if (url && gateRequired) {
+    // Production / sacred-path lane keeps the human gate: request review.
     const rev = await runProc("gh", ["pr", "edit", url, "--add-reviewer", "haykel1977"], worktreeCwd, env);
     if (rev.exitCode !== 0) {
       await log("stderr", `[delivery ${ts()}] add-reviewer failed (non-fatal): ${rev.stderr}\n`);
     }
+  } else if (url) {
+    // No-human lane: request GitHub native auto-merge. The hook never merges
+    // directly; GitHub merges only after required checks pass.
+    await requestAutoMerge(runProc, worktreeCwd, env, url, log, ts);
   }
   await log("stdout", `[delivery ${ts()}] PR created: ${url}\n`);
   return { delivered: true, prUrl: url, reason: "created" };
