@@ -55,6 +55,12 @@ jobs:
       - name: Test Docker pinned-tool check
         run: node --test ./scripts/check-docker-pinned-tools.test.mjs
 
+      - name: Validate pnpm lifecycle-build allowlist
+        run: node ./scripts/check-pnpm-build-allowlist.mjs
+
+      - name: Test pnpm lifecycle-build allowlist check
+        run: node --test ./scripts/check-pnpm-build-allowlist.test.mjs
+
       - name: Reject unexpected root-level app artifacts
         run: node ./scripts/check-root-artifacts.mjs
 

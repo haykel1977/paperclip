@@ -13,11 +13,11 @@ packages:
   - ui
   - cli
 
-allowBuilds:
-  # Only allow dependency lifecycle builds for packages currently present in
-  # pnpm-lock.yaml that need native/binary install steps.
-  esbuild: true
-  sharp: true
-  sqlite3: true
+# pnpm 9 reads onlyBuiltDependencies for dependency lifecycle-script approval.
+# Keep this list limited to packages that need native/binary install steps.
+onlyBuiltDependencies:
+  - esbuild
+  - sharp
+  - sqlite3
 
 minimumReleaseAge: 1440
