@@ -1,10 +1,11 @@
-FROM node:lts-trixie-slim
+FROM node:24.11.1-trixie-slim
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     bash \
     ca-certificates \
     curl \
+
     fd-find \
     gh \
     git \

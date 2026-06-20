@@ -41,15 +41,14 @@
     "test:check-no-git-push": "node --test scripts/check-no-git-push.test.mjs",
     "test:check-root-artifacts": "node --test scripts/check-root-artifacts.test.mjs",
     "test:check-docker-pinned-tools": "node --test scripts/check-docker-pinned-tools.test.mjs",
-
     "docs:dev": "cd docs && npx mintlify dev",
     "smoke:openclaw-join": "./scripts/smoke/openclaw-join.sh",
-
     "smoke:openclaw-docker-ui": "./scripts/smoke/openclaw-docker-ui.sh",
     "smoke:openclaw-sse-standalone": "./scripts/smoke/openclaw-sse-standalone.sh",
     "smoke:terminal-bench-loop-skill": "node scripts/smoke/terminal-bench-loop-skill-smoke.mjs",
     "test:release-registry": "node --test scripts/verify-release-registry-state.test.mjs scripts/release-package-map.test.mjs scripts/check-release-package-bootstrap.test.mjs scripts/check-no-git-push.test.mjs",
     "test:e2e": "bash scripts/run-e2e.sh --config tests/e2e/playwright.config.ts",
+
     "test:e2e:headed": "bash scripts/run-e2e.sh --config tests/e2e/playwright.config.ts --headed",
     "test:e2e:multiuser": "bash scripts/run-e2e.sh --config tests/e2e/playwright-multiuser.config.ts",
     "test:e2e:multiuser-authenticated": "bash scripts/run-e2e.sh --config tests/e2e/playwright-multiuser-authenticated.config.ts",
