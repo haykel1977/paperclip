@@ -59,6 +59,50 @@ test("accepts issue read routes guarded by transitive helpers", () => {
   assert.deepEqual(findIssueReadRoutesMissingBoundaryGuardInText(text), []);
 });
 
+test("accepts issue collection routes filtered by a guarded helper", () => {
+  const text = `
+    async function decideIssueRead(req, issue) {
+      return access.decide({
+        actor: req.actor,
+        action: "issue:read",
+        resource: { type: "issue", companyId: issue.companyId, issueId: issue.id },
+      });
+    }
+
+    async function filterIssuesReadableByActor<T extends IssueReadSubject>(req, issues) {
+      const decisions = await Promise.all(
+        issues.map(async (issue) => ((await decideIssueRead(req, issue)).allowed ? issue : null)),
+      );
+      return decisions.filter((issue) => issue !== null);
+    }
+
+    router.get("/agents/me/inbox-lite", async (req, res) => {
+      const rows = await issuesSvc.list(req.actor.companyId, { assigneeAgentId: req.actor.agentId });
+      res.json(await filterIssuesReadableByActor(req, rows));
+    });
+  `;
+
+  assert.deepEqual(findIssueReadRoutesMissingBoundaryGuardInText(text), []);
+});
+
+test("reports agent issue collection routes without issue read filtering", () => {
+  const text = `
+    router.get("/agents/me/inbox/mine", async (req, res) => {
+      const rows = await issuesSvc.list(req.actor.companyId, { touchedByUserId: req.query.userId });
+      res.json(rows);
+    });
+  `;
+
+  assert.deepEqual(findIssueReadRoutesMissingBoundaryGuardInText(text, "routes/agents.ts"), [
+    {
+      filePath: "routes/agents.ts",
+      lineNumber: 2,
+      method: "GET",
+      route: "/agents/me/inbox/mine",
+    },
+  ]);
+});
+
 test("reports issue read routes that only validate company access", () => {
   const text = `
     router.get("/issues/:id/comments", async (req, res) => {

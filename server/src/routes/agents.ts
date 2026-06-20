@@ -228,20 +228,18 @@ export function agentRoutes(
     return false;
   }
 
-  async function assertIssueReadAllowed(
-    req: Request,
-    res: Response,
-    issue: {
-      id: string;
-      companyId: string;
-      projectId: string | null;
-      parentId: string | null;
-      status: string;
-      assigneeAgentId: string | null;
-      assigneeUserId: string | null;
-    },
-  ) {
-    const decision = await access.decide({
+  type IssueReadSubject = {
+    id: string;
+    companyId: string;
+    projectId: string | null;
+    parentId: string | null;
+    status: string;
+    assigneeAgentId: string | null;
+    assigneeUserId: string | null;
+  };
+
+  async function decideIssueRead(req: Request, issue: IssueReadSubject) {
+    return access.decide({
       actor: req.actor,
       action: "issue:read",
       resource: {
@@ -262,9 +260,20 @@ export function agentRoutes(
         assigneeUserId: issue.assigneeUserId,
       },
     });
+  }
+
+  async function assertIssueReadAllowed(req: Request, res: Response, issue: IssueReadSubject) {
+    const decision = await decideIssueRead(req, issue);
     if (decision.allowed) return true;
     res.status(403).json({ error: "Issue is outside this actor's authorization boundary" });
     return false;
+  }
+
+  async function filterIssuesReadableByActor<T extends IssueReadSubject>(req: Request, issues: T[]) {
+    const decisions = await Promise.all(
+      issues.map(async (issue) => ((await decideIssueRead(req, issue)).allowed ? issue : null)),
+    );
+    return decisions.filter((issue): issue is T => issue !== null);
   }
 
   async function assertCompanyRunReadAllowed(req: Request, res: Response, companyId: string) {
@@ -1961,14 +1970,15 @@ export function agentRoutes(
       includeRoutineExecutions: true,
       limit: ISSUE_LIST_DEFAULT_LIMIT,
     });
-    const issueIds = rows.map((issue) => issue.id);
+    const readableRows = await filterIssuesReadableByActor(req, rows);
+    const issueIds = readableRows.map((issue) => issue.id);
     const [dependencyReadiness, recoveryActionByIssue] = await Promise.all([
       issuesSvc.listDependencyReadiness(req.actor.companyId, issueIds),
       recoveryActionsSvc.listActiveForIssues(req.actor.companyId, issueIds),
     ]);
 
     res.json(
-      rows.map((issue) => ({
+      readableRows.map((issue) => ({
         id: issue.id,
         identifier: issue.identifier,
         title: issue.title,
@@ -2002,7 +2012,7 @@ export function agentRoutes(
       limit: ISSUE_LIST_DEFAULT_LIMIT,
     });
 
-    res.json(rows);
+    res.json(await filterIssuesReadableByActor(req, rows));
   });
 
   router.get("/agents/:id", async (req, res) => {

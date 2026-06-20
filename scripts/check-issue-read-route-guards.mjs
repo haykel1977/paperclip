@@ -13,6 +13,7 @@ const issueReadGuardPatterns = [
 ];
 const issueReadRoutePatterns = [
   /\/issues\/:[^/]+/,
+  /\/agents\/me\/inbox(?:-lite|\/mine)$/,
   /\/attachments\/:[^/]+\/content$/,
   /\/work-products\/:[^/]+$/,
 ];
@@ -105,8 +106,8 @@ function hasIssueReadGuard(text) {
 function collectIssueReadGuardHelpers(text) {
   const helpers = [];
   const patterns = [
-    /(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\([^)]*\bissue\b[^)]*\)\s*(?::\s*[^{}]+)?\{/g,
-    /(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\([^)]*\bissue\b[^)]*\)\s*(?::\s*[^=]+)?=>\s*\{/g,
+    /(?:async\s+)?function\s+([A-Za-z_$][\w$]*)(?:<[^>{}]+>)?\s*\([^)]*\bissues?\b[^)]*\)\s*(?::\s*[^{}]+)?\{/g,
+    /(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:<[^>{}]+>\s*)?\([^)]*\bissues?\b[^)]*\)\s*(?::\s*[^=]+)?=>\s*\{/g,
   ];
 
   for (const pattern of patterns) {
