@@ -1,0 +1,5 @@
+schema: paperclip/v1
+agents:
+  quantum-cto:
+    permissions:
+      canCreateAgents: true

@@ -376,6 +376,193 @@
       "contentHash": "sha256:74ddeaeb11805835a4a67fc4530b048ab7f8aa1dc7d2b80acea139a933d158d3"
     },
     {
+      "id": "paperclipai:bundled:software-development:quantum-core-banking-finalization",
+      "key": "paperclipai/bundled/software-development/quantum-core-banking-finalization",
+      "kind": "bundled",
+      "category": "software-development",
+      "slug": "quantum-core-banking-finalization",
+      "name": "Quantum Core Banking Finalization",
+      "description": "Bundled delivery swarm for accelerating finalization of the Beyn-SOLIDUS Core-Banking-Factory-BIS / Quantum program with engineering, QA, and security lanes.",
+      "path": "catalog/bundled/software-development/quantum-core-banking-finalization",
+      "entrypoint": "TEAM.md",
+      "schema": "agentcompanies/v1",
+      "defaultInstall": false,
+      "recommendedForCompanyTypes": [
+        "banking",
+        "fintech",
+        "software"
+      ],
+      "tags": [
+        "quantum",
+        "core-banking",
+        "delivery",
+        "qa",
+        "security"
+      ],
+      "counts": {
+        "agents": 5,
+        "projects": 1,
+        "tasks": 5,
+        "routines": 1,
+        "localSkills": 0,
+        "catalogSkills": 4,
+        "externalSkillSources": 0
+      },
+      "rootAgentSlugs": [
+        "quantum-cto"
+      ],
+      "agentSlugs": [
+        "core-banking-coder",
+        "delivery-pipeline-coder",
+        "quantum-cto",
+        "quantum-qa",
+        "quantum-security"
+      ],
+      "projectSlugs": [
+        "quantum-finalization"
+      ],
+      "requiredSkills": [
+        {
+          "type": "catalog",
+          "ref": "doc-maintenance",
+          "agentSlugs": [
+            "core-banking-coder",
+            "delivery-pipeline-coder",
+            "quantum-cto",
+            "quantum-security"
+          ],
+          "resolved": true,
+          "catalogSkillId": "paperclipai:bundled:docs:doc-maintenance",
+          "catalogSkillKey": "paperclipai/bundled/docs/doc-maintenance"
+        },
+        {
+          "type": "catalog",
+          "ref": "github-pr-workflow",
+          "agentSlugs": [
+            "core-banking-coder",
+            "delivery-pipeline-coder",
+            "quantum-cto",
+            "quantum-security"
+          ],
+          "resolved": true,
+          "catalogSkillId": "paperclipai:bundled:software-development:github-pr-workflow",
+          "catalogSkillKey": "paperclipai/bundled/software-development/github-pr-workflow"
+        },
+        {
+          "type": "catalog",
+          "ref": "qa-acceptance",
+          "agentSlugs": [
+            "quantum-qa",
+            "quantum-security"
+          ],
+          "resolved": true,
+          "catalogSkillId": "paperclipai:bundled:quality:qa-acceptance",
+          "catalogSkillKey": "paperclipai/bundled/quality/qa-acceptance"
+        },
+        {
+          "type": "catalog",
+          "ref": "task-planning",
+          "agentSlugs": [
+            "quantum-cto"
+          ],
+          "resolved": true,
+          "catalogSkillId": "paperclipai:bundled:paperclip-operations:task-planning",
+          "catalogSkillKey": "paperclipai/bundled/paperclip-operations/task-planning"
+        }
+      ],
+      "envInputs": [],
+      "sourceRefs": [],
+      "files": [
+        {
+          "path": "TEAM.md",
+          "kind": "team",
+          "sizeBytes": 2936,
+          "sha256": "22b2739b2e4fd73603751c406b7a6a85a3b0eb0ec2c2376de46beb89c529e27d"
+        },
+        {
+          "path": ".paperclip.yaml",
+          "kind": "extension",
+          "sizeBytes": 89,
+          "sha256": "099d749f9a53847dc0bbd70e0b21679249038eec58a87e291bd281e20a07deb6"
+        },
+        {
+          "path": "agents/core-banking-coder/AGENTS.md",
+          "kind": "agent",
+          "sizeBytes": 1417,
+          "sha256": "6d7b6989ecf6db4028f943be417ec9ff457b8cf3f291e59e7aea41abab22a5a1"
+        },
+        {
+          "path": "agents/delivery-pipeline-coder/AGENTS.md",
+          "kind": "agent",
+          "sizeBytes": 1499,
+          "sha256": "d56cd57d9c02979a6dcad70af09d8fcf2094a627e6364d4c475cf241ae0c1d4c"
+        },
+        {
+          "path": "agents/quantum-cto/AGENTS.md",
+          "kind": "agent",
+          "sizeBytes": 1625,
+          "sha256": "ce2f9076d423767f5af8f007cb7d4a412fbd9f9096aba18ce9f8e789d09dfd00"
+        },
+        {
+          "path": "agents/quantum-qa/AGENTS.md",
+          "kind": "agent",
+          "sizeBytes": 1296,
+          "sha256": "abe58e4a11a917536bc941652e152906807a96daa9b4ecc6edea4e2cd88ffafc"
+        },
+        {
+          "path": "agents/quantum-security/AGENTS.md",
+          "kind": "agent",
+          "sizeBytes": 1543,
+          "sha256": "0b1c92f6ea921573aa86a0754ee788d66e28a49532902218e98e64aee5f57f3e"
+        },
+        {
+          "path": "projects/quantum-finalization/PROJECT.md",
+          "kind": "project",
+          "sizeBytes": 459,
+          "sha256": "8199523390459880997473d6bbdbc82944b4815102dff62b05386f66548c1e72"
+        },
+        {
+          "path": "projects/quantum-finalization/tasks/acceptance-regression-pass/TASK.md",
+          "kind": "task",
+          "sizeBytes": 326,
+          "sha256": "a219e760e8acf8ecbd1182f253076eb40648558d98ba2deb0642c8efe510a691"
+        },
+        {
+          "path": "projects/quantum-finalization/tasks/daily-finalization-sync/TASK.md",
+          "kind": "task",
+          "sizeBytes": 316,
+          "sha256": "aa6cb7595d84cf59e48360c16e459dfe329516b45f74871367aadb4644c6185d"
+        },
+        {
+          "path": "projects/quantum-finalization/tasks/harden-delivery-pipeline/TASK.md",
+          "kind": "task",
+          "sizeBytes": 338,
+          "sha256": "800adab38953ff9be60a0da5f9e684c6b17be53e673779115e90d7ead8908812"
+        },
+        {
+          "path": "projects/quantum-finalization/tasks/map-finalization-backlog/TASK.md",
+          "kind": "task",
+          "sizeBytes": 334,
+          "sha256": "4d573ce0f18238493bb142696939600a704c5054264be33b66f6d64198965c84"
+        },
+        {
+          "path": "projects/quantum-finalization/tasks/security-governance-review/TASK.md",
+          "kind": "task",
+          "sizeBytes": 328,
+          "sha256": "20af67cff1e76ffc01d3377b037b6b7944ba41d7e87768160a7a3c3a1f86031a"
+        },
+        {
+          "path": "projects/quantum-finalization/tasks/stabilize-core-banking-factory/TASK.md",
+          "kind": "task",
+          "sizeBytes": 344,
+          "sha256": "2fa880c1d9b47b4ae9d6d1a9a88a4a36e34076aebc8aef2f912dc6455f7c87aa"
+        }
+      ],
+      "trustLevel": "assets",
+      "compatibility": "compatible",
+      "contentHash": "sha256:b12c9e6122f506b16813b7bca1dbe57361dcfa7f96e840f9c5b2247c8bdb1ac4"
+    },
+    {
       "id": "paperclipai:optional:content:content-machine",
       "key": "paperclipai/optional/content/content-machine",
       "kind": "optional",
