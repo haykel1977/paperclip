@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { executeDeliveryHook } from "./execute.js";
+import {
+  executeDeliveryHook,
+  parseChangedPathsFromPorcelain,
+  SACRED_PATH_PREFIXES,
+} from "./execute.js";
 
 function mkRunProc(seq: Record<string, { exitCode: number; stdout?: string; stderr?: string }>) {
   // Default `git diff HEAD` to a substantive patch so the placeholder-diff gate
@@ -181,5 +185,155 @@ describe("executeDeliveryHook", () => {
     const body = bodyIdx >= 0 ? createCall![bodyIdx + 1] : "";
     expect(body).toContain("Truthfulness Boundary");
     expect(body).toContain("HAS-46");
+  });
+
+  // ── No-human lane (dev-test) invariants ─────────────────────────────────────
+
+  // Records every gh/git invocation so lane behavior can be asserted. By default
+  // a clean (non-sacred) modification with no pre-existing PR and all lane labels
+  // present in the repo.
+  function laneRunProc(opts: {
+    status?: string;
+    existingPrUrl?: string;
+    repoLabels?: string[];
+    createUrl?: string;
+  } = {}) {
+    const {
+      status = " M docs/readme.md\n",
+      existingPrUrl = "",
+      repoLabels = [
+        "factory-proof",
+        "human-gate-required",
+        "prod-gate-required",
+        "agent-pr",
+        "automated",
+        "truth-first",
+      ],
+      createUrl = "https://github.com/Beyn-SOLIDUS/quantum/pull/100\n",
+    } = opts;
+    const calls: string[][] = [];
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: status, stderr: "" };
+      if (args[0] === "diff") return { exitCode: 0, stdout: "diff --git a/f b/f\n+x\n", stderr: "" };
+      if (key === "gh pr list") return { exitCode: 0, stdout: existingPrUrl, stderr: "" };
+      if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(repoLabels), stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: createUrl, stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    return { runProc, calls };
+  }
+
+  const findCreate = (calls: string[][]) =>
+    calls.find((c) => c[0] === "gh" && c[1] === "pr" && c[2] === "create");
+  const bodyOf = (createCall: string[] | undefined) => {
+    if (!createCall) return "";
+    const i = createCall.indexOf("--body");
+    return i >= 0 ? createCall[i + 1] : "";
+  };
+
+  it("T10: dev-test lane (non-sacred) -> agent labels, no human-gate, no prod-gate, no reviewer, auto-merge requested", async () => {
+    const { runProc, calls } = laneRunProc();
+    const r = await executeDeliveryHook({ ...base, env: { PAPERCLIP_DELIVERY_LANE: "dev-test" }, runProc } as any);
+    expect(r.reason).toBe("created");
+    const create = findCreate(calls)!;
+    expect(create).toContain("factory-proof");
+    expect(create).toContain("agent-pr");
+    expect(create).toContain("automated");
+    expect(create).toContain("truth-first");
+    // Baseline no-human lane invariants:
+    expect(create).not.toContain("human-gate-required");
+    expect(create).not.toContain("prod-gate-required");
+    // Non-draft: the hook never creates a draft PR.
+    expect(create).not.toContain("--draft");
+    // No reviewer request in the no-human lane.
+    expect(calls.find((c) => c.includes("--add-reviewer"))).toBeUndefined();
+    // Native auto-merge requested (never a direct merge).
+    const am = calls.find((c) => c[0] === "gh" && c[1] === "pr" && c[2] === "merge");
+    expect(am).toContain("--auto");
+    expect(bodyOf(create)).toContain("dev-test");
+  });
+
+  it("T11: production lane (default) -> human-gate + prod-gate labels, reviewer requested, no auto-merge", async () => {
+    const { runProc, calls } = laneRunProc();
+    const r = await executeDeliveryHook({ ...base, runProc } as any);
+    expect(r.reason).toBe("created");
+    const create = findCreate(calls)!;
+    expect(create).toContain("human-gate-required");
+    expect(create).toContain("prod-gate-required");
+    expect(create).not.toContain("agent-pr");
+    expect(calls.find((c) => c.includes("--add-reviewer"))).toContain("haykel1977");
+    expect(calls.find((c) => c[0] === "gh" && c[1] === "pr" && c[2] === "merge")).toBeUndefined();
+    expect(bodyOf(create)).toContain("HAS-46");
+  });
+
+  it("T12: dev-test lane but diff touches a sacred path -> forced human gate (labels + reviewer, no auto-merge)", async () => {
+    const { runProc, calls } = laneRunProc({
+      status: " M server/src/routes/agents.ts\n",
+    });
+    const r = await executeDeliveryHook({ ...base, env: { PAPERCLIP_DELIVERY_LANE: "dev-test" }, runProc } as any);
+    expect(r.reason).toBe("created");
+    const create = findCreate(calls)!;
+    expect(create).toContain("human-gate-required");
+    expect(create).toContain("prod-gate-required");
+    expect(create).not.toContain("agent-pr");
+    expect(calls.find((c) => c.includes("--add-reviewer"))).toContain("haykel1977");
+    expect(calls.find((c) => c[0] === "gh" && c[1] === "pr" && c[2] === "merge")).toBeUndefined();
+    expect(bodyOf(create)).toContain("sacred path");
+  });
+
+  it("T13: dev-test reconcile of an existing PR strips stale human-gate labels, removes reviewer, requests auto-merge", async () => {
+    const { runProc, calls } = laneRunProc({
+      existingPrUrl: "https://github.com/Beyn-SOLIDUS/quantum/pull/55\n",
+    });
+    const r = await executeDeliveryHook({ ...base, env: { PAPERCLIP_DELIVERY_LANE: "dev-test" }, runProc } as any);
+    expect(r.reason).toBe("pr_exists");
+    const edit = calls.find((c) => c[0] === "gh" && c[1] === "pr" && c[2] === "edit" && c.includes("--add-label"));
+    expect(edit).toBeDefined();
+    // Stale production labels removed, current lane labels added.
+    expect(edit).toContain("--remove-label");
+    const removeIdxs = edit!.reduce<string[]>((acc, v, i) => (v === "--remove-label" ? [...acc, edit![i + 1]] : acc), []);
+    expect(removeIdxs).toContain("human-gate-required");
+    expect(removeIdxs).toContain("prod-gate-required");
+    const addIdxs = edit!.reduce<string[]>((acc, v, i) => (v === "--add-label" ? [...acc, edit![i + 1]] : acc), []);
+    expect(addIdxs).toContain("agent-pr");
+    // Human reviewer removed on downgrade.
+    expect(calls.find((c) => c.includes("--remove-reviewer"))).toContain("haykel1977");
+    // Auto-merge (re)requested.
+    expect(calls.find((c) => c[0] === "gh" && c[1] === "pr" && c[2] === "merge")).toContain("--auto");
+  });
+
+  it("T14: production reconcile of an existing PR strips stale dev-test labels and ensures reviewer", async () => {
+    const { runProc, calls } = laneRunProc({
+      existingPrUrl: "https://github.com/Beyn-SOLIDUS/quantum/pull/56\n",
+    });
+    const r = await executeDeliveryHook({ ...base, runProc } as any);
+    expect(r.reason).toBe("pr_exists");
+    const edit = calls.find((c) => c[0] === "gh" && c[1] === "pr" && c[2] === "edit" && c.includes("--add-label"));
+    const removeIdxs = edit!.reduce<string[]>((acc, v, i) => (v === "--remove-label" ? [...acc, edit![i + 1]] : acc), []);
+    expect(removeIdxs).toContain("agent-pr");
+    expect(removeIdxs).toContain("automated");
+    const addIdxs = edit!.reduce<string[]>((acc, v, i) => (v === "--add-label" ? [...acc, edit![i + 1]] : acc), []);
+    expect(addIdxs).toContain("human-gate-required");
+    expect(calls.find((c) => c.includes("--add-reviewer"))).toContain("haykel1977");
+    expect(calls.find((c) => c[0] === "gh" && c[1] === "pr" && c[2] === "merge")).toBeUndefined();
+  });
+
+  it("T15: parseChangedPathsFromPorcelain handles modifications, untracked, and renames", () => {
+    const porcelain = [
+      " M docs/readme.md",
+      "?? src/new.ts",
+      "R  old/path.ts -> server/src/routes/agents.ts",
+      'A  "ui/src/components/Md Body.tsx"',
+      "",
+    ].join("\n");
+    const paths = parseChangedPathsFromPorcelain(porcelain);
+    expect(paths).toContain("docs/readme.md");
+    expect(paths).toContain("src/new.ts");
+    expect(paths).toContain("server/src/routes/agents.ts");
+    expect(paths).toContain("ui/src/components/Md Body.tsx");
+    // Sacred prefixes pick up the renamed-to sensitive route.
+    expect(SACRED_PATH_PREFIXES.some((p) => "server/src/routes/agents.ts".startsWith(p))).toBe(true);
   });
 });
