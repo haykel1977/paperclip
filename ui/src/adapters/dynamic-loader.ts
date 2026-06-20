@@ -39,11 +39,16 @@ interface DynamicParserModule {
   createStdoutParser?: StdoutParserFactory;
 }
 
+interface PendingParseRequest {
+  resolve: (entries: TranscriptEntry[]) => void;
+  timeout: ReturnType<typeof setTimeout>;
+}
+
 interface SandboxedParser {
   worker: Worker;
   ready: boolean;
   nextId: number;
-  pendingResolves: Map<number, (entries: TranscriptEntry[]) => void>;
+  pendingResolves: Map<number, PendingParseRequest>;
 }
 
 // ── State ───────────────────────────────────────────────────────────────────
@@ -84,6 +89,12 @@ function notifyResultReady(): void {
   resultNotifier?.();
 }
 
+const MAX_PARSER_SOURCE_LENGTH = 1_000_000;
+const PARSER_WORKER_INIT_TIMEOUT_MS = 5_000;
+const PARSER_WORKER_PARSE_TIMEOUT_MS = 1_000;
+const MAX_PENDING_PARSE_REQUESTS = 200;
+const MAX_PARSE_CACHE_ENTRIES = 1_000;
+const MAX_WORKER_LINE_LENGTH = 100_000;
 const MAX_WORKER_ENTRIES_PER_LINE = 50;
 const MAX_WORKER_STRING_LENGTH = 20_000;
 
@@ -201,16 +212,26 @@ function sanitizeWorkerEntries(entries: unknown): TranscriptEntry[] {
  * Returns a Promise that resolves with the TranscriptEntry[] from the worker.
  */
 function parseLineAsync(sandbox: SandboxedParser, line: string, ts: string): Promise<TranscriptEntry[]> {
+  if (line.length > MAX_WORKER_LINE_LENGTH || sandbox.pendingResolves.size >= MAX_PENDING_PARSE_REQUESTS) {
+    return Promise.resolve([]);
+  }
+
   return new Promise((resolve) => {
     const id = nextRequestId(sandbox);
-    sandbox.pendingResolves.set(id, resolve);
+    const timeout = setTimeout(() => {
+      sandbox.pendingResolves.delete(id);
+      resolve([]);
+    }, PARSER_WORKER_PARSE_TIMEOUT_MS);
+
+    sandbox.pendingResolves.set(id, { resolve, timeout });
     sendToWorker(sandbox, { type: "parse", id, line, ts });
   });
 }
 
 function drainPendingRequests(sandbox: SandboxedParser): void {
-  for (const resolver of sandbox.pendingResolves.values()) {
-    resolver([]);
+  for (const pending of sandbox.pendingResolves.values()) {
+    clearTimeout(pending.timeout);
+    pending.resolve([]);
   }
   sandbox.pendingResolves.clear();
 }
@@ -228,12 +249,11 @@ function initSandboxedWorker(source: string): Promise<SandboxedParser> {
       pendingResolves: new Map(),
     };
 
-    // Timeout if the worker doesn't respond within 5s
     const timeout = setTimeout(() => {
       drainPendingRequests(sandbox);
       worker.terminate();
       reject(new Error("Parser worker init timed out"));
-    }, 5000);
+    }, PARSER_WORKER_INIT_TIMEOUT_MS);
 
     worker.onmessage = (e: MessageEvent<SandboxResponse>) => {
       const msg = e.data;
@@ -246,15 +266,17 @@ function initSandboxedWorker(source: string): Promise<SandboxedParser> {
         worker.onmessage = (ev: MessageEvent<SandboxResponse>) => {
           const resp = ev.data;
           if (resp.type === "result") {
-            const resolver = sandbox.pendingResolves.get(resp.id);
-            if (resolver) {
+            const pending = sandbox.pendingResolves.get(resp.id);
+            if (pending) {
               sandbox.pendingResolves.delete(resp.id);
-              resolver(sanitizeWorkerEntries(resp.entries));
+              clearTimeout(pending.timeout);
+              pending.resolve(sanitizeWorkerEntries(resp.entries));
             }
           } else if (resp.type === "error") {
             console.error("[adapter-ui-loader] Worker reported error:", resp.message);
             drainPendingRequests(sandbox);
           }
+
         };
 
         resolve(sandbox);
@@ -299,6 +321,15 @@ function buildParserModule(sandbox: SandboxedParser): DynamicParserModule {
   const parseCache = new Map<string, TranscriptEntry[]>();
   const pendingParseKeys = new Set<string>();
 
+  function rememberParseResult(key: string, entries: TranscriptEntry[]): void {
+    parseCache.set(key, entries);
+    if (parseCache.size > MAX_PARSE_CACHE_ENTRIES) {
+      const oldestKey = parseCache.keys().next().value as string | undefined;
+      if (oldestKey !== undefined) parseCache.delete(oldestKey);
+    }
+
+  }
+
   const parseStdoutLine: StdoutLineParser = (line: string, ts: string) => {
     const key = lineCacheKey(line, ts);
     const cached = parseCache.get(key);
@@ -308,7 +339,7 @@ function buildParserModule(sandbox: SandboxedParser): DynamicParserModule {
       pendingParseKeys.add(key);
       parseLineAsync(sandbox, line, ts).then((entries) => {
         pendingParseKeys.delete(key);
-        parseCache.set(key, entries);
+        rememberParseResult(key, entries);
         notifyResultReady();
       });
     }
@@ -348,9 +379,13 @@ export async function loadDynamicParser(adapterType: string): Promise<DynamicPar
       }
 
       const source = await response.text();
+      if (source.length > MAX_PARSER_SOURCE_LENGTH) {
+        throw new Error(`UI parser source exceeds ${MAX_PARSER_SOURCE_LENGTH} bytes`);
+      }
 
       // Initialise the sandboxed worker with the parser source.
       const sandbox = await initSandboxedWorker(source);
+
       sandboxedParsers.set(adapterType, sandbox);
 
       const parserModule = buildParserModule(sandbox);

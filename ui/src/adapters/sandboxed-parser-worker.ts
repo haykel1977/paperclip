@@ -81,8 +81,16 @@ self.MessagePort = _undefined;
 self.indexedDB = _undefined;
 self.IDBFactory = _undefined;
 
+const MAX_SOURCE_LENGTH = 1_000_000;
+const MAX_ENTRIES_PER_PARSE = 50;
+
 function hasDynamicImport(source) {
   return /(^|[^A-Za-z0-9_$\.])import\s*\(/.test(source);
+}
+
+function normalizeParserEntries(entries) {
+  if (!Array.isArray(entries)) return [];
+  return entries.slice(0, MAX_ENTRIES_PER_PARSE);
 }
 
 // ── 2. Parser state ─────────────────────────────────────────────────────────
@@ -98,13 +106,19 @@ self.onmessage = function (e) {
 
   if (msg.type === "init") {
     try {
-      if (hasDynamicImport(String(msg.source || ""))) {
+      const source = String(msg.source || "");
+      if (source.length > MAX_SOURCE_LENGTH) {
+        self.postMessage({ type: "error", message: "Parser source exceeds maximum allowed size" });
+        return;
+      }
+      if (hasDynamicImport(source)) {
         self.postMessage({ type: "error", message: "Parser source must be self-contained and cannot use dynamic import()" });
         return;
       }
 
       // Evaluate the parser source in a constrained scope.
       // We use a Function constructor to avoid giving the source access to
+
       // our local variables.  The only value we inject is a module-like
       // \`exports\` object so both CJS-style and ESM-compiled code works.
       //
@@ -122,9 +136,10 @@ self.onmessage = function (e) {
         "fetch", "XMLHttpRequest", "WebSocket", "EventSource", "importScripts",
         "Worker", "SharedWorker", "MessageChannel", "MessagePort", "eval", "Function",
         // Wrap in a block to prevent hoisted declarations from leaking.
-        "\\"use strict\\";\\n{\\n" + msg.source + "\\n}"
+        "\\"use strict\\";\\n{\\n" + source + "\\n}"
       );
       factory(
+
         exports, module, _undefined, _undefined, _undefined, _undefined,
         _undefined, _undefined, _undefined, _undefined, _undefined,
         _undefined, _undefined, _undefined, _undefined, _undefined, _undefined,
@@ -162,8 +177,8 @@ self.onmessage = function (e) {
 
   if (msg.type === "parse") {
     try {
-      const entries = parseStdoutLine ? parseStdoutLine(msg.line, msg.ts) : [];
-      self.postMessage({ type: "result", id: msg.id, entries: entries || [] });
+      const entries = parseStdoutLine ? parseStdoutLine(String(msg.line || ""), String(msg.ts || "")) : [];
+      self.postMessage({ type: "result", id: msg.id, entries: normalizeParserEntries(entries) });
     } catch (err) {
       self.postMessage({ type: "result", id: msg.id, entries: [] });
     }

@@ -33,10 +33,20 @@ describe("sandboxed parser worker bootstrap", () => {
   });
 
   it("evaluates parser source in strict mode", () => {
-    expect(getWorkerBootstrapSource()).toContain('\\"use strict\\";\\n{\\n" + msg.source');
+    expect(getWorkerBootstrapSource()).toContain('\\"use strict\\";\\n{\\n" + source');
+  });
+
+  it("limits parser source and parse result size inside the worker", () => {
+    const source = getWorkerBootstrapSource();
+
+    expect(source).toContain("MAX_SOURCE_LENGTH");
+    expect(source).toContain("Parser source exceeds maximum allowed size");
+    expect(source).toContain("MAX_ENTRIES_PER_PARSE");
+    expect(source).toContain("normalizeParserEntries");
   });
 
   it("does not include the unused parse_batch protocol branch", () => {
     expect(getWorkerBootstrapSource()).not.toContain("parse_batch");
   });
+
 });

@@ -17,8 +17,13 @@ RUN apt-get update \
 
 RUN ln -sf /usr/bin/fdfind /usr/local/bin/fd
 
+ARG CLAUDE_CODE_VERSION=2.1.183
+ARG CODEX_VERSION=0.141.0
+
 RUN corepack enable \
-  && npm install --global --omit=dev @anthropic-ai/claude-code@latest @openai/codex@latest
+  && npm install --global --omit=dev \
+    "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+    "@openai/codex@${CODEX_VERSION}"
 
 RUN useradd --create-home --shell /bin/bash reviewer
 

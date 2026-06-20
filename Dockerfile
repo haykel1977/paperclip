@@ -56,9 +56,15 @@ RUN test -f server/dist/index.js || (echo "ERROR: server build output missing" &
 FROM base AS production
 ARG USER_UID=1000
 ARG USER_GID=1000
+ARG CLAUDE_CODE_VERSION=2.1.183
+ARG CODEX_VERSION=0.141.0
+ARG OPENCODE_AI_VERSION=1.17.7
 WORKDIR /app
 COPY --chown=node:node --from=build /app /app
-RUN npm install --global --omit=dev @anthropic-ai/claude-code@latest @openai/codex@latest opencode-ai \
+RUN npm install --global --omit=dev \
+    "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+    "@openai/codex@${CODEX_VERSION}" \
+    "opencode-ai@${OPENCODE_AI_VERSION}" \
   && apt-get update \
   && apt-get install -y --no-install-recommends openssh-client jq \
   && rm -rf /var/lib/apt/lists/* \

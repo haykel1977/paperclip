@@ -49,6 +49,12 @@ jobs:
       - name: Validate Dockerfile deps stage
         run: node ./scripts/check-docker-deps-stage.mjs
 
+      - name: Reject unexpected root-level app artifacts
+        run: node ./scripts/check-root-artifacts.mjs
+
+      - name: Test root artifact check
+        run: node --test ./scripts/check-root-artifacts.test.mjs
+
       - name: Reject git push in adapter/runtime code
         run: node ./scripts/check-no-git-push.mjs
 

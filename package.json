@@ -36,9 +36,12 @@
     "release:bootstrap-package": "node scripts/bootstrap-npm-package.mjs",
     "check:tokens": "node scripts/check-forbidden-tokens.mjs",
     "check:no-git-push": "node scripts/check-no-git-push.mjs",
+    "check:root-artifacts": "node scripts/check-root-artifacts.mjs",
     "test:check-no-git-push": "node --test scripts/check-no-git-push.test.mjs",
+    "test:check-root-artifacts": "node --test scripts/check-root-artifacts.test.mjs",
     "docs:dev": "cd docs && npx mintlify dev",
     "smoke:openclaw-join": "./scripts/smoke/openclaw-join.sh",
+
     "smoke:openclaw-docker-ui": "./scripts/smoke/openclaw-docker-ui.sh",
     "smoke:openclaw-sse-standalone": "./scripts/smoke/openclaw-sse-standalone.sh",
     "smoke:terminal-bench-loop-skill": "node scripts/smoke/terminal-bench-loop-skill-smoke.mjs",
