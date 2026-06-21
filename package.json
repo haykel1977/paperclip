@@ -41,6 +41,8 @@
     "test:check-company-route-guards": "node --test scripts/check-company-route-guards.test.mjs",
     "check:docker-pinned-tools": "node scripts/check-docker-pinned-tools.mjs",
     "test:check-docker-pinned-tools": "node --test scripts/check-docker-pinned-tools.test.mjs",
+    "check:pnpm-build-allowlist": "node scripts/check-pnpm-build-allowlist.mjs",
+    "test:check-pnpm-build-allowlist": "node --test scripts/check-pnpm-build-allowlist.test.mjs",
     "check:heartbeat-run-route-guards": "node scripts/check-heartbeat-run-route-guards.mjs",
     "test:check-heartbeat-run-route-guards": "node --test scripts/check-heartbeat-run-route-guards.test.mjs",
     "check:issue-read-route-guards": "node scripts/check-issue-read-route-guards.mjs",

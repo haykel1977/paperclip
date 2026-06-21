@@ -52,6 +52,12 @@ jobs:
       - name: Test root artifact check
         run: pnpm run test:check-root-artifacts
 
+      - name: Validate pnpm lifecycle build allowlist
+        run: pnpm run check:pnpm-build-allowlist
+
+      - name: Test pnpm lifecycle build allowlist check
+        run: pnpm run test:check-pnpm-build-allowlist
+
       - name: Validate Docker tool pins
         run: pnpm run check:docker-pinned-tools
 
