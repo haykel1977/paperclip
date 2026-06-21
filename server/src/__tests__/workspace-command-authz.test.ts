@@ -9,7 +9,6 @@ import {
 } from "../routes/workspace-command-authz.js";
 
 describe("workspace command authorization path collection", () => {
-
   it("collects adapter config workspace runtime commands", () => {
     expect(
       collectAgentAdapterWorkspaceCommandPaths({
@@ -33,26 +32,31 @@ describe("workspace command authorization path collection", () => {
         modelProfiles: {
           cheap: {
             adapterConfig: {
+              workspaceStrategy: {
+                type: "git_worktree",
+                provisionCommand: "pnpm install",
+              },
               workspaceRuntime: {
-                jobs: [{ name: "seed", command: "pnpm db:seed" }],
+                services: [{ name: "web", command: "pnpm dev" }],
               },
             },
           },
         },
       }),
     ).toEqual([
-      "runtimeConfig.modelProfiles.cheap.adapterConfig.workspaceRuntime.jobs[0].command",
+      "runtimeConfig.modelProfiles.cheap.adapterConfig.workspaceStrategy.provisionCommand",
+      "runtimeConfig.modelProfiles.cheap.adapterConfig.workspaceRuntime.services[0].command",
     ]);
   });
 
   it("collects project policy workspace runtime commands", () => {
     expect(
       collectProjectExecutionWorkspaceCommandPaths({
-
         workspaceStrategy: {
           type: "git_worktree",
           provisionCommand: "pnpm install",
         },
+
         workspaceRuntime: {
           services: [{ name: "web", command: "pnpm dev" }],
           jobs: [{ name: "migrate", command: "pnpm db:migrate" }],
@@ -68,6 +72,7 @@ describe("workspace command authorization path collection", () => {
   it("collects project workspace runtime command mutations", () => {
     expect(
       collectProjectWorkspaceCommandPaths({
+        setupCommand: "pnpm install",
         cleanupCommand: "pnpm cleanup",
         runtimeConfig: {
           workspaceRuntime: {
@@ -86,6 +91,7 @@ describe("workspace command authorization path collection", () => {
         },
       }),
     ).toEqual([
+      "setupCommand",
       "cleanupCommand",
       "runtimeConfig.workspaceRuntime.commands[0].command",
       "metadata.runtimeConfig.workspaceRuntime.jobs[0].command",

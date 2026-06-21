@@ -23,6 +23,7 @@ body:
         - label: I am on the latest released version of Paperclip (or can reproduce on `main`).
           required: true
         - label: I have confirmed the error originates in Paperclip itself — not in my agent adapter, API provider, or local configuration.
+
           required: true
 
   - type: textarea

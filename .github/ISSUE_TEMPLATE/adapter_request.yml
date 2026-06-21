@@ -7,6 +7,7 @@ body:
       value: |
         New agent adapters are welcome without prior discussion. If you plan to implement, prefer extending Paperclip via the [plugin system](https://github.com/paperclipai/paperclip/blob/main/doc/plugins/PLUGIN_SPEC.md) when possible.
   - type: input
+
     id: agent
     attributes:
       label: Agent or provider

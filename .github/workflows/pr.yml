@@ -7,7 +7,7 @@ on:
 
 concurrency:
   group: pr-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   policy:
@@ -324,6 +324,7 @@ jobs:
         run: |
           git checkout -B main HEAD
           if [ "$USED_ARTIFACT_LOCKFILE" = "1" ]; then
+
             git add pnpm-lock.yaml
             if ! git diff --cached --quiet; then
               git -c user.email=ci@paperclip.local -c user.name=CI \

@@ -63,19 +63,19 @@ test('evaluateProtection: missing required_status_checks flagged', () => {
 // ── formatReport ────────────────────────────────────────────────────────────────
 
 test('formatReport: unprotected branch mentions no rule configured', () => {
-  const report = formatReport('owner/repo', 'master', evaluateProtection(null));
+  const report = formatReport('owner/repo', 'main', evaluateProtection(null));
   assert.match(report, /No branch protection rule is configured/);
   assert.match(report, /SECURITY-BRANCH-PROTECTION\.md/);
 });
 
 test('formatReport: fully protected branch reports all enabled', () => {
-  const report = formatReport('owner/repo', 'master', evaluateProtection(fullyProtected));
+  const report = formatReport('owner/repo', 'main', evaluateProtection(fullyProtected));
   assert.match(report, /All recommended protections are enabled/);
   assert.ok(!report.includes('✗'));
 });
 
 test('formatReport: partial protection lists missing count', () => {
   const result = evaluateProtection({ ...fullyProtected, allow_deletions: { enabled: true } });
-  const report = formatReport('owner/repo', 'master', result);
+  const report = formatReport('owner/repo', 'main', result);
   assert.match(report, /1 recommended protection\(s\) missing/);
 });
