@@ -59,10 +59,22 @@ cd "$DYAD_REPO"
 git remote set-url origin "https://haykel1977:$TOKEN@github.com/$GH_REPO.git" 2>/dev/null || true
 git fetch origin main --quiet 2>/dev/null || { log "ERROR: git fetch failed"; exit 1; }
 
+# ── Auto-commit uncommitted Dyad changes ─────────────────────────────────────
+# Dyad sometimes has staged/unstaged changes that it couldn't push (GH006 failed
+# before or after commit). Auto-commit them so the relay can create a PR.
+UNCOMMITTED=$(git status --porcelain 2>/dev/null | grep -v '^?? .*\.log' | wc -l | tr -d ' ')
+UNTRACKED=$(git status --porcelain 2>/dev/null | grep '^??' | grep -v '\.log$' | wc -l | tr -d ' ')
+if [[ "$UNCOMMITTED" -gt 0 || "$UNTRACKED" -gt 0 ]]; then
+  log "UNCOMMITTED: $UNCOMMITTED modified + $UNTRACKED untracked files — auto-committing"
+  git add -A 2>/dev/null || true
+  git commit -m "[dyad-relay] auto-commit: Dyad working tree changes (relay $(date -u +%Y%m%d-%H%M))" \
+    --author "Dyad Relay <relay@kantum.dev>" 2>/dev/null || true
+fi
+
 # Count commits ahead of origin/main (SHA-based)
 AHEAD=$(git rev-list origin/main..HEAD --count 2>/dev/null || echo "0")
 if [[ "$AHEAD" -eq 0 ]]; then
-  log "OK: Dyad repo in sync with origin/main"
+  log "OK: Dyad repo in sync with origin/main (no uncommitted changes)"
   exit 0
 fi
 
