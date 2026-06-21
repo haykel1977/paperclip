@@ -5,7 +5,8 @@
 #
 # Setup: launchctl load ~/Library/LaunchAgents/dev.kantum.dyad-pr-relay.plist
 
-set -euo pipefail
+set -uo pipefail
+# Note: -e removed intentionally — grep exits 1 on no-match which breaks pipelines
 
 # ── Config ──────────────────────────────────────────────────────────────────
 DYAD_REPO="/Users/haykelbenamara/dyad-apps/paperclip"
@@ -59,11 +60,19 @@ cd "$DYAD_REPO"
 git remote set-url origin "https://haykel1977:$TOKEN@github.com/$GH_REPO.git" 2>/dev/null || true
 git fetch origin main --quiet 2>/dev/null || { log "ERROR: git fetch failed"; exit 1; }
 
+# ── Branch awareness — Dyad may be on a relay branch, not main ───────────────
+# Always compare HEAD vs origin/main regardless of current branch
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'unknown')
+if [[ "$CURRENT_BRANCH" != 'main' ]]; then
+  log "INFO: Dyad is on branch '$CURRENT_BRANCH' (not main) — comparing vs origin/main"
+fi
+
 # ── Auto-commit uncommitted Dyad changes ─────────────────────────────────────
 # Dyad sometimes has staged/unstaged changes that it couldn't push (GH006 failed
 # before or after commit). Auto-commit them so the relay can create a PR.
-UNCOMMITTED=$(git status --porcelain 2>/dev/null | grep -v '^?? .*\.log' | wc -l | tr -d ' ')
-UNTRACKED=$(git status --porcelain 2>/dev/null | grep '^??' | grep -v '\.log$' | wc -l | tr -d ' ')
+STATUS_OUT=$(git status --porcelain 2>/dev/null || echo '')
+UNCOMMITTED=$(echo "$STATUS_OUT" | grep -v '^??' | grep -v '^\.log' | wc -l | tr -d ' ' || echo '0')
+UNTRACKED=$(echo "$STATUS_OUT" | grep '^??' | grep -v '\.log$' | wc -l | tr -d ' ' || echo '0')
 if [[ "$UNCOMMITTED" -gt 0 || "$UNTRACKED" -gt 0 ]]; then
   log "UNCOMMITTED: $UNCOMMITTED modified + $UNTRACKED untracked files — auto-committing"
   git add -A 2>/dev/null || true
