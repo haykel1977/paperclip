@@ -80,6 +80,30 @@ export function collectAgentAdapterWorkspaceCommandPaths(
   ];
 }
 
+export function collectRuntimeConfigAdapterWorkspaceCommandPaths(
+  runtimeConfig: unknown,
+  prefix = "runtimeConfig",
+): string[] {
+  const runtimeRecord = isRecord(runtimeConfig) ? runtimeConfig : null;
+  const modelProfiles = isRecord(runtimeRecord?.modelProfiles)
+    ? runtimeRecord.modelProfiles
+    : null;
+  if (!modelProfiles) return [];
+
+  const paths: string[] = [];
+  for (const [profileKey, rawProfile] of Object.entries(modelProfiles)) {
+    const profile = isRecord(rawProfile) ? rawProfile : null;
+    if (!profile || !isRecord(profile.adapterConfig)) continue;
+    paths.push(
+      ...collectAgentAdapterWorkspaceCommandPaths(
+        profile.adapterConfig,
+        `${prefix}.modelProfiles.${profileKey}.adapterConfig`,
+      ),
+    );
+  }
+  return paths;
+}
+
 export function collectProjectExecutionWorkspaceCommandPaths(policy: unknown): string[] {
   if (!isRecord(policy)) return [];
   return [

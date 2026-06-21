@@ -5,6 +5,7 @@ import {
   collectIssueWorkspaceCommandPaths,
   collectProjectExecutionWorkspaceCommandPaths,
   collectProjectWorkspaceCommandPaths,
+  collectRuntimeConfigAdapterWorkspaceCommandPaths,
 } from "../routes/workspace-command-authz.js";
 
 describe("workspace command authorization path collection", () => {
@@ -25,6 +26,29 @@ describe("workspace command authorization path collection", () => {
     ]);
   });
 
+  it("collects runtime model profile adapter workspace commands", () => {
+    expect(
+      collectRuntimeConfigAdapterWorkspaceCommandPaths({
+        modelProfiles: {
+          cheap: {
+            adapterConfig: {
+              workspaceStrategy: {
+                type: "git_worktree",
+                provisionCommand: "pnpm install",
+              },
+              workspaceRuntime: {
+                services: [{ name: "web", command: "pnpm dev" }],
+              },
+            },
+          },
+        },
+      }),
+    ).toEqual([
+      "runtimeConfig.modelProfiles.cheap.adapterConfig.workspaceStrategy.provisionCommand",
+      "runtimeConfig.modelProfiles.cheap.adapterConfig.workspaceRuntime.services[0].command",
+    ]);
+  });
+
   it("collects project policy workspace runtime commands", () => {
     expect(
       collectProjectExecutionWorkspaceCommandPaths({
@@ -32,6 +56,7 @@ describe("workspace command authorization path collection", () => {
           type: "git_worktree",
           provisionCommand: "pnpm install",
         },
+
         workspaceRuntime: {
           services: [{ name: "web", command: "pnpm dev" }],
           jobs: [{ name: "migrate", command: "pnpm db:migrate" }],
