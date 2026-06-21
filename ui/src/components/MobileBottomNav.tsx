@@ -18,12 +18,15 @@ interface MobileBottomNavProps {
   visible: boolean;
 }
 
+type MobileBadgeTone = "default" | "danger";
+
 interface MobileNavLinkItem {
   type: "link";
   to: string;
   label: string;
   icon: typeof House;
   badge?: number;
+  badgeTone?: MobileBadgeTone;
 }
 
 interface MobileNavActionItem {
@@ -47,16 +50,24 @@ export function MobileBottomNav({ visible }: MobileBottomNavProps) {
       { type: "link", to: "/dashboard", label: "Home", icon: House },
       { type: "link", to: "/issues", label: "Tasks", icon: CircleDot },
       { type: "action", label: "Create", icon: SquarePen, onClick: () => openNewIssue() },
-      { type: "link", to: "/automation", label: "Auto", icon: Bot, badge: automationBadge.count },
+      {
+        type: "link",
+        to: "/automation",
+        label: "Auto",
+        icon: Bot,
+        badge: automationBadge.count,
+        badgeTone: automationBadge.needsReview ? "danger" : "default",
+      },
       {
         type: "link",
         to: "/inbox",
         label: "Inbox",
         icon: Inbox,
         badge: inboxBadge.inbox,
+        badgeTone: inboxBadge.failedRuns > 0 ? "danger" : "default",
       },
     ],
-    [openNewIssue, automationBadge.count, inboxBadge.inbox],
+    [openNewIssue, automationBadge.count, automationBadge.needsReview, inboxBadge.inbox, inboxBadge.failedRuns],
   );
 
   return (
@@ -69,6 +80,7 @@ export function MobileBottomNav({ visible }: MobileBottomNavProps) {
     >
       <div className="grid h-16 grid-cols-5 px-1">
         {items.map((item) => {
+
           if (item.type === "action") {
             const Icon = item.icon;
             const active = /\/issues\/new(?:\/|$)/.test(location.pathname);
@@ -110,7 +122,14 @@ export function MobileBottomNav({ visible }: MobileBottomNavProps) {
                   <span className="relative">
                     <Icon className={cn("h-[18px] w-[18px]", isActive && "stroke-[2.3]")} />
                     {item.badge != null && item.badge > 0 && (
-                      <span className="absolute -right-2 -top-2 rounded-full bg-primary px-1.5 py-0.5 text-[10px] leading-none text-primary-foreground">
+                      <span
+                        className={cn(
+                          "absolute -right-2 -top-2 rounded-full px-1.5 py-0.5 text-[10px] leading-none",
+                          item.badgeTone === "danger"
+                            ? "bg-red-600/90 text-red-50"
+                            : "bg-primary text-primary-foreground",
+                        )}
+                      >
                         {item.badge > 99 ? "99+" : item.badge}
                       </span>
                     )}
