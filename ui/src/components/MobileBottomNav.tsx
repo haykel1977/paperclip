@@ -80,10 +80,10 @@ export function MobileBottomNav({ visible }: MobileBottomNavProps) {
     >
       <div className="grid h-16 grid-cols-5 px-1">
         {items.map((item) => {
-
           if (item.type === "action") {
             const Icon = item.icon;
             const active = /\/issues\/new(?:\/|$)/.test(location.pathname);
+
             return (
               <button
                 key={item.label}
