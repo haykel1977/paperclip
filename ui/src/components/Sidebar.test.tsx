@@ -20,6 +20,11 @@ const mockAutomationBadge = vi.hoisted(() => ({
   needsReview: false,
 }));
 
+const mockInboxBadge = vi.hoisted(() => ({
+  inbox: 0,
+  failedRuns: 0,
+}));
+
 vi.mock("@/lib/router", () => ({
   NavLink: ({ to, children, className, ...props }: {
     to: string;
@@ -29,6 +34,7 @@ vi.mock("@/lib/router", () => ({
     <a
       href={to}
       className={typeof className === "function" ? className({ isActive: false }) : className}
+
       {...props}
     >
       {children}
@@ -46,7 +52,6 @@ vi.mock("../context/DialogContext", () => ({
 }));
 
 vi.mock("../context/CompanyContext", () => ({
-
   useCompany: () => ({
     selectedCompanyId: "company-1",
     selectedCompany: { id: "company-1", issuePrefix: "PAP", name: "Paperclip" },
@@ -73,7 +78,7 @@ vi.mock("../hooks/useAutomationReviewBadge", () => ({
 }));
 
 vi.mock("../hooks/useInboxBadge", () => ({
-  useInboxBadge: () => ({ inbox: 0, failedRuns: 0 }),
+  useInboxBadge: () => mockInboxBadge,
 }));
 
 vi.mock("@/plugins/slots", () => ({
@@ -137,6 +142,8 @@ describe("Sidebar", () => {
     mockHeartbeatsApi.liveRunsForCompany.mockResolvedValue([]);
     mockAutomationBadge.count = 0;
     mockAutomationBadge.needsReview = false;
+    mockInboxBadge.inbox = 0;
+    mockInboxBadge.failedRuns = 0;
   });
 
   afterEach(() => {
@@ -174,6 +181,27 @@ describe("Sidebar", () => {
     expect(badge?.className).toContain("bg-red-600/90");
     expect(badge?.className).toContain("text-red-50");
     expect(automationLink?.querySelector(".bg-red-500")).not.toBeNull();
+
+    flushSync(() => {
+      root.unmount();
+    });
+  });
+
+  it("shows the Inbox danger badge and alert when failed runs are present", async () => {
+    mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableIsolatedWorkspaces: false });
+    mockInboxBadge.inbox = 5;
+    mockInboxBadge.failedRuns = 2;
+    const root = await renderSidebar();
+
+    const inboxLink = [...container.querySelectorAll("nav a")]
+      .find((anchor) => anchor.getAttribute("href") === "/inbox");
+    const badge = [...(inboxLink?.querySelectorAll("span") ?? [])]
+      .find((span) => span.textContent === "5");
+
+    expect(inboxLink?.textContent).toContain("Inbox");
+    expect(badge?.className).toContain("bg-red-600/90");
+    expect(badge?.className).toContain("text-red-50");
+    expect(inboxLink?.querySelector(".bg-red-500")).not.toBeNull();
 
     flushSync(() => {
       root.unmount();
