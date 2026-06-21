@@ -34,7 +34,6 @@ vi.mock("@/lib/router", () => ({
     <a
       href={to}
       className={typeof className === "function" ? className({ isActive: false }) : className}
-
       {...props}
     >
       {children}
