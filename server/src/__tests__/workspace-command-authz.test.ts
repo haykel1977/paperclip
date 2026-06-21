@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  collectAgentAdapterWorkspaceCommandPaths,
   collectExecutionWorkspaceCommandPaths,
   collectIssueWorkspaceCommandPaths,
   collectProjectExecutionWorkspaceCommandPaths,
@@ -7,6 +8,23 @@ import {
 } from "../routes/workspace-command-authz.js";
 
 describe("workspace command authorization path collection", () => {
+  it("collects adapter config workspace runtime commands", () => {
+    expect(
+      collectAgentAdapterWorkspaceCommandPaths({
+        workspaceStrategy: {
+          type: "git_worktree",
+          provisionCommand: "pnpm install",
+        },
+        workspaceRuntime: {
+          services: [{ name: "web", command: "pnpm dev" }],
+        },
+      }),
+    ).toEqual([
+      "adapterConfig.workspaceStrategy.provisionCommand",
+      "adapterConfig.workspaceRuntime.services[0].command",
+    ]);
+  });
+
   it("collects project policy workspace runtime commands", () => {
     expect(
       collectProjectExecutionWorkspaceCommandPaths({
@@ -45,7 +63,7 @@ describe("workspace command authorization path collection", () => {
     ]);
   });
 
-  it("collects issue workspace runtime command mutations", () => {
+  it("collects issue workspace runtime and assignee adapter runtime command mutations", () => {
     expect(
       collectIssueWorkspaceCommandPaths({
         executionWorkspaceSettings: {
@@ -53,9 +71,17 @@ describe("workspace command authorization path collection", () => {
             services: [{ name: "preview", command: "pnpm preview" }],
           },
         },
+        assigneeAdapterOverrides: {
+          adapterConfig: {
+            workspaceRuntime: {
+              jobs: [{ name: "seed", command: "pnpm db:seed" }],
+            },
+          },
+        },
       }),
     ).toEqual([
       "executionWorkspaceSettings.workspaceRuntime.services[0].command",
+      "assigneeAdapterOverrides.adapterConfig.workspaceRuntime.jobs[0].command",
     ]);
   });
 

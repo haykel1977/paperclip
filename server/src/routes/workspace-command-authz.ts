@@ -68,10 +68,16 @@ export function collectAgentAdapterWorkspaceCommandPaths(
   prefix = "adapterConfig",
 ): string[] {
   if (!isRecord(adapterConfig)) return [];
-  return collectWorkspaceStrategyCommandPaths(
-    adapterConfig.workspaceStrategy,
-    `${prefix}.workspaceStrategy`,
-  );
+  return [
+    ...collectWorkspaceStrategyCommandPaths(
+      adapterConfig.workspaceStrategy,
+      `${prefix}.workspaceStrategy`,
+    ),
+    ...collectWorkspaceRuntimeCommandPaths(
+      adapterConfig.workspaceRuntime,
+      `${prefix}.workspaceRuntime`,
+    ),
+  ];
 }
 
 export function collectProjectExecutionWorkspaceCommandPaths(policy: unknown): string[] {
@@ -129,9 +135,9 @@ export function collectIssueWorkspaceCommandPaths(input: {
     const adapterConfig = input.assigneeAdapterOverrides.adapterConfig;
     if (isRecord(adapterConfig)) {
       paths.push(
-        ...collectWorkspaceStrategyCommandPaths(
-          adapterConfig.workspaceStrategy,
-          "assigneeAdapterOverrides.adapterConfig.workspaceStrategy",
+        ...collectAgentAdapterWorkspaceCommandPaths(
+          adapterConfig,
+          "assigneeAdapterOverrides.adapterConfig",
         ),
       );
     }

