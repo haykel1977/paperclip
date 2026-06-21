@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildAdvisoryPayload,
   findExistingDraftAdvisory,
+  isAdvisoryPermissionError,
   postSecurityCheckRun,
   scanSecrets,
   scanCITampering,
@@ -208,6 +209,26 @@ test('postSecurityCheckRun: uses the injected fetch implementation', async () =>
   });
 });
 
+test('postSecurityCheckRun: explains when fallback token cannot file an advisory', async () => {
+  const calls = [];
+
+  await postSecurityCheckRun(async (path, token, options) => {
+    calls.push({ path, token, options });
+    return { ok: true };
+  }, 'token', 'paperclipai/paperclip', 'deadbeef', true, false);
+
+  const body = JSON.parse(calls[0].options.body);
+  assert.equal(body.conclusion, 'neutral');
+  assert.match(body.output.summary, /fallback workflow token could not create a draft advisory/);
+  assert.match(body.output.summary, /COMMITPERCLIP_KEY/);
+});
+
+test('isAdvisoryPermissionError: detects fallback advisory permission failures', () => {
+  assert.equal(isAdvisoryPermissionError(new Error('GitHub API POST /repos/x/y/security-advisories → 403: Resource not accessible by integration')), true);
+  assert.equal(isAdvisoryPermissionError(new Error('GitHub API GET /repos/x/y/pulls/1 → 500: boom')), false);
+  assert.equal(isAdvisoryPermissionError(new Error('GitHub API POST /repos/x/y/security-advisories → 500: boom')), false);
+});
+
 test('validateSensitivePaths: checks paths against the resolved base ref instead of master', async () => {
   const seenPaths = [];
   const stale = await validateSensitivePaths(
@@ -222,6 +243,7 @@ test('validateSensitivePaths: checks paths against the resolved base ref instead
   );
 
   assert.deepEqual(stale, []);
+
   assert.ok(seenPaths.every(path => path.includes('ref=release%2F1.2')));
   assert.ok(!seenPaths.some(path => path.includes('ref=master')));
 });

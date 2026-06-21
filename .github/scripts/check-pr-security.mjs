@@ -263,7 +263,14 @@ export async function findExistingDraftAdvisory(fetchImpl, token, repo, prNumber
   }
 }
 
-export async function postSecurityCheckRun(fetchImpl, token, repo, headSha, hasFlags) {
+export function isAdvisoryPermissionError(error) {
+  const message = String(error?.message ?? error);
+  const isAdvisoryRequest = message.includes('/security-advisories') || message.includes('security_advisories');
+  const isPermissionFailure = message.includes('403') || message.includes('Resource not accessible by integration');
+  return isAdvisoryRequest && isPermissionFailure;
+}
+
+export async function postSecurityCheckRun(fetchImpl, token, repo, headSha, hasFlags, advisoryFiled = true) {
   await fetchImpl(`/repos/${repo}/check-runs`, token, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -274,12 +281,15 @@ export async function postSecurityCheckRun(fetchImpl, token, repo, headSha, hasF
       // the PR in `mergeStateStatus: BLOCKED`. The draft advisory is the
       // durable signal for maintainers; there is no completion path that
       // could ever flip an `in_progress` check-run back to completed on the
+
       // same head SHA, so it would hang forever.
       status: 'completed',
       conclusion: 'neutral',
       output: {
         title: 'Security Review Recommended',
-        summary: 'Draft advisory filed for maintainer review. Not a merge block — review the advisory at your leisure.',
+        summary: advisoryFiled
+          ? 'Draft advisory filed for maintainer review. Not a merge block — review the advisory at your leisure.'
+          : 'Security concerns detected, but the fallback workflow token could not create a draft advisory. Review the workflow logs and configure COMMITPERCLIP_KEY for full advisory filing.',
       },
     } : {
       name: 'security-review',
@@ -342,10 +352,18 @@ async function main() {
 
   if (allFlags.length > 0) {
     console.error(`[security] ${allFlags.length} flag(s) detected — creating draft advisory and pending check run`);
-    await Promise.all([
-      syncDraftAdvisory(ghFetch, GH_TOKEN, GH_REPO, prNumber, pr.title, allFlags),
-      postSecurityCheckRun(ghFetch, GH_TOKEN, GH_REPO, pr.head.sha, true),
-    ]);
+    let advisoryFiled = true;
+    try {
+      await syncDraftAdvisory(ghFetch, GH_TOKEN, GH_REPO, prNumber, pr.title, allFlags);
+    } catch (error) {
+      if (process.env.REVIEW_TOKEN_SOURCE === 'github-token' && isAdvisoryPermissionError(error)) {
+        advisoryFiled = false;
+        console.error(`[security] fallback token cannot create draft advisory: ${String(error?.message ?? error)}`);
+      } else {
+        throw error;
+      }
+    }
+    await postSecurityCheckRun(ghFetch, GH_TOKEN, GH_REPO, pr.head.sha, true, advisoryFiled);
   } else {
     console.log('[security] all clear');
     await postSecurityCheckRun(ghFetch, GH_TOKEN, GH_REPO, pr.head.sha, false);
