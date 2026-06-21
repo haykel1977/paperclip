@@ -15,6 +15,16 @@ const mockInstanceSettingsApi = vi.hoisted(() => ({
   getExperimental: vi.fn(),
 }));
 
+const mockAutomationBadge = vi.hoisted(() => ({
+  count: 0,
+  needsReview: false,
+}));
+
+const mockInboxBadge = vi.hoisted(() => ({
+  inbox: 0,
+  failedRuns: 0,
+}));
+
 vi.mock("@/lib/router", () => ({
   NavLink: ({ to, children, className, ...props }: {
     to: string;
@@ -62,8 +72,12 @@ vi.mock("../api/instanceSettings", () => ({
   instanceSettingsApi: mockInstanceSettingsApi,
 }));
 
+vi.mock("../hooks/useAutomationReviewBadge", () => ({
+  useAutomationReviewBadge: () => mockAutomationBadge,
+}));
+
 vi.mock("../hooks/useInboxBadge", () => ({
-  useInboxBadge: () => ({ inbox: 0, failedRuns: 0 }),
+  useInboxBadge: () => mockInboxBadge,
 }));
 
 vi.mock("@/plugins/slots", () => ({
@@ -125,6 +139,10 @@ describe("Sidebar", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     mockHeartbeatsApi.liveRunsForCompany.mockResolvedValue([]);
+    mockAutomationBadge.count = 0;
+    mockAutomationBadge.needsReview = false;
+    mockInboxBadge.inbox = 0;
+    mockInboxBadge.failedRuns = 0;
   });
 
   afterEach(() => {
@@ -147,11 +165,54 @@ describe("Sidebar", () => {
     });
   });
 
+  it("shows the Automation badge and alert when human review is needed", async () => {
+    mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableIsolatedWorkspaces: false });
+    mockAutomationBadge.count = 7;
+    mockAutomationBadge.needsReview = true;
+    const root = await renderSidebar();
+
+    const automationLink = [...container.querySelectorAll("nav a")]
+      .find((anchor) => anchor.getAttribute("href") === "/automation");
+    const badge = [...(automationLink?.querySelectorAll("span") ?? [])]
+      .find((span) => span.textContent === "7");
+
+    expect(automationLink?.textContent).toContain("Automation");
+    expect(badge?.className).toContain("bg-red-600/90");
+    expect(badge?.className).toContain("text-red-50");
+    expect(automationLink?.querySelector(".bg-red-500")).not.toBeNull();
+
+    flushSync(() => {
+      root.unmount();
+    });
+  });
+
+  it("shows the Inbox danger badge and alert when failed runs are present", async () => {
+    mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableIsolatedWorkspaces: false });
+    mockInboxBadge.inbox = 5;
+    mockInboxBadge.failedRuns = 2;
+    const root = await renderSidebar();
+
+    const inboxLink = [...container.querySelectorAll("nav a")]
+      .find((anchor) => anchor.getAttribute("href") === "/inbox");
+    const badge = [...(inboxLink?.querySelectorAll("span") ?? [])]
+      .find((span) => span.textContent === "5");
+
+    expect(inboxLink?.textContent).toContain("Inbox");
+    expect(badge?.className).toContain("bg-red-600/90");
+    expect(badge?.className).toContain("text-red-50");
+    expect(inboxLink?.querySelector(".bg-red-500")).not.toBeNull();
+
+    flushSync(() => {
+      root.unmount();
+    });
+  });
+
   it("renders plugin sidebar launchers inside the Work section", async () => {
     mockInstanceSettingsApi.getExperimental.mockResolvedValue({
       enableIsolatedWorkspaces: false,
       enableStreamlinedLeftNavigation: true,
     });
+
     const root = await renderSidebar();
 
     const workSection = [...container.querySelectorAll("nav [data-plugin-launcher-zone]")]
