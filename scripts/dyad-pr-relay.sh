@@ -89,7 +89,10 @@ fi
 
 # Check effective diff — squash merges produce different SHAs but same content
 # If the actual file diff is empty, the content is already on main (squash merged)
-EFFECTIVE_DIFF=$(git diff origin/main..HEAD -- . ':(exclude)*.lock' 2>/dev/null | wc -c)
+if ! EFFECTIVE_DIFF=$(git diff origin/main..HEAD -- . ':(exclude)*.lock' 2>/dev/null | wc -c); then
+  log "ERROR: git diff failed; refusing to reset Dyad repo"
+  exit 1
+fi
 if [[ "$EFFECTIVE_DIFF" -lt 50 ]]; then
   log "OK: $AHEAD commit(s) ahead by SHA but diff is empty (already squash-merged) — syncing"
   git reset --hard origin/main 2>/dev/null || true
