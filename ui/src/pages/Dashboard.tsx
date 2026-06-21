@@ -20,7 +20,7 @@ import { ActivityRow } from "../components/ActivityRow";
 import { Identity } from "../components/Identity";
 import { timeAgo } from "../lib/timeAgo";
 import { cn, formatCents } from "../lib/utils";
-import { Bot, CircleDot, DollarSign, ShieldCheck, LayoutDashboard, PauseCircle } from "lucide-react";
+import { Bot, CircleDot, DollarSign, ShieldCheck, LayoutDashboard, PauseCircle, Sparkles } from "lucide-react";
 import { ActiveAgentsPanel } from "../components/ActiveAgentsPanel";
 import { ChartCard, RunActivityChart, PriorityChart, IssueStatusChart, SuccessRateChart } from "../components/ActivityCharts";
 import { PageSkeleton } from "../components/PageSkeleton";
@@ -192,6 +192,9 @@ export function Dashboard() {
   }
 
   const hasNoAgents = agents !== undefined && agents.length === 0;
+  const automationHumanQueue = data
+    ? data.pendingApprovals + data.budgets.pendingApprovals + data.budgets.activeIncidents + data.agents.error + data.tasks.blocked
+    : 0;
 
   return (
     <div className="space-y-6">
@@ -218,6 +221,26 @@ export function Dashboard() {
 
       {data && (
         <>
+          <Link
+            to="/automation"
+            className="flex flex-col gap-3 rounded-xl border border-emerald-500/20 bg-[linear-gradient(135deg,rgba(16,185,129,0.12),rgba(59,130,246,0.08))] p-4 text-inherit no-underline transition-colors hover:border-emerald-500/40 sm:flex-row sm:items-center sm:justify-between"
+          >
+            <div className="flex items-start gap-3">
+              <span className="rounded-lg bg-emerald-500/10 p-2 text-emerald-600 dark:text-emerald-300">
+                <Sparkles className="h-4 w-4" />
+              </span>
+              <div>
+                <p className="text-sm font-semibold">Autopilot readiness</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Agents, live runs, validation gates, and visible human review are tracked in one operational view.
+                </p>
+              </div>
+            </div>
+            <span className="shrink-0 text-sm font-medium text-emerald-700 dark:text-emerald-300">
+              {automationHumanQueue === 0 ? "Open automation center" : `${automationHumanQueue} item${automationHumanQueue === 1 ? "" : "s"} need review`}
+            </span>
+          </Link>
+
           {data.budgets.activeIncidents > 0 ? (
             <div className="flex items-start justify-between gap-3 rounded-xl border border-red-500/20 bg-[linear-gradient(180deg,rgba(255,80,80,0.12),rgba(255,255,255,0.02))] px-4 py-3">
               <div className="flex items-start gap-2.5">

@@ -14,6 +14,7 @@ import {
   Package,
   Settings,
   FolderOpen,
+  Bot,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { NavLink } from "@/lib/router";
@@ -90,6 +91,7 @@ export function Sidebar() {
             <span className="truncate">New Task</span>
           </button>
           <SidebarNavItem to="/dashboard" label="Dashboard" icon={LayoutDashboard} liveCount={liveRunCount} />
+          <SidebarNavItem to="/automation" label="Automation" icon={Bot} />
           <SidebarNavItem
             to="/inbox"
             label="Inbox"
