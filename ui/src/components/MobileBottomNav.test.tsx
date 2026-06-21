@@ -110,4 +110,15 @@ describe("MobileBottomNav", () => {
     expect(badge?.className).toContain("bg-primary");
     expect(badge?.className).toContain("text-primary-foreground");
   });
+
+  it("uses the danger badge style when inbox failed runs are present", () => {
+    mockInboxBadge.inbox = 5;
+    mockInboxBadge.failedRuns = 2;
+
+    renderNav();
+
+    const badge = Array.from(container.querySelectorAll("span")).find((element) => element.textContent === "5");
+    expect(badge?.className).toContain("bg-red-600/90");
+    expect(badge?.className).toContain("text-red-50");
+  });
 });
