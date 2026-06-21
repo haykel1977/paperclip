@@ -19,7 +19,6 @@ import { agentsApi } from "../api/agents";
 import { approvalsApi } from "../api/approvals";
 import { dashboardApi } from "../api/dashboard";
 import { heartbeatsApi } from "../api/heartbeats";
-import { issuesApi } from "../api/issues";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useCompany } from "../context/CompanyContext";
 import { queryKeys } from "../lib/queryKeys";
@@ -71,12 +70,6 @@ export function Automation() {
     enabled: !!selectedCompanyId,
   });
 
-  const { data: issues, isLoading: issuesLoading } = useQuery({
-    queryKey: selectedCompanyId ? queryKeys.issues.list(selectedCompanyId) : ["issues", "automation", "none"],
-    queryFn: () => issuesApi.list(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
-  });
-
   const { data: pendingApprovals, isLoading: approvalsLoading } = useQuery({
     queryKey: selectedCompanyId ? queryKeys.approvals.list(selectedCompanyId, "pending") : ["approvals", "automation", "none"],
     queryFn: () => approvalsApi.list(selectedCompanyId!, "pending"),
@@ -90,7 +83,7 @@ export function Automation() {
     refetchInterval: 10_000,
   });
 
-  const loading = summaryLoading || agentsLoading || issuesLoading || approvalsLoading || liveRunsLoading;
+  const loading = summaryLoading || agentsLoading || approvalsLoading || liveRunsLoading;
 
   const automation = useMemo(() => {
     const agentCount = agents?.length ?? 0;
@@ -140,12 +133,45 @@ export function Automation() {
         description:
           totalHumanQueue === 0
             ? "No hidden human work: approvals, budget incidents, blocked tasks, and agent errors are clear."
-            : `${totalHumanQueue} item${totalHumanQueue === 1 ? "" : "s"} require visible human attention before full autonomy.` ,
+            : `${totalHumanQueue} item${totalHumanQueue === 1 ? "" : "s"} require visible human attention before full autonomy.`,
         state: totalHumanQueue === 0 ? "ready" : "attention",
         href: totalHumanQueue === 0 ? "/activity" : "/approvals",
         action: totalHumanQueue === 0 ? "View audit trail" : "Review queue",
       },
     ];
+
+    const interventionItems = [
+      {
+        label: "Approval decisions",
+        count: pendingApprovalCount,
+        href: "/approvals",
+        icon: UserCheck,
+      },
+      {
+        label: "Budget incidents",
+        count: budgetApprovalCount + activeBudgetIncidents,
+        href: "/costs",
+        icon: DollarSign,
+      },
+      {
+        label: "Blocked tasks",
+        count: blockedTaskCount,
+        href: "/issues",
+        icon: CircleDot,
+      },
+      {
+        label: "Agent errors",
+        count: erroredAgents,
+        href: "/agents/error",
+        icon: AlertTriangle,
+      },
+      {
+        label: "Agent setup",
+        count: agentCount === 0 ? 1 : 0,
+        href: "/agents/new",
+        icon: Bot,
+      },
+    ].filter((item) => item.count > 0);
 
     const readyChecks = checks.filter((check) => check.state === "ready").length;
     const score = Math.round((readyChecks / checks.length) * 100);
@@ -164,13 +190,10 @@ export function Automation() {
       liveRunCount,
       openTaskCount,
       blockedTaskCount,
-      pendingApprovalCount,
-      budgetApprovalCount,
-      activeBudgetIncidents,
       totalHumanQueue,
-      recentIssueCount: issues?.slice(0, 5).length ?? 0,
+      interventionItems,
     };
-  }, [agents, issues, liveRuns, pendingApprovals, summary]);
+  }, [agents, liveRuns, pendingApprovals, summary]);
 
   if (!selectedCompanyId) {
     return companies.length === 0 ? (
@@ -220,6 +243,68 @@ export function Automation() {
           <StatCard icon={PlayCircle} label="Live runs" value={automation.liveRunCount} detail="Refreshed every 10s" />
           <StatCard icon={CircleDot} label="Open tasks" value={automation.openTaskCount} detail={`${automation.blockedTaskCount} blocked`} />
           <StatCard icon={UserCheck} label="Human queue" value={automation.totalHumanQueue} detail="Visible review only" />
+        </div>
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-[1fr_1.4fr]">
+        <div className="rounded-xl border border-border bg-card p-4">
+          <div className="flex items-center gap-2">
+            <span className={cn(
+              "rounded-lg p-2",
+              automation.interventionItems.length === 0
+                ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300"
+                : "bg-amber-500/10 text-amber-600 dark:text-amber-300",
+            )}>
+              {automation.interventionItems.length === 0 ? <CheckCircle2 className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />}
+            </span>
+            <div>
+              <h2 className="font-semibold">Human review queue</h2>
+              <p className="text-xs text-muted-foreground">Visible, explicit, and actionable.</p>
+            </div>
+          </div>
+
+          {automation.interventionItems.length === 0 ? (
+            <p className="mt-4 rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300">
+              No human intervention is pending. Autopilot can continue without hidden manual work.
+            </p>
+          ) : (
+            <div className="mt-4 grid gap-2">
+              {automation.interventionItems.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <Link
+                    key={item.label}
+                    to={item.href}
+                    className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background p-3 text-inherit no-underline transition-colors hover:border-primary/40 hover:bg-accent/30"
+                  >
+                    <span className="flex items-center gap-2 text-sm font-medium">
+                      <Icon className="h-4 w-4 text-muted-foreground" />
+                      {item.label}
+                    </span>
+                    <Badge variant="outline">{item.count}</Badge>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-xl border border-border bg-card p-4">
+          <div className="flex items-center gap-2">
+            <span className="rounded-lg bg-primary/10 p-2 text-primary">
+              <ClipboardCheck className="h-4 w-4" />
+            </span>
+            <div>
+              <h2 className="font-semibold">Operational pipeline</h2>
+              <p className="text-xs text-muted-foreground">The standard path from request to validated delivery.</p>
+            </div>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <PipelineStep title="1. Assign" body="Tasks enter the queue and are picked up by configured agents." />
+            <PipelineStep title="2. Execute" body="Live runs show active autonomous work and output progress." />
+            <PipelineStep title="3. Validate" body="Tests, policy checks, budgets, and permissions gate risky changes." />
+            <PipelineStep title="4. Escalate only if needed" body="Humans are asked only for approvals, blockers, incidents, or agent errors." />
+          </div>
         </div>
       </section>
 
@@ -294,6 +379,15 @@ export function Automation() {
           </div>
         </div>
       </section>
+    </div>
+  );
+}
+
+function PipelineStep({ title, body }: { title: string; body: string }) {
+  return (
+    <div className="rounded-lg border border-border bg-background p-3">
+      <p className="text-sm font-medium">{title}</p>
+      <p className="mt-1 text-xs text-muted-foreground">{body}</p>
     </div>
   );
 }

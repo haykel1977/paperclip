@@ -4,7 +4,7 @@ import {
   House,
   CircleDot,
   SquarePen,
-  Users,
+  Bot,
   Inbox,
 } from "lucide-react";
 import { useCompany } from "../context/CompanyContext";
@@ -45,7 +45,7 @@ export function MobileBottomNav({ visible }: MobileBottomNavProps) {
       { type: "link", to: "/dashboard", label: "Home", icon: House },
       { type: "link", to: "/issues", label: "Tasks", icon: CircleDot },
       { type: "action", label: "Create", icon: SquarePen, onClick: () => openNewIssue() },
-      { type: "link", to: "/agents/all", label: "Agents", icon: Users },
+      { type: "link", to: "/automation", label: "Auto", icon: Bot },
       {
         type: "link",
         to: "/inbox",
