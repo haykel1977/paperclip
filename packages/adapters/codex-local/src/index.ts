@@ -33,6 +33,8 @@ export function isCodexLocalFastModeSupported(model: string | null | undefined):
 }
 
 export const models = [
+  { id: "qwen2.5-coder:32b", label: "Sovereign qwen2.5-coder:32b" },
+  { id: "ollama/qwen2.5-coder:32b", label: "Sovereign ollama/qwen2.5-coder:32b" },
   { id: "sovereign-gpt-5.4", label: "sovereign-gpt-5.4" },
   { id: CODEX_LOCAL_FALLBACK_MODEL, label: CODEX_LOCAL_FALLBACK_MODEL },
   { id: "sovereign-gpt-5.3-codex-spark", label: "sovereign-gpt-5.3-codex-spark" },
