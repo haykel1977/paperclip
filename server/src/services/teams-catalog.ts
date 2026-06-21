@@ -946,6 +946,7 @@ export function teamsCatalogService(db: Db) {
   }
 
   async function installCatalogTeam(
+
     companyId: string,
     catalogRef: string,
     options: CatalogTeamImportOptions = {},

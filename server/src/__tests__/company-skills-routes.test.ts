@@ -511,6 +511,7 @@ describe("company skill mutation permissions", () => {
     );
   });
 
+<<<<<<< HEAD
   it("disables executable scripts for agent-triggered catalog skill installs", async () => {
     mockAgentService.getById.mockResolvedValue({
       id: "agent-1",
@@ -535,6 +536,8 @@ describe("company skill mutation permissions", () => {
     );
   });
 
+=======
+>>>>>>> origin/main
   it("allows board users with agents:create to import skills with executable scripts enabled", async () => {
     mockAccessService.canUser.mockResolvedValue(true);
 
@@ -560,6 +563,7 @@ describe("company skill mutation permissions", () => {
 
     const { unprocessable } = await import("../errors.js");
     mockCompanySkillService.deleteSkill.mockImplementationOnce(async () => {
+
       throw unprocessable(
         'Cannot delete skill "Find Skills" while it is still used by Builder, Reviewer. Detach it from those agents first.',
       );

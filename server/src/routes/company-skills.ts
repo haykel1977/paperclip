@@ -236,6 +236,7 @@ export function companySkillRoutes(db: Db) {
       await logActivity(db, {
         companyId,
         actorType: actor.actorType,
+
         actorId: actor.actorId,
         agentId: actor.agentId,
         runId: actor.runId,
