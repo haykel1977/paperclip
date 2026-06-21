@@ -43,14 +43,25 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Generate commitperclip token
+      - name: Resolve review token
         id: token
         run: |
-          TOKEN=$(node .github/scripts/get-bot-token.mjs)
+          if [ -n "$COMMITPERCLIP_KEY" ]; then
+            TOKEN=$(node .github/scripts/get-bot-token.mjs)
+            COMMENT_LOGINS="commitperclip[bot],commitperclip"
+            SOURCE="commitperclip"
+          else
+            TOKEN="$GITHUB_TOKEN"
+            COMMENT_LOGINS="github-actions[bot]"
+            SOURCE="github-actions"
+          fi
           echo "::add-mask::$TOKEN"
-          echo "value=$TOKEN" >> $GITHUB_OUTPUT
+          echo "value=$TOKEN" >> "$GITHUB_OUTPUT"
+          echo "comment_logins=$COMMENT_LOGINS" >> "$GITHUB_OUTPUT"
+          echo "source=$SOURCE" >> "$GITHUB_OUTPUT"
         env:
           COMMITPERCLIP_KEY: ${{ secrets.COMMITPERCLIP_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Run quality gates
         id: quality
@@ -59,6 +70,7 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.token.outputs.value }}
+          GH_COMMENT_LOGINS: ${{ steps.token.outputs.comment_logins }}
           GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
