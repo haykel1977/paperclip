@@ -9,6 +9,7 @@ export function isSovereignAgentModelValue(value: unknown): value is string {
   if (typeof value !== "string") return false;
   const normalized = value.trim().toLowerCase();
   if (!normalized) return false;
+  if (normalized.includes("qwen")) return true;
   return SOVEREIGN_MODEL_MARKERS.some((marker) => normalized.includes(marker));
 }
 

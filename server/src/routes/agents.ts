@@ -269,11 +269,15 @@ export function agentRoutes(
     return false;
   }
 
-  async function filterIssuesReadableByActor<T extends IssueReadSubject>(req: Request, issues: T[]) {
-    const decisions = await Promise.all(
-      issues.map(async (issue) => ((await decideIssueRead(req, issue)).allowed ? issue : null)),
+  async function filterIssuesReadableByActor<T extends IssueReadSubject>(req: Request, issues: (T | null)[]): Promise<T[]> {
+    const nonNullIssues = issues.filter((issue): issue is T => issue !== null);
+    const results = await Promise.all(
+      nonNullIssues.map(async (issue) => {
+        const dec = await decideIssueRead(req, issue);
+        return { issue, allowed: dec.allowed };
+      }),
     );
-    return decisions.filter((issue): issue is T => issue !== null);
+    return results.filter((r) => r.allowed).map((r) => r.issue);
   }
 
   async function assertCompanyRunReadAllowed(req: Request, res: Response, companyId: string) {
