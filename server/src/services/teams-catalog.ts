@@ -920,6 +920,8 @@ export function teamsCatalogService(db: Db) {
         try {
           const result = await companySkills.installFromCatalog(companyId, {
             catalogSkillId: skill.catalogSkillId,
+          }, {
+            allowExecutableScripts: options.actor?.actorType !== "agent",
           });
           warnings.push(...result.warnings);
         } catch (error) {
@@ -927,6 +929,7 @@ export function teamsCatalogService(db: Db) {
         }
         continue;
       }
+
       if (skill.action === "external_import_required") {
         const source = skill.sourceLocator ?? skill.ref;
         try {
@@ -943,10 +946,10 @@ export function teamsCatalogService(db: Db) {
   }
 
   async function installCatalogTeam(
-
     companyId: string,
     catalogRef: string,
     options: CatalogTeamImportOptions = {},
+
   ): Promise<CatalogTeamInstallResult> {
     const prepared = await prepareCatalogTeamSource(companyId, catalogRef, options);
     if (prepared.errors.length > 0) {

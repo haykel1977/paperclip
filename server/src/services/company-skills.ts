@@ -3021,12 +3021,23 @@ export function companySkillService(db: Db) {
   async function installFromCatalog(
     companyId: string,
     input: CompanySkillInstallCatalogRequest,
+    options: { allowExecutableScripts?: boolean } = {},
   ): Promise<CompanySkillInstallCatalogResult> {
     await ensureSkillInventoryCurrent(companyId);
     const catalogSkill = getCatalogSkillOrThrow(input.catalogSkillId);
     assertCatalogSkillInstallable(catalogSkill);
+    if (options.allowExecutableScripts === false && catalogSkill.trustLevel === "scripts_executables") {
+      throw unprocessable(
+        `Catalog skill "${catalogSkill.id}" contains executable scripts and cannot be installed by agent-authenticated callers.`,
+        {
+          trustLevel: catalogSkill.trustLevel,
+          reason: "agent_catalog_scripts_executables_blocked",
+        },
+      );
+    }
 
     const slug = normalizeSkillSlug(input.slug ?? catalogSkill.slug);
+
     if (!slug) {
       throw unprocessable("Catalog skill slug is invalid.");
     }

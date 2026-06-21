@@ -234,13 +234,13 @@ export function companySkillRoutes(db: Db) {
 
       const actor = getActorInfo(req);
       await logActivity(db, {
-
         companyId,
         actorType: actor.actorType,
         actorId: actor.actorId,
         agentId: actor.agentId,
         runId: actor.runId,
         action: "company.skills_imported",
+
         entityType: "company",
         entityId: companyId,
         details: {
@@ -270,11 +270,14 @@ export function companySkillRoutes(db: Db) {
     async (req, res) => {
       const companyId = req.params.companyId as string;
       await assertCanMutateCompanySkills(req, companyId);
-      const result = await svc.installFromCatalog(companyId, req.body);
+      const result = await svc.installFromCatalog(companyId, req.body, {
+        allowExecutableScripts: req.actor.type === "board",
+      });
 
       const actor = getActorInfo(req);
       await logActivity(db, {
         companyId,
+
         actorType: actor.actorType,
         actorId: actor.actorId,
         agentId: actor.agentId,

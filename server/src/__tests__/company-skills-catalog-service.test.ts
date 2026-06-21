@@ -264,9 +264,39 @@ describeEmbeddedPostgres("companySkillService.installFromCatalog", () => {
     await expect(fs.readFile(path.join(result.skill.sourceLocator!, "scripts/run.py"), "utf8")).resolves.toBe(script);
   });
 
+  it("rejects script-bearing catalog skills for agent-mediated installs before persistence", async () => {
+    const script = "print('safe')\n";
+    const scriptFiles: CatalogSkillFile[] = [
+      ...sampleFiles,
+      { path: "scripts/run.py", kind: "script", sizeBytes: Buffer.byteLength(script), sha256: sha256(script) },
+    ];
+    const scriptCatalogSkill: CatalogSkill = {
+      ...sampleCatalogSkill,
+      id: "paperclipai:optional:research:last30days",
+      trustLevel: "scripts_executables",
+      files: scriptFiles,
+      contentHash: contentHash(scriptFiles),
+    };
+    mockCatalogService.getCatalogSkillOrThrow.mockReturnValue(scriptCatalogSkill);
+    const companyId = await createCompany();
+
+    await expect(svc.installFromCatalog(companyId, {
+      catalogSkillId: scriptCatalogSkill.id,
+    }, {
+      allowExecutableScripts: false,
+    })).rejects.toMatchObject({
+      status: 422,
+      message: `Catalog skill "${scriptCatalogSkill.id}" contains executable scripts and cannot be installed by agent-authenticated callers.`,
+    });
+
+    const rows = await db.select().from(companySkills);
+    expect(rows.some((row) => row.companyId === companyId && row.key === scriptCatalogSkill.key)).toBe(false);
+  });
+
   it("restores portable catalog provenance when importing packaged skills", async () => {
     const companyId = await createCompany();
     const importedFiles = {
+
       "skills/paperclipai/bundled/software-development/review/SKILL.md": [
         "---",
         `key: "${sampleCatalogSkill.key}"`,
