@@ -42,6 +42,11 @@ test("findFloatingDockerBaseImages accepts exact Node versions and digests", () 
   assert.deepEqual(findFloatingDockerBaseImages(text), []);
 });
 
+test("findFloatingDockerBaseImages accepts previously declared stage aliases", () => {
+  const text = "FROM node:24.11.1-trixie-slim AS base\nFROM base AS deps\nFROM base AS production\n";
+  assert.deepEqual(findFloatingDockerBaseImages(text), []);
+});
+
 test("findFloatingDockerVersionDefaults flags latest defaults", () => {
   const offenses = findFloatingDockerVersionDefaults("ARG PAPERCLIPAI_VERSION=latest\nARG OTHER_VERSION=1.2.3\n");
   assert.equal(offenses.length, 1);

@@ -27,7 +27,17 @@ if [[ -f "$LOCK_FILE" ]]; then
   fi
 fi
 echo $$ > "$LOCK_FILE"
-trap 'rm -f "$LOCK_FILE"' EXIT
+ORIGINAL_REF=""
+BRANCH_SWITCHED=0
+cleanup() {
+  local status=$?
+  if [[ "$BRANCH_SWITCHED" -eq 1 && -n "$ORIGINAL_REF" ]]; then
+    git checkout "$ORIGINAL_REF" --quiet 2>/dev/null || log "WARN: could not restore previous ref $ORIGINAL_REF"
+  fi
+  rm -f "$LOCK_FILE"
+  return "$status"
+}
+trap cleanup EXIT
 
 # ── Token ────────────────────────────────────────────────────────────────────
 if [[ ! -f "$TOKEN_FILE" ]]; then
@@ -54,6 +64,7 @@ if [[ ! -d "$DYAD_REPO/.git" ]]; then
 fi
 
 cd "$DYAD_REPO"
+ORIGINAL_REF=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || git rev-parse --verify HEAD)
 
 # Sync remote
 git remote set-url origin "https://haykel1977:$TOKEN@github.com/$GH_REPO.git" 2>/dev/null || true
@@ -66,10 +77,10 @@ if [[ "$AHEAD" -eq 0 ]]; then
   exit 0
 fi
 
-# Check effective diff — squash merges produce different SHAs but same content
-# If the actual file diff is empty, the content is already on main (squash merged)
-EFFECTIVE_DIFF=$(git diff origin/main..HEAD -- . ':(exclude)*.lock' 2>/dev/null | wc -c)
-if [[ "$EFFECTIVE_DIFF" -lt 50 ]]; then
+# Check effective diff — squash merges produce different SHAs but same content.
+# Only an exactly empty full-tree diff means the content is already on main.
+EFFECTIVE_DIFF=$(git diff origin/main..HEAD -- . 2>/dev/null | wc -c | tr -d '[:space:]')
+if [[ "$EFFECTIVE_DIFF" -eq 0 ]]; then
   log "OK: $AHEAD commit(s) ahead by SHA but diff is empty (already squash-merged) — syncing"
   git reset --hard origin/main 2>/dev/null || true
   exit 0
@@ -86,10 +97,12 @@ BRANCH_NAME="dyad/relay-${DYAD_VERSION:-auto}-${LATEST_SHA_SHORT}"
 TIMESTAMP=$(date -u +%Y%m%d-%H%M)
 
 # Check if a PR already exists for this SHA
-EXISTING_PR=$(curl -s \
+EXISTING_PR=$(curl -s -G \
   -H "Authorization: token $TOKEN" \
   -H "Accept: application/vnd.github.v3+json" \
-  "https://api.github.com/repos/$GH_REPO/pulls?head=haykel1977:${BRANCH_NAME}&state=open" \
+  --data-urlencode "head=haykel1977:${BRANCH_NAME}" \
+  --data-urlencode "state=open" \
+  "https://api.github.com/repos/$GH_REPO/pulls" \
   | python3 -c "import json,sys; prs=json.load(sys.stdin); print(prs[0]['number'] if prs else '')" 2>/dev/null)
 
 if [[ -n "$EXISTING_PR" ]]; then
@@ -100,6 +113,7 @@ fi
 # ── Create branch and push ───────────────────────────────────────────────────
 log "Creating branch $BRANCH_NAME from $LATEST_SHA_SHORT"
 git checkout -B "$BRANCH_NAME" HEAD 2>/dev/null
+BRANCH_SWITCHED=1
 git push "https://haykel1977:$TOKEN@github.com/$GH_REPO.git" "$BRANCH_NAME" --force-with-lease 2>&1 | tail -3
 
 # ── Get changed files for PR body ────────────────────────────────────────────

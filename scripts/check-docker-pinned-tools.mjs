@@ -49,6 +49,13 @@ function parseFromImage(line) {
   return tokens[imageIndex] ?? null;
 }
 
+function parseFromAlias(line) {
+  const tokens = stripDockerfileInlineComment(line).trim().split(/\s+/);
+  if (tokens[0]?.toUpperCase() !== "FROM") return null;
+  const asIndex = tokens.findIndex((token) => token.toUpperCase() === "AS");
+  return asIndex >= 0 ? tokens[asIndex + 1] ?? null : null;
+}
+
 function isPinnedNodeImage(image) {
   const [imageWithoutDigest, digest] = image.split("@");
   if (digest?.startsWith("sha256:")) return true;
@@ -62,13 +69,16 @@ function isPinnedNodeImage(image) {
 
 export function findFloatingDockerBaseImages(text) {
   const offenses = [];
+  const stageAliases = new Set();
   const lines = text.split("\n");
   for (let index = 0; index < lines.length; index += 1) {
     const image = parseFromImage(lines[index]);
     if (!image) continue;
-    if (!isPinnedNodeImage(image)) {
+    if (!stageAliases.has(image) && !isPinnedNodeImage(image)) {
       offenses.push({ lineNumber: index + 1, image, line: lines[index].trim() });
     }
+    const alias = parseFromAlias(lines[index]);
+    if (alias) stageAliases.add(alias);
   }
   return offenses;
 }
