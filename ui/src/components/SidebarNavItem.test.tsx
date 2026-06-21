@@ -81,6 +81,18 @@ describe("SidebarNavItem", () => {
     });
   }
 
+  it("does not render a badge for zero counts", () => {
+    renderItem({ badge: 0 });
+
+    const badgeSpans = Array.from(container.querySelectorAll("span"))
+      .filter((span) =>
+        span.className.includes("bg-primary") || span.className.includes("bg-red-600/90"),
+      );
+
+    expect(container.querySelector("a")?.textContent).toBe("Automation");
+    expect(badgeSpans).toHaveLength(0);
+  });
+
   it("renders danger badge and alert dot for review-needed navigation items", () => {
     renderItem({ badge: 7, badgeTone: "danger", alert: true });
 
@@ -91,6 +103,7 @@ describe("SidebarNavItem", () => {
     expect(badge?.className).toContain("bg-red-600/90");
     expect(badge?.className).toContain("text-red-50");
     expect(container.querySelector(".bg-red-500")).not.toBeNull();
+
   });
 
   it("renders the default badge tone without an alert dot", () => {

@@ -89,6 +89,19 @@ describe("MobileBottomNav", () => {
     });
   }
 
+  it("does not render empty zero-count badges", () => {
+    renderNav();
+
+    const badgeSpans = Array.from(container.querySelectorAll("span"))
+      .filter((element) =>
+        element.className.includes("bg-primary") || element.className.includes("bg-red-600/90"),
+      );
+
+    expect(container.textContent).toContain("Auto");
+    expect(container.textContent).toContain("Inbox");
+    expect(badgeSpans).toHaveLength(0);
+  });
+
   it("uses the danger badge style when automation needs human review", () => {
     mockAutomationBadge.count = 7;
     mockAutomationBadge.needsReview = true;
