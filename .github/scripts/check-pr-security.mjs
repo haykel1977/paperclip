@@ -281,13 +281,13 @@ export async function postSecurityCheckRun(fetchImpl, token, repo, headSha, hasF
       // the PR in `mergeStateStatus: BLOCKED`. The draft advisory is the
       // durable signal for maintainers; there is no completion path that
       // could ever flip an `in_progress` check-run back to completed on the
-
       // same head SHA, so it would hang forever.
       status: 'completed',
       conclusion: 'neutral',
       output: {
         title: 'Security Review Recommended',
         summary: advisoryFiled
+
           ? 'Draft advisory filed for maintainer review. Not a merge block — review the advisory at your leisure.'
           : 'Security concerns detected, but the fallback workflow token could not create a draft advisory. Review the workflow logs and configure COMMITPERCLIP_KEY for full advisory filing.',
       },

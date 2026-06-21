@@ -243,9 +243,9 @@ test('validateSensitivePaths: checks paths against the resolved base ref instead
   );
 
   assert.deepEqual(stale, []);
-
   assert.ok(seenPaths.every(path => path.includes('ref=release%2F1.2')));
   assert.ok(!seenPaths.some(path => path.includes('ref=master')));
+
 });
 
 test('validateSensitivePaths: returns only 404 paths and rethrows non-404 errors', async () => {
