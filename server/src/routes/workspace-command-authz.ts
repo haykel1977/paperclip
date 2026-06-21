@@ -80,6 +80,27 @@ export function collectAgentAdapterWorkspaceCommandPaths(
   ];
 }
 
+export function collectRuntimeConfigAdapterWorkspaceCommandPaths(
+  runtimeConfig: unknown,
+  prefix = "runtimeConfig",
+): string[] {
+  const runtimeRecord = isRecord(runtimeConfig) ? runtimeConfig : null;
+  const modelProfiles = isRecord(runtimeRecord?.modelProfiles) ? runtimeRecord.modelProfiles : null;
+  if (!modelProfiles) return [];
+
+  const paths: string[] = [];
+  for (const [profileKey, rawProfile] of Object.entries(modelProfiles)) {
+    if (!isRecord(rawProfile) || !isRecord(rawProfile.adapterConfig)) continue;
+    paths.push(
+      ...collectAgentAdapterWorkspaceCommandPaths(
+        rawProfile.adapterConfig,
+        `${prefix}.modelProfiles.${profileKey}.adapterConfig`,
+      ),
+    );
+  }
+  return paths;
+}
+
 export function collectProjectExecutionWorkspaceCommandPaths(policy: unknown): string[] {
   if (!isRecord(policy)) return [];
   return [
@@ -126,7 +147,6 @@ export function collectIssueWorkspaceCommandPaths(input: {
   executionWorkspaceSettings?: unknown;
   assigneeAdapterOverrides?: unknown;
 }): string[] {
-
   const paths: string[] = [];
   if (isRecord(input.executionWorkspaceSettings)) {
     paths.push(
@@ -134,6 +154,7 @@ export function collectIssueWorkspaceCommandPaths(input: {
         input.executionWorkspaceSettings.workspaceStrategy,
         "executionWorkspaceSettings.workspaceStrategy",
       ),
+
       ...collectWorkspaceRuntimeCommandPaths(
         input.executionWorkspaceSettings.workspaceRuntime,
         "executionWorkspaceSettings.workspaceRuntime",

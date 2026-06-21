@@ -5,9 +5,11 @@ import {
   collectIssueWorkspaceCommandPaths,
   collectProjectExecutionWorkspaceCommandPaths,
   collectProjectWorkspaceCommandPaths,
+  collectRuntimeConfigAdapterWorkspaceCommandPaths,
 } from "../routes/workspace-command-authz.js";
 
 describe("workspace command authorization path collection", () => {
+
   it("collects adapter config workspace runtime commands", () => {
     expect(
       collectAgentAdapterWorkspaceCommandPaths({
@@ -25,9 +27,28 @@ describe("workspace command authorization path collection", () => {
     ]);
   });
 
+  it("collects runtime model profile adapter workspace commands", () => {
+    expect(
+      collectRuntimeConfigAdapterWorkspaceCommandPaths({
+        modelProfiles: {
+          cheap: {
+            adapterConfig: {
+              workspaceRuntime: {
+                jobs: [{ name: "seed", command: "pnpm db:seed" }],
+              },
+            },
+          },
+        },
+      }),
+    ).toEqual([
+      "runtimeConfig.modelProfiles.cheap.adapterConfig.workspaceRuntime.jobs[0].command",
+    ]);
+  });
+
   it("collects project policy workspace runtime commands", () => {
     expect(
       collectProjectExecutionWorkspaceCommandPaths({
+
         workspaceStrategy: {
           type: "git_worktree",
           provisionCommand: "pnpm install",

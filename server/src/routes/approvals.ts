@@ -20,6 +20,15 @@ import {
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 import { redactEventPayload } from "../redaction.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
+import { forbidden } from "../errors.js";
+import {
+  collectAgentAdapterWorkspaceCommandPaths,
+  collectRuntimeConfigAdapterWorkspaceCommandPaths,
+} from "./workspace-command-authz.js";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 function redactApprovalPayload<T extends { payload: Record<string, unknown> }>(approval: T): T {
   return {
@@ -28,11 +37,39 @@ function redactApprovalPayload<T extends { payload: Record<string, unknown> }>(a
   };
 }
 
+function collectHireApprovalHostWorkspaceCommandPaths(payload: unknown) {
+  if (!isRecord(payload)) return [];
+  const requestedConfigurationSnapshot = isRecord(payload.requestedConfigurationSnapshot)
+    ? payload.requestedConfigurationSnapshot
+    : null;
+  return [
+    ...collectAgentAdapterWorkspaceCommandPaths(payload.adapterConfig, "payload.adapterConfig"),
+    ...collectRuntimeConfigAdapterWorkspaceCommandPaths(payload.runtimeConfig, "payload.runtimeConfig"),
+    ...collectAgentAdapterWorkspaceCommandPaths(
+      requestedConfigurationSnapshot?.adapterConfig,
+      "payload.requestedConfigurationSnapshot.adapterConfig",
+    ),
+    ...collectRuntimeConfigAdapterWorkspaceCommandPaths(
+      requestedConfigurationSnapshot?.runtimeConfig,
+      "payload.requestedConfigurationSnapshot.runtimeConfig",
+    ),
+  ];
+}
+
+function assertNoAgentControlledHireApprovalHostWorkspaceCommands(payload: unknown) {
+  const paths = collectHireApprovalHostWorkspaceCommandPaths(payload);
+  if (paths.length === 0) return;
+  throw forbidden(
+    `Agent-requested hire approvals cannot set host-executed workspace commands (${paths.join(", ")}).`,
+  );
+}
+
 export function approvalRoutes(
   db: Db,
   options: { pluginWorkerManager?: PluginWorkerManager } = {},
 ) {
   const router = Router();
+
   const svc = approvalService(db);
   const access = accessService(db);
   const heartbeat = heartbeatService(db, {
@@ -103,6 +140,9 @@ export function approvalRoutes(
         : approvalInput.payload;
 
     const actor = getActorInfo(req);
+    if (actor.actorType === "agent" && approvalInput.type === "hire_agent") {
+      assertNoAgentControlledHireApprovalHostWorkspaceCommands(normalizedPayload);
+    }
     const approval = await svc.create(companyId, {
       ...approvalInput,
       payload: normalizedPayload,
@@ -153,9 +193,13 @@ export function approvalRoutes(
   router.post("/approvals/:id/approve", validate(resolveApprovalSchema), async (req, res) => {
     assertBoard(req);
     const id = req.params.id as string;
-    if (!(await requireApprovalAccess(req, id))) {
+    const existingApproval = await requireApprovalAccess(req, id);
+    if (!existingApproval) {
       res.status(404).json({ error: "Approval not found" });
       return;
+    }
+    if (existingApproval.type === "hire_agent" && existingApproval.requestedByAgentId) {
+      assertNoAgentControlledHireApprovalHostWorkspaceCommands(existingApproval.payload);
     }
     const decidedByUserId = req.actor.userId ?? "board";
     const { approval, applied } = await svc.approve(id, decidedByUserId, req.body.decisionNote);
@@ -166,6 +210,7 @@ export function approvalRoutes(
       const primaryIssueId = linkedIssueIds[0] ?? null;
 
       await logActivity(db, {
+
         companyId: approval.companyId,
         actorType: "user",
         actorId: req.actor.userId ?? "board",
@@ -321,10 +366,14 @@ export function approvalRoutes(
           )
         : req.body.payload
       : undefined;
+    if (req.actor.type === "agent" && existing.type === "hire_agent" && normalizedPayload !== undefined) {
+      assertNoAgentControlledHireApprovalHostWorkspaceCommands(normalizedPayload);
+    }
     const approval = await svc.resubmit(id, normalizedPayload);
     const actor = getActorInfo(req);
     await logActivity(db, {
       companyId: approval.companyId,
+
       actorType: actor.actorType,
       actorId: actor.actorId,
       agentId: actor.agentId,
