@@ -124,6 +124,9 @@ export function collectProjectWorkspaceCommandPaths(
 ): string[] {
   if (!isRecord(workspacePatch)) return [];
   const paths: string[] = [];
+  if (hasOwn(workspacePatch, "setupCommand")) {
+    paths.push(prefixPath(prefix, "setupCommand"));
+  }
   if (hasOwn(workspacePatch, "cleanupCommand")) {
     paths.push(prefixPath(prefix, "cleanupCommand"));
   }
@@ -135,6 +138,7 @@ export function collectProjectWorkspaceCommandPaths(
       ),
     );
   }
+
   if (isRecord(workspacePatch.metadata) && isRecord(workspacePatch.metadata.runtimeConfig)) {
     paths.push(
       ...collectWorkspaceRuntimeCommandPaths(

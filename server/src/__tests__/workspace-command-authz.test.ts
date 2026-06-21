@@ -72,6 +72,7 @@ describe("workspace command authorization path collection", () => {
   it("collects project workspace runtime command mutations", () => {
     expect(
       collectProjectWorkspaceCommandPaths({
+        setupCommand: "pnpm install",
         cleanupCommand: "pnpm cleanup",
         runtimeConfig: {
           workspaceRuntime: {
@@ -90,6 +91,7 @@ describe("workspace command authorization path collection", () => {
         },
       }),
     ).toEqual([
+      "setupCommand",
       "cleanupCommand",
       "runtimeConfig.workspaceRuntime.commands[0].command",
       "metadata.runtimeConfig.workspaceRuntime.jobs[0].command",

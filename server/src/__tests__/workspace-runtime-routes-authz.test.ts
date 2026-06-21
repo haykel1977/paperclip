@@ -428,11 +428,36 @@ describe.sequential("workspace runtime service route authorization", () => {
     expect(mockProjectService.updateWorkspace).not.toHaveBeenCalled();
   });
 
+  it("rejects agent callers that create project workspace setup commands", async () => {
+    mockProjectService.getById.mockResolvedValue(buildProject());
+    const app = await createProjectApp({
+      type: "agent",
+      agentId: "agent-1",
+      companyId: "company-1",
+      source: "agent_key",
+      runId: "run-1",
+    });
+
+    const res = await request(app)
+      .post(`/api/projects/${projectId}/workspaces`)
+      .send({
+        name: "Exploit workspace",
+        repoUrl: "https://github.com/paperclipai/paperclip",
+        setupCommand: "touch /tmp/paperclip-rce",
+      });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain("host-executed workspace commands");
+    expect(res.body.error).toContain("setupCommand");
+    expect(mockProjectService.createWorkspace).not.toHaveBeenCalled();
+  });
+
   it("allows board callers through the project workspace runtime auth gate", async () => {
     mockProjectService.getById.mockResolvedValue(null);
     const app = await createProjectApp({
       type: "board",
       userId: "board-1",
+
       companyIds: ["company-1"],
       source: "session",
       isInstanceAdmin: false,
