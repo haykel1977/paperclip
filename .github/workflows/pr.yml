@@ -3,11 +3,11 @@ name: PR
 on:
   pull_request:
     branches:
-      - master
+      - main
 
 concurrency:
   group: pr-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   policy:
@@ -322,8 +322,9 @@ jobs:
         env:
           USED_ARTIFACT_LOCKFILE: ${{ needs.policy.outputs.lockfile_regenerated || '0' }}
         run: |
-          git checkout -B master HEAD
+          git checkout -B main HEAD
           if [ "$USED_ARTIFACT_LOCKFILE" = "1" ]; then
+
             git add pnpm-lock.yaml
             if ! git diff --cached --quiet; then
               git -c user.email=ci@paperclip.local -c user.name=CI \
