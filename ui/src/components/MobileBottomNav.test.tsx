@@ -121,4 +121,14 @@ describe("MobileBottomNav", () => {
     expect(badge?.className).toContain("bg-red-600/90");
     expect(badge?.className).toContain("text-red-50");
   });
+
+  it("caps large mobile badge counts at 99+", () => {
+    mockAutomationBadge.count = 125;
+    mockAutomationBadge.needsReview = true;
+
+    renderNav();
+
+    expect(container.textContent).toContain("99+");
+    expect(container.textContent).not.toContain("125");
+  });
 });
