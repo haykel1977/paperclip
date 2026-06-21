@@ -52,6 +52,19 @@ Canaries only cover the first two surfaces plus an internal traceability tag.
 - canaries never create GitHub Releases
 - canaries never require changelog generation
 
+## Lockfile handling in release workflows
+
+The release workflow intentionally installs with `pnpm install --no-frozen-lockfile`.
+This matches the repository policy that GitHub automation owns `pnpm-lock.yaml`:
+manifest-changing PRs validate dependency resolution without committing the
+lockfile, and default-branch automation refreshes the lockfile after merge.
+
+Before `scripts/release.sh` runs, workflow steps restore or revert local
+lockfile churn so the release script still sees a clean worktree. Do not replace
+this with ad hoc lockfile commits in release jobs; if lockfile behavior changes,
+update the dependency-lockfile policy in `doc/DEVELOPING.md` and the release
+automation setup guide together.
+
 ## TL;DR
 
 ### Canary
