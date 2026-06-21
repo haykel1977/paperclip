@@ -3418,7 +3418,11 @@ export function companySkillService(db: Db) {
     return out;
   }
 
-  async function importFromSource(companyId: string, source: string): Promise<CompanySkillImportResult> {
+  async function importFromSource(
+    companyId: string,
+    source: string,
+    options: { allowExecutableScripts?: boolean } = {},
+  ): Promise<CompanySkillImportResult> {
     await ensureSkillInventoryCurrent(companyId);
     const parsed = parseSkillImportSourceInput(source);
     const local = !/^https?:\/\//i.test(parsed.resolvedSource);
@@ -3442,6 +3446,19 @@ export function companySkillService(db: Db) {
           ? `Skill ${parsed.requestedSkillSlug} was not found in the provided source.`
           : "No skills were found in the provided source.",
       );
+    }
+    if (options.allowExecutableScripts === false) {
+      const scriptedSkill = filteredSkills.find((skill) => skill.trustLevel === "scripts_executables");
+      if (scriptedSkill) {
+        throw unprocessable(
+          `Skill source "${scriptedSkill.slug}" contains executable scripts and cannot be imported by agent-authenticated callers.`,
+          {
+            sourceType: scriptedSkill.sourceType,
+            trustLevel: scriptedSkill.trustLevel,
+            reason: "agent_scripts_executables_blocked",
+          },
+        );
+      }
     }
     // Override sourceType/sourceLocator for skills imported via skills.sh
     if (parsed.originalSkillsShUrl) {
