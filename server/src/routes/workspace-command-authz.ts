@@ -111,6 +111,14 @@ export function collectProjectWorkspaceCommandPaths(
       ),
     );
   }
+  if (isRecord(workspacePatch.metadata) && isRecord(workspacePatch.metadata.runtimeConfig)) {
+    paths.push(
+      ...collectWorkspaceRuntimeCommandPaths(
+        workspacePatch.metadata.runtimeConfig.workspaceRuntime,
+        prefixPath(prefixPath(prefixPath(prefix, "metadata"), "runtimeConfig"), "workspaceRuntime"),
+      ),
+    );
+  }
   return paths;
 }
 
@@ -118,6 +126,7 @@ export function collectIssueWorkspaceCommandPaths(input: {
   executionWorkspaceSettings?: unknown;
   assigneeAdapterOverrides?: unknown;
 }): string[] {
+
   const paths: string[] = [];
   if (isRecord(input.executionWorkspaceSettings)) {
     paths.push(

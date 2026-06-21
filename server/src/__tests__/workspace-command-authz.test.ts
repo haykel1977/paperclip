@@ -56,16 +56,25 @@ describe("workspace command authorization path collection", () => {
             ],
           },
         },
+        metadata: {
+          runtimeConfig: {
+            workspaceRuntime: {
+              jobs: [{ name: "seed", command: "pnpm db:seed" }],
+            },
+          },
+        },
       }),
     ).toEqual([
       "cleanupCommand",
       "runtimeConfig.workspaceRuntime.commands[0].command",
+      "metadata.runtimeConfig.workspaceRuntime.jobs[0].command",
     ]);
   });
 
   it("collects issue workspace runtime and assignee adapter runtime command mutations", () => {
     expect(
       collectIssueWorkspaceCommandPaths({
+
         executionWorkspaceSettings: {
           workspaceRuntime: {
             services: [{ name: "preview", command: "pnpm preview" }],
