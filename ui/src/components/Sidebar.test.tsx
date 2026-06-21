@@ -20,6 +20,14 @@ const mockAutomationBadge = vi.hoisted(() => ({
   needsReview: false,
 }));
 
+<<<<<<< HEAD
+=======
+const mockInboxBadge = vi.hoisted(() => ({
+  inbox: 0,
+  failedRuns: 0,
+}));
+
+>>>>>>> 2cdbccbf680676336b95dbd13599d1c2e00850a5
 vi.mock("@/lib/router", () => ({
   NavLink: ({ to, children, className, ...props }: {
     to: string;
@@ -73,7 +81,7 @@ vi.mock("../hooks/useAutomationReviewBadge", () => ({
 }));
 
 vi.mock("../hooks/useInboxBadge", () => ({
-  useInboxBadge: () => ({ inbox: 0, failedRuns: 0 }),
+  useInboxBadge: () => mockInboxBadge,
 }));
 
 vi.mock("@/plugins/slots", () => ({
@@ -137,6 +145,11 @@ describe("Sidebar", () => {
     mockHeartbeatsApi.liveRunsForCompany.mockResolvedValue([]);
     mockAutomationBadge.count = 0;
     mockAutomationBadge.needsReview = false;
+<<<<<<< HEAD
+=======
+    mockInboxBadge.inbox = 0;
+    mockInboxBadge.failedRuns = 0;
+>>>>>>> 2cdbccbf680676336b95dbd13599d1c2e00850a5
   });
 
   afterEach(() => {
@@ -180,6 +193,30 @@ describe("Sidebar", () => {
     });
   });
 
+<<<<<<< HEAD
+=======
+  it("shows the Inbox danger badge and alert when failed runs are present", async () => {
+    mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableIsolatedWorkspaces: false });
+    mockInboxBadge.inbox = 5;
+    mockInboxBadge.failedRuns = 2;
+    const root = await renderSidebar();
+
+    const inboxLink = [...container.querySelectorAll("nav a")]
+      .find((anchor) => anchor.getAttribute("href") === "/inbox");
+    const badge = [...(inboxLink?.querySelectorAll("span") ?? [])]
+      .find((span) => span.textContent === "5");
+
+    expect(inboxLink?.textContent).toContain("Inbox");
+    expect(badge?.className).toContain("bg-red-600/90");
+    expect(badge?.className).toContain("text-red-50");
+    expect(inboxLink?.querySelector(".bg-red-500")).not.toBeNull();
+
+    flushSync(() => {
+      root.unmount();
+    });
+  });
+
+>>>>>>> 2cdbccbf680676336b95dbd13599d1c2e00850a5
   it("renders plugin sidebar launchers inside the Work section", async () => {
     mockInstanceSettingsApi.getExperimental.mockResolvedValue({
       enableIsolatedWorkspaces: false,
