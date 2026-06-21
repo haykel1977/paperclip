@@ -1,5 +1,8 @@
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { CatalogTeam } from "@paperclipai/shared";
+import type { CatalogManifest, CatalogTeam } from "@paperclipai/shared";
 
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
@@ -41,9 +44,76 @@ const {
 const CORE_EXEC_TEAM_ID = "paperclipai:bundled:company-defaults:core-exec-team";
 const CORE_EXEC_TEAM_HASH = "sha256:0f20e9d56124c1dc90a1e4b128fabd863538bcc935117220f719d9620f7c89f1";
 
+async function withTempCatalogManifest<T>(run: (serviceFactory: typeof teamsCatalogService) => Promise<T>) {
+  const previousCatalogDir = process.env.PAPERCLIP_TEAMS_CATALOG_DIR;
+  const catalogRoot = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-teams-catalog-test-"));
+  const generatedDir = path.join(catalogRoot, "generated");
+  await fs.mkdir(generatedDir, { recursive: true });
+  const manifest: CatalogManifest = {
+    schemaVersion: 1,
+    packageName: "@paperclipai/test-teams-catalog",
+    packageVersion: "0.0.0-test",
+    generatedAt: new Date().toISOString(),
+    teams: [
+      {
+        id: "paperclipai:optional:test:external-skills",
+        key: "paperclipai/optional/test/external-skills",
+        kind: "optional",
+        category: "test",
+        slug: "external-skills",
+        name: "External Skills",
+        description: "Team with an external skill requirement",
+        path: "catalog/optional/test/external-skills",
+        entrypoint: "TEAM.md",
+        schema: "agentcompanies/v1",
+        defaultInstall: false,
+        recommendedForCompanyTypes: [],
+        tags: [],
+        counts: { agents: 0, projects: 0, tasks: 0, routines: 0, localSkills: 0, catalogSkills: 0, externalSkillSources: 1 },
+        rootAgentSlugs: [],
+        agentSlugs: [],
+        projectSlugs: [],
+        requiredSkills: [
+          {
+            type: "github",
+            ref: "https://github.com/acme/external-skill",
+            agentSlugs: ["external-agent"],
+            resolved: true,
+            sourceLocator: "https://github.com/acme/external-skill/tree/0123456789abcdef0123456789abcdef01234567/skills/external",
+            sourceRef: "0123456789abcdef0123456789abcdef01234567",
+          },
+        ],
+        envInputs: [],
+        sourceRefs: [],
+        files: [],
+        trustLevel: "external_sources",
+        compatibility: "compatible",
+        contentHash: "sha256:external-skills",
+      },
+    ],
+  };
+  await fs.writeFile(path.join(generatedDir, "catalog.json"), JSON.stringify(manifest), "utf8");
+
+  try {
+    process.env.PAPERCLIP_TEAMS_CATALOG_DIR = catalogRoot;
+    vi.resetModules();
+    const freshModule = await import("../services/teams-catalog.js");
+    return await run(freshModule.teamsCatalogService);
+  } finally {
+    if (previousCatalogDir === undefined) {
+      delete process.env.PAPERCLIP_TEAMS_CATALOG_DIR;
+    } else {
+      process.env.PAPERCLIP_TEAMS_CATALOG_DIR = previousCatalogDir;
+    }
+    await fs.rm(catalogRoot, { recursive: true, force: true });
+    vi.resetModules();
+  }
+}
+
 function agentWithCatalogTeam(originHash: string | null, extra: Record<string, unknown> = {}) {
   return {
     id: `agent-${Math.random().toString(36).slice(2)}`,
+
     companyId: "company-1",
     metadata: {
       paperclip: {
@@ -248,6 +318,49 @@ describe("teamsCatalogService", () => {
         expect.stringContaining("catalog unavailable"),
       ]),
     );
+  });
+
+  it("disables executable scripts for agent-triggered external skill imports after team install", async () => {
+    await withTempCatalogManifest(async (serviceFactory) => {
+      const svc = serviceFactory({} as any);
+
+      await svc.installCatalogTeam("company-1", "external-skills", {
+        sourcePolicy: { allowExternalSources: true },
+        actor: {
+          actorType: "agent",
+          actorId: "agent-1",
+          agentId: "agent-1",
+          runId: "run-1",
+        },
+      });
+
+      expect(mockCompanySkillService.importFromSource).toHaveBeenCalledWith(
+        "company-1",
+        "https://github.com/acme/external-skill/tree/0123456789abcdef0123456789abcdef01234567/skills/external",
+        { allowExecutableScripts: false },
+      );
+    });
+  });
+
+  it("allows executable scripts for user-triggered external skill imports after team install", async () => {
+    await withTempCatalogManifest(async (serviceFactory) => {
+      const svc = serviceFactory({} as any);
+
+      await svc.installCatalogTeam("company-1", "external-skills", {
+        sourcePolicy: { allowExternalSources: true },
+        actor: {
+          actorType: "user",
+          actorId: "user-1",
+          userId: "user-1",
+        },
+      });
+
+      expect(mockCompanySkillService.importFromSource).toHaveBeenCalledWith(
+        "company-1",
+        "https://github.com/acme/external-skill/tree/0123456789abcdef0123456789abcdef01234567/skills/external",
+        { allowExecutableScripts: true },
+      );
+    });
   });
 
   it("injects safe claude_local adapter defaults for every bundled agent when no overrides are supplied", async () => {
