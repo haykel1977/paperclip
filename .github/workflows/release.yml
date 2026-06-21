@@ -11,7 +11,6 @@ on:
         required: true
         type: string
         default: main
-
       stable_date:
         description: Enter a UTC date in YYYY-MM-DD format, for example 2026-03-18. Do not enter a version string. The workflow will resolve that date to a stable version such as 2026.318.0, then 2026.318.1 for the next same-day stable.
         required: false
