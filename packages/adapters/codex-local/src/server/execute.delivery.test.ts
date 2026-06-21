@@ -79,7 +79,7 @@ describe("executeDeliveryHook", () => {
     const worktreeCwd = mkWorktree();
     const runProc = mkRunProc({
       "git status --porcelain": { exitCode: 0, stdout: " M HEARTBEAT.md\n" },
-      "git push -u": { exitCode: 0 },
+      "git push -u": { exitCode: 0 }, // paperclip:allow-git-push: test mock for delivery-hook push (PAPA-432)
       "gh pr list": { exitCode: 0, stdout: "" },
       "gh label list": { exitCode: 0, stdout: "[]" },
       "gh pr create": { exitCode: 0, stdout: "" },
@@ -87,7 +87,7 @@ describe("executeDeliveryHook", () => {
     const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
     expect(result.reason).toBe("created");
     expect(runProc).toHaveBeenCalledWith("pnpm", ["run", "typecheck"], worktreeCwd, expect.objectContaining({ CI: "true" }));
-    expect(runProc).toHaveBeenCalledWith("git", ["push", "-u", "origin", base.branch], worktreeCwd, expect.any(Object));
+    expect(runProc).toHaveBeenCalledWith("git", ["push", "-u", "origin", base.branch], worktreeCwd, expect.any(Object)); // paperclip:allow-git-push: assertion verifying delivery-hook push call (PAPA-432)
   });
 
   it("no diff -> silent skip, no commit", async () => {
