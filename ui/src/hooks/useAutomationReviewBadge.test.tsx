@@ -7,8 +7,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DashboardSummary } from "@paperclipai/shared";
 import { useAutomationReviewBadge } from "./useAutomationReviewBadge";
 
-const { dashboardSummaryMock } = vi.hoisted(() => ({
+const { agentsListMock, approvalsListMock, dashboardSummaryMock } = vi.hoisted(() => ({
+  agentsListMock: vi.fn(),
+  approvalsListMock: vi.fn(),
   dashboardSummaryMock: vi.fn(),
+}));
+
+type DashboardSummaryOverrides = Omit<Partial<DashboardSummary>, "agents" | "tasks" | "costs" | "budgets"> & {
+  agents?: Partial<DashboardSummary["agents"]>;
+  tasks?: Partial<DashboardSummary["tasks"]>;
+  costs?: Partial<DashboardSummary["costs"]>;
+  budgets?: Partial<DashboardSummary["budgets"]>;
+};
+
+vi.mock("../api/agents", () => ({
+  agentsApi: { list: agentsListMock },
+}));
+
+vi.mock("../api/approvals", () => ({
+  approvalsApi: { list: approvalsListMock },
 }));
 
 vi.mock("../api/dashboard", () => ({
@@ -18,7 +35,7 @@ vi.mock("../api/dashboard", () => ({
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-function makeSummary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
+function makeSummary(overrides: DashboardSummaryOverrides = {}): DashboardSummary {
   return {
     companyId: "company-1",
     agents: {
@@ -98,6 +115,8 @@ describe("useAutomationReviewBadge", () => {
   let root: Root | null;
 
   beforeEach(() => {
+    agentsListMock.mockReset();
+    approvalsListMock.mockReset();
     dashboardSummaryMock.mockReset();
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -118,16 +137,20 @@ describe("useAutomationReviewBadge", () => {
     root = rendered.root;
 
     expect(container.textContent).toBe("0:false");
+    expect(agentsListMock).not.toHaveBeenCalled();
+    expect(approvalsListMock).not.toHaveBeenCalled();
     expect(dashboardSummaryMock).not.toHaveBeenCalled();
   });
 
-  it("derives the human review count from the dashboard summary", async () => {
+  it("derives the human review count from automation page inputs", async () => {
     dashboardSummaryMock.mockResolvedValue(makeSummary({
       agents: { active: 1, error: 2 },
       tasks: { blocked: 3 },
-      pendingApprovals: 4,
+      pendingApprovals: 99,
       budgets: { activeIncidents: 1, pendingApprovals: 5 },
     }));
+    agentsListMock.mockResolvedValue([{}]);
+    approvalsListMock.mockResolvedValue([{}, {}, {}, {}]);
 
     const rendered = renderHarness("company-1", container);
     root = rendered.root;
@@ -135,11 +158,17 @@ describe("useAutomationReviewBadge", () => {
     await waitForAssertion(() => {
       expect(container.textContent).toBe("15:true");
     });
+    expect(agentsListMock).toHaveBeenCalledWith("company-1");
+    expect(approvalsListMock).toHaveBeenCalledWith("company-1", "pending");
     expect(dashboardSummaryMock).toHaveBeenCalledWith("company-1");
   });
 
-  it("reports setup review when no agents are enabled", async () => {
-    dashboardSummaryMock.mockResolvedValue(makeSummary());
+  it("reports setup review when the automation agent list is empty", async () => {
+    dashboardSummaryMock.mockResolvedValue(makeSummary({
+      agents: { active: 2, running: 1 },
+    }));
+    agentsListMock.mockResolvedValue([]);
+    approvalsListMock.mockResolvedValue([]);
 
     const rendered = renderHarness("company-1", container);
     root = rendered.root;

@@ -121,7 +121,7 @@ export function computeAutomationReadiness(input: {
     },
   ];
 
-  const interventionItems: AutopilotInterventionItem[] = [
+  const interventionItems = ([
     {
       kind: "approval_decisions",
       label: "Approval decisions",
@@ -152,7 +152,7 @@ export function computeAutomationReadiness(input: {
       count: setupRequiredCount,
       href: "/agents/new",
     },
-  ].filter((item) => item.count > 0);
+  ] satisfies AutopilotInterventionItem[]).filter((item) => item.count > 0);
 
   const readyChecks = checks.filter((check) => check.state === "ready").length;
   const score = Math.round((readyChecks / checks.length) * 100);
