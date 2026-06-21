@@ -320,7 +320,6 @@ describe("teamsCatalogService", () => {
     );
   });
 
-<<<<<<< HEAD
   it("disables executable scripts for agent-triggered catalog skill installs after team install", async () => {
     const svc = teamsCatalogService({} as any);
 
@@ -360,9 +359,6 @@ describe("teamsCatalogService", () => {
 
   it("disables executable scripts for agent-triggered external skill imports after team install", async () => {
 
-=======
-  it("disables executable scripts for agent-triggered external skill imports after team install", async () => {
->>>>>>> origin/main
     await withTempCatalogManifest(async (serviceFactory) => {
       const svc = serviceFactory({} as any);
 

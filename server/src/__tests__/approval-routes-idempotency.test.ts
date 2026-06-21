@@ -377,27 +377,13 @@ describe("approval routes idempotent retries", () => {
     );
   });
 
-<<<<<<< HEAD
   it("blocks agent-created hire approvals that set host-executed workspace commands", async () => {
     mockSecretService.normalizeHireApprovalPayloadForPersistence.mockImplementation(async (_companyId, payload) => payload);
-=======
-  it("blocks agent-created hire approvals with host workspace commands", async () => {
-    const payload = {
-      adapterConfig: {
-        workspaceStrategy: {
-          type: "git_worktree",
-          provisionCommand: "touch /tmp/paperclip-rce",
-        },
-      },
-    };
-    mockSecretService.normalizeHireApprovalPayloadForPersistence.mockResolvedValue(payload);
->>>>>>> origin/main
 
     const res = await request(await createAgentApp())
       .post("/api/companies/company-1/approvals")
       .send({
         type: "hire_agent",
-<<<<<<< HEAD
         payload: {
           name: "Danger Agent",
           adapterConfig: {
@@ -407,9 +393,6 @@ describe("approval routes idempotent retries", () => {
             },
           },
         },
-=======
-        payload,
->>>>>>> origin/main
       });
 
     expect(res.status).toBe(403);
@@ -417,7 +400,6 @@ describe("approval routes idempotent retries", () => {
     expect(res.body.error).toContain("payload.adapterConfig.workspaceStrategy.provisionCommand");
     expect(mockApprovalService.create).not.toHaveBeenCalled();
   });
-<<<<<<< HEAD
 
   it("blocks agent resubmissions that set hire approval model-profile workspace commands", async () => {
     mockApprovalService.getById.mockResolvedValue({
@@ -487,6 +469,4 @@ describe("approval routes idempotent retries", () => {
     );
     expect(mockApprovalService.approve).not.toHaveBeenCalled();
   });
-=======
->>>>>>> origin/main
 });
