@@ -6959,12 +6959,12 @@ export function issueRoutes(
       return;
     }
     assertCompanyAccess(req, attachment.companyId);
-    const issue = await svc.getById(attachment.issueId);
-    if (!issue) {
-      res.status(404).json({ error: "Attachment not found" });
+    const parentIssue = await svc.getById(attachment.issueId);
+    if (!parentIssue) {
+      res.status(404).json({ error: "Issue not found" });
       return;
     }
-    if (!(await assertIssueReadAllowed(req, res, issue))) return;
+    if (!(await assertIssueReadAllowed(req, res, parentIssue))) return;
 
     const contentLength = attachment.byteSize;
     const range = parseAttachmentRangeHeader(
