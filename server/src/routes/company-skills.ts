@@ -228,12 +228,15 @@ export function companySkillRoutes(db: Db) {
       const companyId = req.params.companyId as string;
       await assertCanMutateCompanySkills(req, companyId);
       const source = String(req.body.source ?? "");
-      const result = await svc.importFromSource(companyId, source);
+      const result = await svc.importFromSource(companyId, source, {
+        allowExecutableScripts: req.actor.type === "board",
+      });
 
       const actor = getActorInfo(req);
       await logActivity(db, {
         companyId,
         actorType: actor.actorType,
+
         actorId: actor.actorId,
         agentId: actor.agentId,
         runId: actor.runId,
