@@ -83,6 +83,7 @@ import {
 } from "../board-claim.js";
 import { claimFirstInstanceAdmin } from "../first-admin-claim.js";
 import { getStorageService } from "../storage/index.js";
+import { collectAgentAdapterWorkspaceCommandPaths } from "./workspace-command-authz.js";
 
 function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
@@ -666,6 +667,14 @@ function summarizeOpenClawGatewayDefaultsForLog(defaultsPayload: unknown) {
   };
 }
 
+export function assertAgentJoinDefaultsDoNotSetHostWorkspaceCommands(defaults: unknown) {
+  const paths = collectAgentAdapterWorkspaceCommandPaths(defaults, "agentDefaultsPayload");
+  if (paths.length === 0) return;
+  throw forbidden(
+    `Agent join requests cannot set host-executed workspace commands (${paths.join(", ")}).`,
+  );
+}
+
 export function normalizeAgentDefaultsForJoin(input: {
   adapterType: string | null;
   defaultsPayload: unknown;
@@ -674,6 +683,7 @@ export function normalizeAgentDefaultsForJoin(input: {
   bindHost: string;
   allowedHostnames: string[];
 }) {
+
   const fatalErrors: string[] = [];
   const diagnostics: JoinDiagnostic[] = [];
   if (input.adapterType !== "openclaw_gateway") {
@@ -3564,6 +3574,9 @@ export function accessRoutes(
       if (requestType === "agent" && joinDefaults.fatalErrors.length > 0) {
         throw badRequest(joinDefaults.fatalErrors.join("; "));
       }
+      if (requestType === "agent") {
+        assertAgentJoinDefaultsDoNotSetHostWorkspaceCommands(joinDefaults.normalized);
+      }
 
       if (requestType === "agent" && adapterType === "openclaw_gateway") {
         logger.info(
@@ -3577,6 +3590,7 @@ export function accessRoutes(
               joinDefaults.normalized
             )
           },
+
           "invite accept normalized OpenClaw gateway defaults"
         );
       }
@@ -3948,6 +3962,10 @@ export function accessRoutes(
         .then((rows) => rows[0] ?? null);
       if (!invite) throw notFound("Invite not found");
 
+      if (existing.requestType === "agent") {
+        assertAgentJoinDefaultsDoNotSetHostWorkspaceCommands(existing.agentDefaultsPayload);
+      }
+
       let createdAgentId: string | null = existing.createdAgentId ?? null;
       if (existing.requestType === "human") {
         if (!existing.requestingUserId)
@@ -3955,6 +3973,7 @@ export function accessRoutes(
         const membershipRole = resolveHumanInviteRole(
           invite.defaultsPayload as Record<string, unknown> | null,
         );
+
         await access.ensureMembership(
           companyId,
           "user",

