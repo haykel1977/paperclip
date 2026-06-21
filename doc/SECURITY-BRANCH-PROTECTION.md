@@ -109,3 +109,31 @@ Two GitHub repository features must be enabled by a maintainer
 
 Enabling these completes the supply-chain side of the hardening that the
 committed config and workflows assume.
+
+## Commitperclip review token
+
+`.github/workflows/commitperclip-review.yml` runs on `pull_request_target`, so it
+has access to repository secrets while reviewing untrusted pull requests. The
+workflow intentionally checks out the PR base commit, not the PR head, and must
+not execute code from the pull request.
+
+Preferred configuration:
+
+- set the repository secret `COMMITPERCLIP_KEY` to the private key for the
+  commitperclip GitHub App installation
+- keep the app installation scoped to the repository permissions needed by the
+  review workflow
+
+Fallback behavior:
+
+- if `COMMITPERCLIP_KEY` is absent, the workflow uses the built-in
+  `GITHUB_TOKEN`
+- quality-gate comments are then authored by `github-actions[bot]` instead of
+  `commitperclip[bot]`
+- security checks still use the same base-commit checkout rule and must remain
+  free of PR-code execution
+
+The fallback keeps PR review from failing solely because the app secret is not
+configured. Maintainers should still prefer the GitHub App token when available
+because it gives the review automation a dedicated identity and narrower audit
+trail.

