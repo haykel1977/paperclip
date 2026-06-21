@@ -504,12 +504,35 @@ describe("company skill mutation permissions", () => {
     expect(mockCompanySkillService.importFromSource).toHaveBeenCalledWith(
       "company-1",
       "https://github.com/vercel-labs/agent-browser",
+      { allowExecutableScripts: false },
+    );
+  });
+
+  it("allows board users with agents:create to import skills with executable scripts enabled", async () => {
+    mockAccessService.canUser.mockResolvedValue(true);
+
+    const res = await request(await createApp({
+      type: "board",
+      userId: "user-1",
+      companyIds: ["company-1"],
+      source: "session",
+      isInstanceAdmin: false,
+    }))
+      .post("/api/companies/company-1/skills/import")
+      .send({ source: "/tmp/local-skill" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockCompanySkillService.importFromSource).toHaveBeenCalledWith(
+      "company-1",
+      "/tmp/local-skill",
+      { allowExecutableScripts: true },
     );
   });
 
   it("returns a blocking error when attempting to delete a skill still used by agents", async () => {
     const { unprocessable } = await import("../errors.js");
     mockCompanySkillService.deleteSkill.mockImplementationOnce(async () => {
+
       throw unprocessable(
         'Cannot delete skill "Find Skills" while it is still used by Builder, Reviewer. Detach it from those agents first.',
       );
