@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import {
   buildAdvisoryPayload,
   findExistingDraftAdvisory,
-  isAdvisoryPermissionError,
   postSecurityCheckRun,
   scanSecrets,
   scanCITampering,

@@ -20,6 +20,14 @@ const mockAutomationBadge = vi.hoisted(() => ({
   needsReview: false,
 }));
 
+<<<<<<< HEAD
+=======
+const mockInboxBadge = vi.hoisted(() => ({
+  inbox: 0,
+  failedRuns: 0,
+}));
+
+>>>>>>> d04c74bc9e93652479c3cb3bbe7b33bcbaa4104f
 vi.mock("@/lib/router", () => ({
   NavLink: ({ to, children, className, ...props }: {
     to: string;
@@ -136,6 +144,11 @@ describe("Sidebar", () => {
     mockHeartbeatsApi.liveRunsForCompany.mockResolvedValue([]);
     mockAutomationBadge.count = 0;
     mockAutomationBadge.needsReview = false;
+<<<<<<< HEAD
+=======
+    mockInboxBadge.inbox = 0;
+    mockInboxBadge.failedRuns = 0;
+>>>>>>> d04c74bc9e93652479c3cb3bbe7b33bcbaa4104f
   });
 
   afterEach(() => {
@@ -179,6 +192,30 @@ describe("Sidebar", () => {
     });
   });
 
+<<<<<<< HEAD
+=======
+  it("shows the Inbox danger badge and alert when failed runs are present", async () => {
+    mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableIsolatedWorkspaces: false });
+    mockInboxBadge.inbox = 5;
+    mockInboxBadge.failedRuns = 2;
+    const root = await renderSidebar();
+
+    const inboxLink = [...container.querySelectorAll("nav a")]
+      .find((anchor) => anchor.getAttribute("href") === "/inbox");
+    const badge = [...(inboxLink?.querySelectorAll("span") ?? [])]
+      .find((span) => span.textContent === "5");
+
+    expect(inboxLink?.textContent).toContain("Inbox");
+    expect(badge?.className).toContain("bg-red-600/90");
+    expect(badge?.className).toContain("text-red-50");
+    expect(inboxLink?.querySelector(".bg-red-500")).not.toBeNull();
+
+    flushSync(() => {
+      root.unmount();
+    });
+  });
+
+>>>>>>> d04c74bc9e93652479c3cb3bbe7b33bcbaa4104f
   it("renders plugin sidebar launchers inside the Work section", async () => {
     mockInstanceSettingsApi.getExperimental.mockResolvedValue({
       enableIsolatedWorkspaces: false,
