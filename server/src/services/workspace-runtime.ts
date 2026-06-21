@@ -1103,14 +1103,17 @@ export async function realizeExecutionWorkspace(input: {
 }): Promise<RealizedExecutionWorkspace> {
   const rawStrategy = parseObject(input.config.workspaceStrategy);
   const strategyType = asString(rawStrategy.type, "project_primary");
-  if (strategyType !== "git_worktree") {
+  const isGit = strategyType === "git_worktree" ? await isGitCheckout(input.base.baseCwd) : false;
+  if (strategyType !== "git_worktree" || !isGit) {
     return {
       ...input.base,
       strategy: "project_primary",
       cwd: input.base.baseCwd,
       branchName: null,
       worktreePath: null,
-      warnings: [],
+      warnings: !isGit && strategyType === "git_worktree"
+        ? [`Base CWD "${input.base.baseCwd}" is not a git repository. Falling back to project_primary strategy.`]
+        : [],
       created: false,
       baseRefSha: null,
     };

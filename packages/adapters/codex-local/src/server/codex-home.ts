@@ -97,10 +97,23 @@ async function ensureCopiedFile(target: string, source: string): Promise<void> {
  * environment variable and only reads credentials from `$CODEX_HOME/auth.json`.
  */
 export async function writeApiKeyAuthJson(home: string, apiKey: string): Promise<void> {
-  await fs.mkdir(home, { recursive: true });
   const target = path.join(home, "auth.json");
-  await fs.rm(target, { force: true });
-  await fs.writeFile(target, JSON.stringify({ OPENAI_API_KEY: apiKey }), { mode: 0o600 });
+  try {
+    const existing = await fs.readFile(target, "utf-8").catch(() => null);
+    if (existing) {
+      const parsed = JSON.parse(existing);
+      if (parsed.OPENAI_API_KEY === apiKey) return;
+    }
+  } catch {
+    // Ignore parse/read errors and overwrite
+  }
+  await fs.mkdir(home, { recursive: true });
+  const tempTarget = `${target}.${Math.random().toString(36).substring(2)}.tmp`;
+  await fs.writeFile(tempTarget, JSON.stringify({ OPENAI_API_KEY: apiKey }), { mode: 0o600 });
+  await fs.rename(tempTarget, target).catch(async () => {
+    await fs.rm(target, { force: true }).catch(() => {});
+    await fs.rename(tempTarget, target);
+  });
 }
 
 export async function prepareManagedCodexHome(
@@ -131,6 +144,9 @@ export async function prepareManagedCodexHome(
 
   if (seedFromShared) {
     for (const name of SYMLINKED_SHARED_FILES) {
+      if (name === "auth.json" && apiKey) {
+        continue;
+      }
       const source = path.join(sourceHome, name);
       if (!(await pathExists(source))) continue;
       await ensureSymlink(path.join(targetHome, name), source);
