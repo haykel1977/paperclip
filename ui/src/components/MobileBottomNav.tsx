@@ -11,6 +11,7 @@ import { useCompany } from "../context/CompanyContext";
 import { useDialogActions } from "../context/DialogContext";
 import { SIDEBAR_SCROLL_RESET_STATE } from "../lib/navigation-scroll";
 import { cn } from "../lib/utils";
+import { useAutomationReviewBadge } from "../hooks/useAutomationReviewBadge";
 import { useInboxBadge } from "../hooks/useInboxBadge";
 
 interface MobileBottomNavProps {
@@ -38,6 +39,7 @@ export function MobileBottomNav({ visible }: MobileBottomNavProps) {
   const location = useLocation();
   const { selectedCompanyId } = useCompany();
   const { openNewIssue } = useDialogActions();
+  const automationBadge = useAutomationReviewBadge(selectedCompanyId);
   const inboxBadge = useInboxBadge(selectedCompanyId);
 
   const items = useMemo<MobileNavItem[]>(
@@ -45,7 +47,7 @@ export function MobileBottomNav({ visible }: MobileBottomNavProps) {
       { type: "link", to: "/dashboard", label: "Home", icon: House },
       { type: "link", to: "/issues", label: "Tasks", icon: CircleDot },
       { type: "action", label: "Create", icon: SquarePen, onClick: () => openNewIssue() },
-      { type: "link", to: "/automation", label: "Auto", icon: Bot },
+      { type: "link", to: "/automation", label: "Auto", icon: Bot, badge: automationBadge.count },
       {
         type: "link",
         to: "/inbox",
@@ -54,7 +56,7 @@ export function MobileBottomNav({ visible }: MobileBottomNavProps) {
         badge: inboxBadge.inbox,
       },
     ],
-    [openNewIssue, inboxBadge.inbox],
+    [openNewIssue, automationBadge.count, inboxBadge.inbox],
   );
 
   return (

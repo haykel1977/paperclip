@@ -27,6 +27,7 @@ import { useCompany } from "../context/CompanyContext";
 import { heartbeatsApi } from "../api/heartbeats";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { queryKeys } from "../lib/queryKeys";
+import { useAutomationReviewBadge } from "../hooks/useAutomationReviewBadge";
 import { useInboxBadge } from "../hooks/useInboxBadge";
 import { Button } from "@/components/ui/button";
 import { PluginSlotOutlet } from "@/plugins/slots";
@@ -36,6 +37,7 @@ import { SidebarCompanyMenu } from "./SidebarCompanyMenu";
 export function Sidebar() {
   const { openNewIssue } = useDialogActions();
   const { selectedCompanyId, selectedCompany } = useCompany();
+  const automationBadge = useAutomationReviewBadge(selectedCompanyId);
   const inboxBadge = useInboxBadge(selectedCompanyId);
   const { data: experimentalSettings } = useQuery({
     queryKey: queryKeys.instance.experimentalSettings,
@@ -91,7 +93,14 @@ export function Sidebar() {
             <span className="truncate">New Task</span>
           </button>
           <SidebarNavItem to="/dashboard" label="Dashboard" icon={LayoutDashboard} liveCount={liveRunCount} />
-          <SidebarNavItem to="/automation" label="Automation" icon={Bot} />
+          <SidebarNavItem
+            to="/automation"
+            label="Automation"
+            icon={Bot}
+            badge={automationBadge.count}
+            badgeTone={automationBadge.needsReview ? "danger" : "default"}
+            alert={automationBadge.needsReview}
+          />
           <SidebarNavItem
             to="/inbox"
             label="Inbox"
