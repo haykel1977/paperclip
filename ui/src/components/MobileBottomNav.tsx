@@ -84,6 +84,7 @@ export function MobileBottomNav({ visible }: MobileBottomNavProps) {
           if (item.type === "action") {
             const Icon = item.icon;
             const active = /\/issues\/new(?:\/|$)/.test(location.pathname);
+
             return (
               <button
                 key={item.label}
