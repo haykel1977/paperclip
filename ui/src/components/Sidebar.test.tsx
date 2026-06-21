@@ -20,14 +20,11 @@ const mockAutomationBadge = vi.hoisted(() => ({
   needsReview: false,
 }));
 
-<<<<<<< HEAD
-=======
 const mockInboxBadge = vi.hoisted(() => ({
   inbox: 0,
   failedRuns: 0,
 }));
 
->>>>>>> 2cdbccbf680676336b95dbd13599d1c2e00850a5
 vi.mock("@/lib/router", () => ({
   NavLink: ({ to, children, className, ...props }: {
     to: string;
@@ -145,11 +142,8 @@ describe("Sidebar", () => {
     mockHeartbeatsApi.liveRunsForCompany.mockResolvedValue([]);
     mockAutomationBadge.count = 0;
     mockAutomationBadge.needsReview = false;
-<<<<<<< HEAD
-=======
     mockInboxBadge.inbox = 0;
     mockInboxBadge.failedRuns = 0;
->>>>>>> 2cdbccbf680676336b95dbd13599d1c2e00850a5
   });
 
   afterEach(() => {
@@ -193,8 +187,6 @@ describe("Sidebar", () => {
     });
   });
 
-<<<<<<< HEAD
-=======
   it("shows the Inbox danger badge and alert when failed runs are present", async () => {
     mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableIsolatedWorkspaces: false });
     mockInboxBadge.inbox = 5;
@@ -216,7 +208,6 @@ describe("Sidebar", () => {
     });
   });
 
->>>>>>> 2cdbccbf680676336b95dbd13599d1c2e00850a5
   it("renders plugin sidebar launchers inside the Work section", async () => {
     mockInstanceSettingsApi.getExperimental.mockResolvedValue({
       enableIsolatedWorkspaces: false,
