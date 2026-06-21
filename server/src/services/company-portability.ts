@@ -81,12 +81,18 @@ import {
   readPortableCatalogProvenance,
 } from "./catalog-provenance.js";
 import { normalizePortablePath } from "./portable-path.js";
+import {
+  collectAgentAdapterWorkspaceCommandPaths,
+  collectProjectWorkspaceCommandPaths,
+  collectRuntimeConfigAdapterWorkspaceCommandPaths,
+} from "../routes/workspace-command-authz.js";
 
 /** Build OrgNode tree from manifest agent list (slug + reportsToSlug). */
 function buildOrgTreeFromManifest(agents: CompanyPortabilityManifest["agents"]): OrgNode[] {
   const ROLE_LABELS: Record<string, string> = {
     ceo: "Chief Executive", cto: "Technology", cmo: "Marketing",
     cfo: "Finance", coo: "Operations", vp: "VP", manager: "Manager",
+
     engineer: "Engineer", agent: "Agent",
   };
   const bySlug = new Map(agents.map((a) => [a.slug, a]));
@@ -152,8 +158,30 @@ function resolveSkillConflictStrategy(mode: ImportMode, collisionStrategy: Compa
 function collectAgentSafeImportPolicyErrors(
   manifest: CompanyPortabilityManifest,
   include: CompanyPortabilityInclude,
+  adapterOverrides?: CompanyPortabilityImport["adapterOverrides"],
 ) {
   const errors: string[] = [];
+  if (include.agents) {
+    for (const agent of manifest.agents) {
+      const commandPaths = [
+        ...collectAgentAdapterWorkspaceCommandPaths(
+          agent.adapterConfig,
+          `agent ${agent.slug} adapterConfig`,
+        ),
+        ...collectRuntimeConfigAdapterWorkspaceCommandPaths(
+          agent.runtimeConfig,
+          `agent ${agent.slug} runtimeConfig`,
+        ),
+        ...collectAgentAdapterWorkspaceCommandPaths(
+          adapterOverrides?.[agent.slug]?.adapterConfig,
+          `agent ${agent.slug} adapterOverride.adapterConfig`,
+        ),
+      ];
+      for (const path of commandPaths) {
+        errors.push(`Safe import does not allow ${path}.`);
+      }
+    }
+  }
   if (include.projects) {
     for (const project of manifest.projects) {
       if (project.executionWorkspacePolicy !== null) {
@@ -165,6 +193,13 @@ function collectAgentSafeImportPolicyErrors(
         }
         if (workspace.cleanupCommand) {
           errors.push(`Safe import does not allow project ${project.slug} workspace ${workspace.key} cleanupCommand.`);
+        }
+        const commandPaths = collectProjectWorkspaceCommandPaths(
+          { metadata: workspace.metadata },
+          `project ${project.slug} workspace ${workspace.key}`,
+        );
+        for (const path of commandPaths) {
+          errors.push(`Safe import does not allow ${path}.`);
         }
       }
     }
@@ -189,6 +224,7 @@ function collectAgentSafeImportPolicyErrors(
 }
 
 function classifyPortableFileKind(pathValue: string): CompanyPortabilityExportPreviewResult["fileInventory"][number]["kind"] {
+
   const normalized = normalizePortablePath(pathValue);
   if (normalized === "COMPANY.md") return "company";
   if (normalized === ".paperclip.yaml" || normalized === ".paperclip.yml") return "extension";
@@ -3925,7 +3961,13 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
       errors.push("Manifest does not include company metadata.");
     }
     if (mode === "agent_safe") {
-      errors.push(...collectAgentSafeImportPolicyErrors(manifest, include));
+      errors.push(
+        ...collectAgentSafeImportPolicyErrors(
+          manifest,
+          include,
+          (input as CompanyPortabilityImport).adapterOverrides,
+        ),
+      );
     }
 
     const selectedSlugs = include.agents

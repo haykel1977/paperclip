@@ -15,12 +15,17 @@ import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { forbidden, unauthorized } from "../errors.js";
 import { getTelemetryClient } from "../telemetry.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
+import {
+  assertNoAgentHostWorkspaceCommandMutation,
+  collectIssueWorkspaceCommandPaths,
+} from "./workspace-command-authz.js";
 
 export function routineRoutes(
   db: Db,
   options: { pluginWorkerManager?: PluginWorkerManager } = {},
 ) {
   const router = Router();
+
   const svc = routineService(db, {
     pluginWorkerManager: options.pluginWorkerManager,
   });
@@ -417,11 +422,13 @@ export function routineRoutes(
       res.status(404).json({ error: "Routine not found" });
       return;
     }
+    assertNoAgentHostWorkspaceCommandMutation(req, collectIssueWorkspaceCommandPaths(req.body));
     await assertBoardCanAssignTasks(req, routine.companyId);
     const run = await svc.runRoutine(routine.id, req.body, {
       agentId: req.actor.type === "agent" ? req.actor.agentId : null,
       userId: req.actor.type === "board" ? req.actor.userId ?? null : null,
     });
+
     const actor = getActorInfo(req);
     await logActivity(db, {
       companyId: routine.companyId,

