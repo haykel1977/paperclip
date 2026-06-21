@@ -21,6 +21,11 @@ import { dashboardApi } from "../api/dashboard";
 import { heartbeatsApi } from "../api/heartbeats";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useCompany } from "../context/CompanyContext";
+import {
+  computeAutomationReadiness,
+  type AutomationCheckState,
+  type AutopilotInterventionKind,
+} from "../lib/automation-readiness";
 import { queryKeys } from "../lib/queryKeys";
 import { cn } from "../lib/utils";
 import { Button } from "../components/ui/button";
@@ -28,23 +33,21 @@ import { Badge } from "../components/ui/badge";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
 
-type CheckState = "ready" | "attention" | "setup";
+const interventionIconByKind: Record<AutopilotInterventionKind, typeof Bot> = {
+  approval_decisions: UserCheck,
+  budget_incidents: DollarSign,
+  blocked_tasks: CircleDot,
+  agent_errors: AlertTriangle,
+  agent_setup: Bot,
+};
 
-interface AutomationCheck {
-  title: string;
-  description: string;
-  state: CheckState;
-  href: string;
-  action: string;
-}
-
-function stateLabel(state: CheckState) {
+function stateLabel(state: AutomationCheckState) {
   if (state === "ready") return "Operational";
   if (state === "attention") return "Human attention";
   return "Setup required";
 }
 
-function stateClassName(state: CheckState) {
+function stateClassName(state: AutomationCheckState) {
   if (state === "ready") return "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
   if (state === "attention") return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";
   return "border-border bg-muted text-muted-foreground";
@@ -85,115 +88,12 @@ export function Automation() {
 
   const loading = summaryLoading || agentsLoading || approvalsLoading || liveRunsLoading;
 
-  const automation = useMemo(() => {
-    const agentCount = agents?.length ?? 0;
-    const runningAgents = summary?.agents.running ?? 0;
-    const erroredAgents = summary?.agents.error ?? 0;
-    const pausedAgents = summary?.agents.paused ?? 0;
-    const liveRunCount = liveRuns?.length ?? 0;
-    const openTaskCount = (summary?.tasks.open ?? 0) + (summary?.tasks.inProgress ?? 0);
-    const blockedTaskCount = summary?.tasks.blocked ?? 0;
-    const pendingApprovalCount = pendingApprovals?.length ?? summary?.pendingApprovals ?? 0;
-    const budgetApprovalCount = summary?.budgets.pendingApprovals ?? 0;
-    const activeBudgetIncidents = summary?.budgets.activeIncidents ?? 0;
-    const totalHumanQueue = pendingApprovalCount + budgetApprovalCount + activeBudgetIncidents + erroredAgents + blockedTaskCount;
-
-    const checks: AutomationCheck[] = [
-      {
-        title: "Agent workforce",
-        description:
-          agentCount > 0
-            ? `${agentCount} agent${agentCount === 1 ? "" : "s"} available · ${runningAgents} running · ${pausedAgents} paused · ${erroredAgents} error${erroredAgents === 1 ? "" : "s"}`
-            : "Create at least one agent so tasks can be executed automatically.",
-        state: agentCount === 0 ? "setup" : erroredAgents > 0 ? "attention" : "ready",
-        href: agentCount === 0 ? "/agents/new" : "/agents/all",
-        action: agentCount === 0 ? "Create agent" : "Manage agents",
-      },
-      {
-        title: "Autonomous execution",
-        description:
-          liveRunCount > 0
-            ? `${liveRunCount} live run${liveRunCount === 1 ? "" : "s"} executing now.`
-            : openTaskCount > 0
-              ? `${openTaskCount} open task${openTaskCount === 1 ? "" : "s"} ready for agent pickup.`
-              : "No open task is waiting; the system is idle and ready.",
-        state: agentCount === 0 ? "setup" : "ready",
-        href: liveRunCount > 0 ? "/dashboard/live" : "/issues",
-        action: liveRunCount > 0 ? "Watch live runs" : "Open tasks",
-      },
-      {
-        title: "Automatic validation gates",
-        description: "CI policy checks, route authorization guards, tests, budget controls, and approval gates are surfaced before risky work proceeds.",
-        state: "ready",
-        href: "/activity",
-        action: "Audit activity",
-      },
-      {
-        title: "Human intervention queue",
-        description:
-          totalHumanQueue === 0
-            ? "No hidden human work: approvals, budget incidents, blocked tasks, and agent errors are clear."
-            : `${totalHumanQueue} item${totalHumanQueue === 1 ? "" : "s"} require visible human attention before full autonomy.`,
-        state: totalHumanQueue === 0 ? "ready" : "attention",
-        href: totalHumanQueue === 0 ? "/activity" : "/approvals",
-        action: totalHumanQueue === 0 ? "View audit trail" : "Review queue",
-      },
-    ];
-
-    const interventionItems = [
-      {
-        label: "Approval decisions",
-        count: pendingApprovalCount,
-        href: "/approvals",
-        icon: UserCheck,
-      },
-      {
-        label: "Budget incidents",
-        count: budgetApprovalCount + activeBudgetIncidents,
-        href: "/costs",
-        icon: DollarSign,
-      },
-      {
-        label: "Blocked tasks",
-        count: blockedTaskCount,
-        href: "/issues",
-        icon: CircleDot,
-      },
-      {
-        label: "Agent errors",
-        count: erroredAgents,
-        href: "/agents/error",
-        icon: AlertTriangle,
-      },
-      {
-        label: "Agent setup",
-        count: agentCount === 0 ? 1 : 0,
-        href: "/agents/new",
-        icon: Bot,
-      },
-    ].filter((item) => item.count > 0);
-
-    const readyChecks = checks.filter((check) => check.state === "ready").length;
-    const score = Math.round((readyChecks / checks.length) * 100);
-    const mode = agentCount === 0
-      ? "Setup required"
-      : totalHumanQueue > 0
-        ? "Autopilot with visible human review"
-        : "Autopilot operational";
-
-    return {
-      checks,
-      score,
-      mode,
-      agentCount,
-      runningAgents,
-      liveRunCount,
-      openTaskCount,
-      blockedTaskCount,
-      totalHumanQueue,
-      interventionItems,
-    };
-  }, [agents, liveRuns, pendingApprovals, summary]);
+  const automation = useMemo(() => computeAutomationReadiness({
+    summary,
+    agentCount: agents?.length ?? 0,
+    pendingApprovalCount: pendingApprovals?.length,
+    liveRunCount: liveRuns?.length ?? 0,
+  }), [agents?.length, liveRuns?.length, pendingApprovals?.length, summary]);
 
   if (!selectedCompanyId) {
     return companies.length === 0 ? (
@@ -270,7 +170,7 @@ export function Automation() {
           ) : (
             <div className="mt-4 grid gap-2">
               {automation.interventionItems.map((item) => {
-                const Icon = item.icon;
+                const Icon = interventionIconByKind[item.kind];
                 return (
                   <Link
                     key={item.label}

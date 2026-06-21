@@ -19,6 +19,7 @@ import { StatusIcon } from "../components/StatusIcon";
 import { ActivityRow } from "../components/ActivityRow";
 import { Identity } from "../components/Identity";
 import { timeAgo } from "../lib/timeAgo";
+import { computeAutomationReadiness } from "../lib/automation-readiness";
 import { cn, formatCents } from "../lib/utils";
 import { Bot, CircleDot, DollarSign, ShieldCheck, LayoutDashboard, PauseCircle, Sparkles } from "lucide-react";
 import { ActiveAgentsPanel } from "../components/ActiveAgentsPanel";
@@ -192,9 +193,15 @@ export function Dashboard() {
   }
 
   const hasNoAgents = agents !== undefined && agents.length === 0;
-  const automationHumanQueue = data
-    ? data.pendingApprovals + data.budgets.pendingApprovals + data.budgets.activeIncidents + data.agents.error + data.tasks.blocked
-    : 0;
+  const dashboardAgentCount = agents?.length ?? (
+    data
+      ? data.agents.active + data.agents.running + data.agents.paused + data.agents.error
+      : 0
+  );
+  const automationReadiness = data
+    ? computeAutomationReadiness({ summary: data, agentCount: dashboardAgentCount })
+    : null;
+  const automationHumanQueue = automationReadiness?.totalHumanQueue ?? 0;
 
   return (
     <div className="space-y-6">
