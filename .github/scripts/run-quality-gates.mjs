@@ -19,7 +19,6 @@ import { checkDependencies } from './check-pr-dependencies.mjs';
 import { checkPrGovernance } from './check-pr-governance.mjs';
 
 const COMMENT_SIGNATURE = '— commitperclip';
-const DEFAULT_COMMENT_LOGINS = ['commitperclip[bot]', 'commitperclip'];
 
 function buildComment(author, failures, informational) {
   if (failures.length === 0 && informational.length === 0) {
@@ -49,16 +48,7 @@ function buildComment(author, failures, informational) {
   return lines.join('\n');
 }
 
-function parseCommentLogins(value) {
-  const logins = String(value ?? '')
-    .split(',')
-    .map(login => login.trim())
-    .filter(Boolean);
-  return new Set(logins.length > 0 ? logins : DEFAULT_COMMENT_LOGINS);
-}
-
-export async function findExistingComment(fetchFromGitHub, token, repo, prNumber, allowedLogins = DEFAULT_COMMENT_LOGINS) {
-  const allowedLoginSet = allowedLogins instanceof Set ? allowedLogins : new Set(allowedLogins);
+export async function findExistingComment(fetchFromGitHub, token, repo, prNumber) {
   for (let page = 1; ; page += 1) {
     const comments = await fetchFromGitHub(
       `/repos/${repo}/issues/${prNumber}/comments?per_page=100&page=${page}`,
@@ -66,7 +56,8 @@ export async function findExistingComment(fetchFromGitHub, token, repo, prNumber
     );
 
     const existing = comments.find(
-      c => allowedLoginSet.has(c.user.login) && c.body.includes(COMMENT_SIGNATURE)
+      c => (c.user.login === 'commitperclip[bot]' || c.user.login === 'commitperclip') &&
+           c.body.includes(COMMENT_SIGNATURE)
     );
     if (existing) return existing;
 
@@ -146,10 +137,9 @@ async function main() {
   const allPassed = allFailures.length === 0;
 
   const commentBody = buildComment(author, allFailures, informational);
-  const allowedCommentLogins = parseCommentLogins(process.env.GH_COMMENT_LOGINS);
 
   // Post comment if there are failures/informational, or update existing comment
-  const existing = await findExistingComment(ghFetch, GH_TOKEN, GH_REPO, prNumber, allowedCommentLogins);
+  const existing = await findExistingComment(ghFetch, GH_TOKEN, GH_REPO, prNumber);
   if (allFailures.length > 0 || informational.length > 0 || existing) {
     await upsertComment(GH_TOKEN, GH_REPO, prNumber, commentBody, existing);
   }

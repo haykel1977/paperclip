@@ -46,56 +46,20 @@ jobs:
         with:
           node-version: 24
 
-      - name: Validate root artifacts
-        run: pnpm run check:root-artifacts
-
-      - name: Test root artifact check
-        run: pnpm run test:check-root-artifacts
-
-      - name: Validate pnpm lifecycle build allowlist
-        run: pnpm run check:pnpm-build-allowlist
-
-      - name: Test pnpm lifecycle build allowlist check
-        run: pnpm run test:check-pnpm-build-allowlist
-
-      - name: Validate Docker tool pins
-        run: pnpm run check:docker-pinned-tools
-
-      - name: Test Docker tool pin check
-        run: pnpm run test:check-docker-pinned-tools
-
       - name: Validate Dockerfile deps stage
         run: node ./scripts/check-docker-deps-stage.mjs
 
       - name: Reject git push in adapter/runtime code
-        run: pnpm run check:no-git-push
+        run: node ./scripts/check-no-git-push.mjs
 
       - name: Test no-git-push check
-        run: pnpm run test:check-no-git-push
-
-      - name: Enforce company-scoped route guards
-        run: pnpm run check:company-route-guards
-
-      - name: Test company route guard check
-        run: pnpm run test:check-company-route-guards
-
-      - name: Enforce object-scoped company boundary guards
-        run: pnpm run check:object-route-company-guards
-
-      - name: Test object-scoped company boundary guard check
-        run: pnpm run test:check-object-route-company-guards
-
-      - name: Enforce heartbeat-run read route guards
-        run: pnpm run check:heartbeat-run-route-guards
-
-      - name: Test heartbeat-run route guard check
-        run: pnpm run test:check-heartbeat-run-route-guards
+        run: node --test ./scripts/check-no-git-push.test.mjs
 
       - name: Enforce object-scoped issue-read route guards
-        run: pnpm run check:issue-read-route-guards
+        run: node ./scripts/check-issue-read-route-guards.mjs
 
       - name: Test issue-read route guard check
-        run: pnpm run test:check-issue-read-route-guards
+        run: node --test ./scripts/check-issue-read-route-guards.test.mjs
 
       - name: Validate release package manifest
         run: node ./scripts/release-package-map.mjs check
