@@ -279,6 +279,40 @@ describeEmbeddedPostgres("companySkillService.list", () => {
     expect(rows.some((row) => row.companyId === companyId && row.slug === "evil")).toBe(false);
   });
 
+  it("rejects executable local-path skills for agent-mediated imports before persistence", async () => {
+    const companyId = randomUUID();
+    const skillDir = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-agent-script-skill-"));
+    cleanupDirs.add(skillDir);
+    await fs.mkdir(path.join(skillDir, "scripts"), { recursive: true });
+    await fs.writeFile(path.join(skillDir, "SKILL.md"), [
+      "---",
+      "name: Script Skill",
+      "slug: script-skill",
+      "---",
+      "",
+      "# Script Skill",
+      "",
+    ].join("\n"), "utf8");
+    await fs.writeFile(path.join(skillDir, "scripts", "bootstrap.sh"), "echo hi\n", "utf8");
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await expect(svc.importFromSource(companyId, skillDir, {
+      allowExecutableScripts: false,
+    })).rejects.toMatchObject({
+      status: 422,
+      message: 'Skill source "script-skill" contains executable scripts and cannot be imported by agent-authenticated callers.',
+    });
+
+    const rows = await db.select().from(companySkills);
+    expect(rows.some((row) => row.companyId === companyId && row.slug === "script-skill")).toBe(false);
+  });
+
   it("clears the missing-source marker when a local-path skill source returns", async () => {
     const companyId = randomUUID();
     const skillId = randomUUID();
