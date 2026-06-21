@@ -25,6 +25,21 @@ function collectWorkspaceStrategyCommandPaths(raw: unknown, prefix: string): str
   return paths;
 }
 
+function collectWorkspaceRuntimeCommandPaths(raw: unknown, prefix: string): string[] {
+  if (!isRecord(raw)) return [];
+  const paths: string[] = [];
+  for (const key of ["commands", "services", "jobs"] as const) {
+    const entries = raw[key];
+    if (!Array.isArray(entries)) continue;
+    entries.forEach((entry, index) => {
+      if (isRecord(entry) && hasOwn(entry, "command")) {
+        paths.push(`${prefixPath(prefix, key)}[${index}].command`);
+      }
+    });
+  }
+  return paths;
+}
+
 function collectExecutionWorkspaceConfigCommandPaths(raw: unknown, prefix: string): string[] {
   if (!isRecord(raw)) return [];
   const paths: string[] = [];
@@ -37,6 +52,7 @@ function collectExecutionWorkspaceConfigCommandPaths(raw: unknown, prefix: strin
   if (hasOwn(raw, "cleanupCommand")) {
     paths.push(prefixPath(prefix, "cleanupCommand"));
   }
+  paths.push(...collectWorkspaceRuntimeCommandPaths(raw.workspaceRuntime, prefixPath(prefix, "workspaceRuntime")));
   return paths;
 }
 
@@ -60,10 +76,16 @@ export function collectAgentAdapterWorkspaceCommandPaths(
 
 export function collectProjectExecutionWorkspaceCommandPaths(policy: unknown): string[] {
   if (!isRecord(policy)) return [];
-  return collectWorkspaceStrategyCommandPaths(
-    policy.workspaceStrategy,
-    "executionWorkspacePolicy.workspaceStrategy",
-  );
+  return [
+    ...collectWorkspaceStrategyCommandPaths(
+      policy.workspaceStrategy,
+      "executionWorkspacePolicy.workspaceStrategy",
+    ),
+    ...collectWorkspaceRuntimeCommandPaths(
+      policy.workspaceRuntime,
+      "executionWorkspacePolicy.workspaceRuntime",
+    ),
+  ];
 }
 
 export function collectProjectWorkspaceCommandPaths(
@@ -71,9 +93,19 @@ export function collectProjectWorkspaceCommandPaths(
   prefix = "",
 ): string[] {
   if (!isRecord(workspacePatch)) return [];
-  return hasOwn(workspacePatch, "cleanupCommand")
-    ? [prefixPath(prefix, "cleanupCommand")]
-    : [];
+  const paths: string[] = [];
+  if (hasOwn(workspacePatch, "cleanupCommand")) {
+    paths.push(prefixPath(prefix, "cleanupCommand"));
+  }
+  if (isRecord(workspacePatch.runtimeConfig)) {
+    paths.push(
+      ...collectWorkspaceRuntimeCommandPaths(
+        workspacePatch.runtimeConfig.workspaceRuntime,
+        prefixPath(prefixPath(prefix, "runtimeConfig"), "workspaceRuntime"),
+      ),
+    );
+  }
+  return paths;
 }
 
 export function collectIssueWorkspaceCommandPaths(input: {
@@ -86,6 +118,10 @@ export function collectIssueWorkspaceCommandPaths(input: {
       ...collectWorkspaceStrategyCommandPaths(
         input.executionWorkspaceSettings.workspaceStrategy,
         "executionWorkspaceSettings.workspaceStrategy",
+      ),
+      ...collectWorkspaceRuntimeCommandPaths(
+        input.executionWorkspaceSettings.workspaceRuntime,
+        "executionWorkspaceSettings.workspaceRuntime",
       ),
     );
   }
