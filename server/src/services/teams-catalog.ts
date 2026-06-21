@@ -901,7 +901,11 @@ export function teamsCatalogService(db: Db) {
     };
   }
 
-  async function prepareSkillInstalls(companyId: string, prepared: CatalogTeamPreparedSource) {
+  async function prepareSkillInstalls(
+    companyId: string,
+    prepared: CatalogTeamPreparedSource,
+    options: CatalogTeamImportOptions = {},
+  ) {
     const warnings: string[] = [];
     for (const skill of prepared.skillPreparations) {
       if (skill.action === "blocked") {
@@ -926,7 +930,9 @@ export function teamsCatalogService(db: Db) {
       if (skill.action === "external_import_required") {
         const source = skill.sourceLocator ?? skill.ref;
         try {
-          const result = await companySkills.importFromSource(companyId, source);
+          const result = await companySkills.importFromSource(companyId, source, {
+            allowExecutableScripts: options.actor?.actorType !== "agent",
+          });
           warnings.push(...result.warnings);
         } catch (error) {
           warnings.push(`External skill source ${source} could not be imported after team import: ${formatError(error)}`);
@@ -937,6 +943,7 @@ export function teamsCatalogService(db: Db) {
   }
 
   async function installCatalogTeam(
+
     companyId: string,
     catalogRef: string,
     options: CatalogTeamImportOptions = {},
@@ -983,10 +990,11 @@ export function teamsCatalogService(db: Db) {
         sourceCompanyId: companyId,
       },
     );
-    warnings.push(...await prepareSkillInstalls(companyId, prepared));
+    warnings.push(...await prepareSkillInstalls(companyId, prepared, options));
     result.warnings.push(...warnings);
     await logCatalogEvent("company.team_catalog_installed", companyId, prepared.team, options.actor, {
       warningCount: result.warnings.length,
+
       agentCount: result.agents.length,
       projectCount: result.projects.length,
       skillPreparationCount: prepared.skillPreparations.length,
