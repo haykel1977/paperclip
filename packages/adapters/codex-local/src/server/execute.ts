@@ -96,8 +96,57 @@ function resolveCodexBiller(env: Record<string, string>, billingType: "api" | "s
   return billingType === "subscription" ? "chatgpt" : openAiCompatibleBiller ?? "openai";
 }
 
+function readNonEmptyEnv(env: Record<string, string>, key: string): string | null {
+  const value = env[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readOpenAiBaseUrl(env: Record<string, string>): string | null {
+  return readNonEmptyEnv(env, "OPENAI_BASE_URL") ??
+    readNonEmptyEnv(env, "OPENAI_API_BASE") ??
+    readNonEmptyEnv(env, "OPENAI_API_BASE_URL");
+}
+
+function isLocalOssCodexModel(model: string): boolean {
+  const normalized = model.trim().toLowerCase();
+  return normalized.startsWith("ollama/") || normalized === "qwen2.5-coder:32b";
+}
+
+function resolveCodexInvocationModel(input: {
+  configuredModel: string;
+  env: Record<string, string>;
+}): { model: string; configArgs: string[]; note: string | null } {
+  const configuredModel = input.configuredModel.trim();
+  const openAiBaseUrl = readOpenAiBaseUrl(input.env);
+  const routedModel = readNonEmptyEnv(input.env, "OPENAI_MODEL_NAME");
+  if (!configuredModel || !openAiBaseUrl || !routedModel || !isLocalOssCodexModel(configuredModel)) {
+    return { model: configuredModel, configArgs: [], note: null };
+  }
+
+  return {
+    model: routedModel,
+    configArgs: [
+      'model_provider="openai"',
+      `openai_base_url=${JSON.stringify(openAiBaseUrl)}`,
+    ],
+    note: `Routed configured OSS model ${configuredModel} through OpenAI-compatible sovereign endpoint as ${routedModel}.`,
+  };
+}
+
+function injectCodexConfigArgs(args: string[], configArgs: string[]): string[] {
+  if (configArgs.length === 0) return args;
+  const resumeIndex = args.indexOf("resume");
+  const insertionIndex = resumeIndex >= 0 ? resumeIndex : Math.max(0, args.length - 1);
+  return [
+    ...args.slice(0, insertionIndex),
+    ...configArgs.flatMap((entry) => ["-c", entry]),
+    ...args.slice(insertionIndex),
+  ];
+}
+
 async function isLikelyPaperclipRepoRoot(candidate: string): Promise<boolean> {
   const [hasWorkspace, hasPackageJson, hasServerDir, hasAdapterUtilsDir] = await Promise.all([
+
     pathExists(path.join(candidate, "pnpm-workspace.yaml")),
     pathExists(path.join(candidate, "package.json")),
     pathExists(path.join(candidate, "server")),
@@ -515,12 +564,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       (entry): entry is [string, string] => typeof entry[1] === "string",
     ),
   );
+  const codexInvocation = resolveCodexInvocationModel({ configuredModel: model, env: runtimeEnv });
   await ensureAdapterExecutionTargetRuntimeCommandInstalled({
     runId,
     target: executionTarget,
     installCommand: ctx.runtimeCommandSpec?.installCommand,
     detectCommand: ctx.runtimeCommandSpec?.detectCommand,
     cwd,
+
     env: runtimeEnv,
     timeoutSec,
     graceSec,
@@ -616,9 +667,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       if (forceFreshSession) {
         notes.push("Codex transient fallback forced a fresh session with a continuation handoff.");
       }
+      if (codexInvocation.note) notes.push(codexInvocation.note);
       return notes;
     }
     if (instructionsPrefix.length > 0) {
+
       if (shouldUseResumeDeltaPrompt) {
         const notes = [
           `Loaded agent instructions from ${instructionsFilePath}`,
@@ -631,6 +684,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         if (forceFreshSession) {
           notes.push("Codex transient fallback forced a fresh session with a continuation handoff.");
         }
+        if (codexInvocation.note) notes.push(codexInvocation.note);
         return notes;
       }
       const notes = [
@@ -644,6 +698,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       if (forceFreshSession) {
         notes.push("Codex transient fallback forced a fresh session with a continuation handoff.");
       }
+      if (codexInvocation.note) notes.push(codexInvocation.note);
       return notes;
     }
     const notes = [
@@ -656,8 +711,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     if (forceFreshSession) {
       notes.push("Codex transient fallback forced a fresh session with a continuation handoff.");
     }
+    if (codexInvocation.note) notes.push(codexInvocation.note);
     return notes;
   })();
+
   if (executionTargetIsSandbox) {
     commandNotes.push(
       "Added --skip-git-repo-check for sandbox execution because Codex requires an explicit trust bypass in headless remote workspaces.",
@@ -683,19 +740,24 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   };
 
   const runAttempt = async (resumeSessionId: string | null) => {
+    const attemptConfig = {
+      ...(forceSaferInvocation ? { ...config, fastMode: false } : config),
+      ...(codexInvocation.model !== model ? { model: codexInvocation.model } : {}),
+    };
     const execArgs = buildCodexExecArgs(
-      forceSaferInvocation ? { ...config, fastMode: false } : config,
+      attemptConfig,
       {
         resumeSessionId,
         skipGitRepoCheck: executionTargetIsSandbox,
       },
     );
-    const args = execArgs.args;
+    const args = injectCodexConfigArgs(execArgs.args, codexInvocation.configArgs);
     const commandNotesWithFastMode =
       execArgs.fastModeIgnoredReason == null
         ? commandNotes
         : [...commandNotes, execArgs.fastModeIgnoredReason];
     if (onMeta) {
+
       await onMeta({
         adapterType: "codex_local",
         command: resolvedCommand,

@@ -191,8 +191,77 @@ describe("codex execute", () => {
     }
   });
 
+  it("routes configured Ollama OSS models through the sovereign OpenAI-compatible endpoint", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-execute-oss-route-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const capturePath = path.join(root, "capture.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeCodexCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    const previousOpenAiBaseUrl = process.env.OPENAI_BASE_URL;
+    const previousOpenAiModelName = process.env.OPENAI_MODEL_NAME;
+    process.env.HOME = root;
+    process.env.OPENAI_BASE_URL = "https://litellm.kantum.dev/v1";
+    process.env.OPENAI_MODEL_NAME = "qwen3-coder";
+
+    let commandNotes: string[] = [];
+    try {
+      const result = await execute({
+        runId: "run-oss-route",
+        agent: {
+          id: "agent-1",
+          companyId: "company-1",
+          name: "Codex Coder",
+          adapterType: "codex_local",
+          adapterConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          model: "ollama/qwen2.5-coder:32b",
+          env: {
+            PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
+          },
+          promptTemplate: "Follow the paperclip heartbeat.",
+        },
+        context: {},
+        authToken: "run-jwt-token",
+        onLog: async () => {},
+        onMeta: async (meta) => {
+          commandNotes = (meta.commandNotes as string[]) ?? [];
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.argv).toContain("--model");
+      expect(capture.argv[capture.argv.indexOf("--model") + 1]).toBe("qwen3-coder");
+      expect(capture.argv).toContain("model_provider=\"openai\"");
+      expect(capture.argv).toContain('openai_base_url="https://litellm.kantum.dev/v1"');
+      expect(capture.argv).not.toContain("ollama/qwen2.5-coder:32b");
+      expect(commandNotes.some((note) => note.includes("Routed configured OSS model"))).toBe(true);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousOpenAiBaseUrl === undefined) delete process.env.OPENAI_BASE_URL;
+      else process.env.OPENAI_BASE_URL = previousOpenAiBaseUrl;
+      if (previousOpenAiModelName === undefined) delete process.env.OPENAI_MODEL_NAME;
+      else process.env.OPENAI_MODEL_NAME = previousOpenAiModelName;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("emits a command note that Codex auto-applies repo-scoped AGENTS.md files", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-execute-notes-"));
+
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "codex");
     const capturePath = path.join(root, "capture.json");
