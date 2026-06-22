@@ -5,7 +5,8 @@
  * It never merges directly; branch protection and required check-runs remain the
  * source of truth. Non-eligible PRs are skipped with exit 0.
  *
- * Env: GH_TOKEN, GH_REPO, PR_NUMBER, DEFAULT_BRANCH (optional, default: main)
+ * Env: GH_TOKEN, GH_REPO, PR_NUMBER, DEFAULT_BRANCH (optional, default: main),
+ * REQUIRED_CHECKS (optional comma-separated list, default: verify,gitleaks)
  */
 import { fileURLToPath } from 'node:url';
 import { ghFetch } from './get-bot-token.mjs';
@@ -14,6 +15,7 @@ import { HARD_BLOCK_LABELS } from './check-pr-governance.mjs';
 export const AUTOMERGE_LABEL = 'automerge';
 export const AGENT_PR_LABEL = 'agent-pr';
 export const DEFAULT_MERGE_METHOD = 'SQUASH';
+export const DEFAULT_REQUIRED_CHECKS = ['verify', 'gitleaks'];
 
 export const ALLOWED_AUTOMERGE_AUTHORS = new Set([
   'commitperclip[bot]',
@@ -43,8 +45,65 @@ function isLockfileAutomation(pr) {
   return authorLogin(pr) === 'github-actions[bot]' && String(pr?.head?.ref ?? '') === 'chore/refresh-lockfile';
 }
 
+function requiredCheckNames(protection) {
+  const requiredStatusChecks = protection?.required_status_checks;
+  const contexts = Array.isArray(requiredStatusChecks?.contexts) ? requiredStatusChecks.contexts : [];
+  const checks = Array.isArray(requiredStatusChecks?.checks)
+    ? requiredStatusChecks.checks.map(check => check?.context).filter(Boolean)
+    : [];
+  return new Set([...contexts, ...checks].map(check => String(check)));
+}
+
+export function evaluateBranchProtection(protection, requiredChecks = DEFAULT_REQUIRED_CHECKS) {
+  const failures = [];
+  if (!protection) {
+    return {
+      protected: false,
+      failures: ['Branch protection is not configured or could not be read.'],
+    };
+  }
+
+  if (!protection.required_status_checks) {
+    failures.push('Branch protection does not require status checks.');
+  }
+
+  const checkNames = requiredCheckNames(protection);
+  for (const requiredCheck of requiredChecks) {
+    if (!checkNames.has(requiredCheck)) {
+      failures.push(`Branch protection is missing required check \`${requiredCheck}\`.`);
+    }
+  }
+
+  return {
+    protected: failures.length === 0,
+    failures,
+  };
+}
+
+export async function fetchBranchProtection(fetchFromGitHub, repo, branch, token) {
+  try {
+    return await fetchFromGitHub(
+      `/repos/${repo}/branches/${encodeURIComponent(branch)}/protection`,
+      token,
+    );
+  } catch (error) {
+    const message = String(error?.message ?? error);
+    if (message.includes('→ 404') || message.includes(' 404:') || message.includes('Not Found')) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+function parseRequiredChecks(value) {
+  if (!value) return DEFAULT_REQUIRED_CHECKS;
+  const parsed = value.split(',').map(check => check.trim()).filter(Boolean);
+  return parsed.length > 0 ? parsed : DEFAULT_REQUIRED_CHECKS;
+}
+
 export function evaluateAutomergeEligibility(pr, options = {}) {
   const defaultBranch = options.defaultBranch ?? 'main';
+  const requiredChecks = options.requiredChecks ?? DEFAULT_REQUIRED_CHECKS;
   const prLabels = new Set(labels(pr));
   const failures = [];
 
@@ -53,6 +112,9 @@ export function evaluateAutomergeEligibility(pr, options = {}) {
   if (pr?.base?.ref !== defaultBranch) failures.push(`PR base is ${pr?.base?.ref ?? 'unknown'}, not ${defaultBranch}.`);
   if (!isSameRepositoryPr(pr)) failures.push('PR comes from a fork; auto-merge is disabled for fork PRs.');
   if (pr?.auto_merge) failures.push('Auto-merge is already enabled.');
+
+  const branchProtection = evaluateBranchProtection(options.branchProtection, requiredChecks);
+  failures.push(...branchProtection.failures);
 
   const blockingLabels = [...prLabels].filter(label => HARD_BLOCK_LABELS.has(label));
   if (blockingLabels.length > 0) {
@@ -136,7 +198,14 @@ async function main() {
   }
 
   const pr = await ghFetch(`/repos/${GH_REPO}/pulls/${prNumber}`, GH_TOKEN);
-  const result = evaluateAutomergeEligibility(pr, { defaultBranch });
+  const branch = pr?.base?.ref ?? defaultBranch;
+  const requiredChecks = parseRequiredChecks(process.env.REQUIRED_CHECKS);
+  const branchProtection = await fetchBranchProtection(ghFetch, GH_REPO, branch, GH_TOKEN);
+  const result = evaluateAutomergeEligibility(pr, {
+    defaultBranch,
+    branchProtection,
+    requiredChecks,
+  });
   if (!result.eligible) {
     console.log(JSON.stringify({ enabled: false, skipped: true, reasons: result.failures }, null, 2));
     return;

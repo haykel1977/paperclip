@@ -14,7 +14,6 @@ permissions:
   contents: write
 
 jobs:
-
   review:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -25,7 +24,6 @@ jobs:
           ref: ${{ github.event.pull_request.base.ref }}
 
       - name: Dependency Review
-
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         # Do not let dependency review hard-fail the whole review gate: the action
         # errors out entirely ("Dependency review is not supported on this
@@ -56,7 +54,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run quality gates
-
         id: quality
         if: github.event.pull_request.user.login != 'dependabot[bot]'
         run: node .github/scripts/run-quality-gates.mjs
@@ -91,3 +88,4 @@ jobs:
           GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           DEFAULT_BRANCH: main
+          REQUIRED_CHECKS: verify,gitleaks

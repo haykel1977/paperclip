@@ -208,8 +208,9 @@ test('postSecurityCheckRun: uses the injected fetch implementation', async () =>
   });
 });
 
-test('validateSensitivePaths: checks paths against the resolved base ref instead of master', async () => {
+test('validateSensitivePaths: checks paths against the resolved base ref instead of a hard-coded default branch', async () => {
   const seenPaths = [];
+
   const stale = await validateSensitivePaths(
     'token',
     'paperclipai/paperclip',
@@ -223,7 +224,7 @@ test('validateSensitivePaths: checks paths against the resolved base ref instead
 
   assert.deepEqual(stale, []);
   assert.ok(seenPaths.every(path => path.includes('ref=release%2F1.2')));
-  assert.ok(!seenPaths.some(path => path.includes('ref=master')));
+  assert.ok(!seenPaths.some(path => path.includes('ref=main')));
 });
 
 test('validateSensitivePaths: returns only 404 paths and rethrows non-404 errors', async () => {

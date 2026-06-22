@@ -21,8 +21,9 @@ test('resolveBaseRef: falls back to the PR base ref', async () => {
   assert.deepEqual(seenPaths, ['/repos/paperclipai/paperclip/pulls/6469']);
 });
 
-test('checkDependencies: compares package files against the resolved base ref instead of master', async () => {
+test('checkDependencies: compares package files against the resolved base ref instead of a hard-coded default branch', async () => {
   const seenPaths = [];
+
   const result = await checkDependencies(
     [{ filename: 'packages/foo/package.json', status: 'modified' }],
     'token',

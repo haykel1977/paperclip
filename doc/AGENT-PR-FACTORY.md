@@ -47,10 +47,14 @@ The script enables GitHub native auto-merge only when all conditions are true:
 - PR has explicit opt-in labels `agent-pr` and `automerge`, except for the
   lockfile refresh branch `chore/refresh-lockfile`.
 - No hard-block label is present.
+- Branch protection for the target branch is readable and requires the expected
+  checks (`verify` and `gitleaks` by default).
 - Auto-merge is not already enabled.
 
 The script does **not** merge immediately. It only enables GitHub auto-merge with
-squash merge. The PR merges later only if branch protection permits it.
+squash merge. The PR merges later only if branch protection permits it. If branch
+protection is absent, unreadable, or missing required checks, the script exits 0
+with a skip reason and does not enable auto-merge.
 
 ## Required branch protection
 
