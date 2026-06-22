@@ -45,6 +45,21 @@ function isLockfileAutomation(pr) {
   return authorLogin(pr) === 'github-actions[bot]' && String(pr?.head?.ref ?? '') === 'chore/refresh-lockfile';
 }
 
+function isAutomationManagedPr(pr, prLabels = new Set(labels(pr))) {
+  const author = authorLogin(pr);
+  return (
+    isSameRepositoryPr(pr) &&
+    ALLOWED_AUTOMERGE_AUTHORS.has(author) &&
+    (prLabels.has(AGENT_PR_LABEL) || prLabels.has(AUTOMERGE_LABEL) || isLockfileAutomation(pr) || author === 'dependabot[bot]')
+  );
+}
+
+function validatePullRequestNodeId(prNodeId) {
+  if (!/^PR_[A-Za-z0-9_-]+$|^[A-Za-z0-9_-]+$/.test(String(prNodeId ?? ''))) {
+    throw new Error('Invalid pull request node id.');
+  }
+}
+
 function requiredCheckNames(protection) {
   const requiredStatusChecks = protection?.required_status_checks;
   const contexts = Array.isArray(requiredStatusChecks?.contexts) ? requiredStatusChecks.contexts : [];
@@ -90,7 +105,14 @@ export async function fetchBranchProtection(fetchFromGitHub, repo, branch, token
     );
   } catch (error) {
     const message = String(error?.message ?? error);
-    if (message.includes('→ 404') || message.includes(' 404:') || message.includes('Not Found')) {
+    if (
+      message.includes('→ 404') ||
+      message.includes(' 404:') ||
+      message.includes('Not Found') ||
+      message.includes('→ 403') ||
+      message.includes(' 403:') ||
+      message.includes('Resource not accessible by integration')
+    ) {
       return null;
     }
     throw error;
@@ -141,10 +163,28 @@ export function evaluateAutomergeEligibility(pr, options = {}) {
   };
 }
 
-export async function enablePullRequestAutoMerge(fetchImpl, token, prNodeId, mergeMethod = DEFAULT_MERGE_METHOD) {
-  if (!/^PR_[A-Za-z0-9_-]+$|^[A-Za-z0-9_-]+$/.test(String(prNodeId ?? ''))) {
-    throw new Error('Invalid pull request node id.');
+export function evaluateAutoMergeRevocation(pr, options = {}) {
+  if (!pr?.auto_merge) return { revoke: false, reasons: [] };
+
+  const prLabels = new Set(labels(pr));
+  const blockingLabels = [...prLabels].filter(label => HARD_BLOCK_LABELS.has(label));
+  if (blockingLabels.length > 0) {
+    return { revoke: true, reasons: [`Blocking label(s) present: ${blockingLabels.join(', ')}.`] };
   }
+
+  if (!isAutomationManagedPr(pr, prLabels)) {
+    return { revoke: false, reasons: [] };
+  }
+
+  const eligibility = evaluateAutomergeEligibility({ ...pr, auto_merge: null }, options);
+  return {
+    revoke: !eligibility.eligible,
+    reasons: eligibility.failures,
+  };
+}
+
+export async function enablePullRequestAutoMerge(fetchImpl, token, prNodeId, mergeMethod = DEFAULT_MERGE_METHOD) {
+  validatePullRequestNodeId(prNodeId);
   const res = await fetchImpl('https://api.github.com/graphql', {
     method: 'POST',
     headers: {
@@ -181,6 +221,44 @@ export async function enablePullRequestAutoMerge(fetchImpl, token, prNodeId, mer
   return payload.data?.enablePullRequestAutoMerge?.pullRequest ?? null;
 }
 
+export async function disablePullRequestAutoMerge(fetchImpl, token, prNodeId) {
+  validatePullRequestNodeId(prNodeId);
+  const res = await fetchImpl('https://api.github.com/graphql', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    },
+    body: JSON.stringify({
+      query: `
+        mutation DisableAutoMerge($pullRequestId: ID!) {
+          disablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId }) {
+            pullRequest { number }
+          }
+        }
+      `,
+      variables: { pullRequestId: prNodeId },
+    }),
+  });
+
+  const text = await res.text();
+  let payload = {};
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(`GitHub GraphQL returned non-JSON response: ${text}`);
+  }
+
+  if (!res.ok || payload.errors?.length) {
+    const details = payload.errors?.map(error => error.message).join('; ') || text;
+    throw new Error(`Failed to disable auto-merge: ${details}`);
+  }
+
+  return payload.data?.disablePullRequestAutoMerge?.pullRequest ?? null;
+}
+
 async function main() {
   const { GH_TOKEN, GH_REPO, PR_NUMBER } = process.env;
   const defaultBranch = process.env.DEFAULT_BRANCH || 'main';
@@ -203,11 +281,19 @@ async function main() {
   const branch = pr?.base?.ref ?? defaultBranch;
   const requiredChecks = parseRequiredChecks(process.env.REQUIRED_CHECKS);
   const branchProtection = await fetchBranchProtection(ghFetch, GH_REPO, branch, GH_TOKEN);
-  const result = evaluateAutomergeEligibility(pr, {
+  const options = {
     defaultBranch,
     branchProtection,
     requiredChecks,
-  });
+  };
+  const revocation = evaluateAutoMergeRevocation(pr, options);
+  if (revocation.revoke) {
+    await disablePullRequestAutoMerge(fetch, GH_TOKEN, pr.node_id);
+    console.log(JSON.stringify({ enabled: false, disabled: true, reasons: revocation.reasons }, null, 2));
+    return;
+  }
+
+  const result = evaluateAutomergeEligibility(pr, options);
   if (!result.eligible) {
     console.log(JSON.stringify({ enabled: false, skipped: true, reasons: result.failures }, null, 2));
     return;

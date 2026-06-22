@@ -2,7 +2,7 @@ name: commitperclip PR Review
 
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, labeled, unlabeled]
 
 # Always runs from base branch context — never executes PR code.
 # pull_request_target gives access to secrets for untrusted fork PRs.
