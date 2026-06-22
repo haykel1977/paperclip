@@ -55,7 +55,7 @@ function isAutomationManagedPr(pr, prLabels = new Set(labels(pr))) {
 }
 
 function validatePullRequestNodeId(prNodeId) {
-  if (!/^PR_[A-Za-z0-9_-]+$|^[A-Za-z0-9_-]+$/.test(String(prNodeId ?? ''))) {
+  if (!/^[A-Za-z0-9_+=:/-]{1,256}$/.test(String(prNodeId ?? ''))) {
     throw new Error('Invalid pull request node id.');
   }
 }

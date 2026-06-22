@@ -165,6 +165,31 @@ test('enablePullRequestAutoMerge: sends the native auto-merge GraphQL mutation',
   assert.equal(body.variables.mergeMethod, 'SQUASH');
 });
 
+test('enablePullRequestAutoMerge: accepts classic padded GitHub GraphQL node IDs', async () => {
+  const calls = [];
+  await enablePullRequestAutoMerge(async (url, options) => {
+    calls.push({ url, options });
+    return {
+      ok: true,
+      async text() {
+        return JSON.stringify({ data: { enablePullRequestAutoMerge: { pullRequest: { number: 123 } } } });
+      },
+    };
+  }, 'token', 'MDExOlB1bGxSZXF1ZXN0MQ==', 'SQUASH');
+
+  const body = JSON.parse(calls[0].options.body);
+  assert.equal(body.variables.pullRequestId, 'MDExOlB1bGxSZXF1ZXN0MQ==');
+});
+
+test('enablePullRequestAutoMerge: rejects unsafe pull request node IDs', async () => {
+  await assert.rejects(
+    enablePullRequestAutoMerge(async () => {
+      throw new Error('fetch should not be called');
+    }, 'token', 'PR_bad id', 'SQUASH'),
+    /Invalid pull request node id/
+  );
+});
+
 test('disablePullRequestAutoMerge: sends the native auto-merge revocation mutation', async () => {
   const calls = [];
   const result = await disablePullRequestAutoMerge(async (url, options) => {
