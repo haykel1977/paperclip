@@ -50,6 +50,20 @@ describe("dynamic adapter type validation schemas", () => {
     ).toBe("external_adapter");
   });
 
+  it("normalizes developer role aliases to the canonical engineer role", () => {
+    for (const role of ["developer", "developper", "ddevelopper", "developpeur", "développeur", "développer"]) {
+      expect(
+        createAgentSchema.parse({
+          name: "Developer Agent",
+          role,
+          adapterType: "codex_local",
+        }).role,
+      ).toBe("engineer");
+
+      expect(updateAgentSchema.parse({ role }).role).toBe("engineer");
+    }
+  });
+
   it("accepts specialized issue-resolution agent roles and exposes their UI labels", () => {
     expect(
       createAgentSchema.parse({

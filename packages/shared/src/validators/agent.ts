@@ -66,9 +66,27 @@ export const agentRuntimeConfigSchema = z.object({
   }).strict().optional(),
 }).catchall(z.unknown());
 
+const DEVELOPER_ROLE_ALIASES = new Set([
+  "developer",
+  "developper",
+  "ddevelopper",
+  "developpeur",
+  "développeur",
+  "développer",
+]);
+
+function normalizeAgentRoleInput(value: unknown) {
+  if (typeof value !== "string") return value;
+  const role = value.trim().toLowerCase();
+  if (DEVELOPER_ROLE_ALIASES.has(role)) return "engineer";
+  return role;
+}
+
+const agentRoleSchema = z.preprocess(normalizeAgentRoleInput, z.enum(AGENT_ROLES));
+
 export const createAgentSchema = z.object({
   name: z.string().min(1),
-  role: z.enum(AGENT_ROLES).optional().default("general"),
+  role: agentRoleSchema.optional().default("general"),
   title: z.string().optional().nullable(),
   icon: z.enum(AGENT_ICON_NAMES).optional().nullable(),
   reportsTo: z.string().uuid().optional().nullable(),

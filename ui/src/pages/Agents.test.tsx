@@ -275,4 +275,74 @@ describe("Agents", () => {
     expect(container.textContent).toContain("Alpha");
     expect(container.querySelector('[aria-label="Invalid reporting chain"]')).not.toBeNull();
   });
+
+  it("recognizes developer role aliases as developer agents", async () => {
+    mockAgentsApi.list.mockResolvedValue([
+      makeAgent({
+        name: "DevAgent",
+        role: "ddevelopper" as Agent["role"],
+      }),
+    ]);
+    mockAgentsApi.org.mockResolvedValue([
+      {
+        id: "agent-1",
+        name: "DevAgent",
+        role: "ddevelopper",
+        status: "active",
+        reports: [],
+      },
+    ]);
+
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(
+        <QueryClientProvider client={queryClient}>
+          <ToastProvider>
+            <Agents />
+          </ToastProvider>
+        </QueryClientProvider>,
+      );
+    });
+    await flushReact();
+    await flushReact();
+
+    expect(container.textContent).toContain("Developer");
+    expect(container.textContent).toContain("Lead: DevAgent");
+  });
+
+  it("keeps pending developer hires visible on the all agents page", async () => {
+    mockAgentsApi.list.mockResolvedValue([
+      makeAgent({
+        name: "PendingDev",
+        role: "developer" as Agent["role"],
+        status: "pending_approval",
+      }),
+    ]);
+    mockAgentsApi.org.mockResolvedValue([
+      {
+        id: "agent-1",
+        name: "PendingDev",
+        role: "developer",
+        status: "pending_approval",
+        reports: [],
+      },
+    ]);
+
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(
+        <QueryClientProvider client={queryClient}>
+          <ToastProvider>
+            <Agents />
+          </ToastProvider>
+        </QueryClientProvider>,
+      );
+    });
+    await flushReact();
+    await flushReact();
+
+    expect(container.textContent).toContain("PendingDev");
+    expect(container.textContent).toContain("pending approval");
+    expect(container.textContent).toContain("Awaiting approval: PendingDev");
+  });
 });

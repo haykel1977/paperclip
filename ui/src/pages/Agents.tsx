@@ -45,10 +45,9 @@ import { getAdapterLabel } from "../adapters/adapter-display-registry";
 
 type FilterTab = "all" | "active" | "paused" | "error";
 
-// Agents in these states never appear in the agents list — `terminated` is
-// hidden like an archived company, and `pending_approval` is a hiring gate that
-// lives in the task thread, not an agent run state (PAP-75).
-const HIDDEN_AGENT_STATUSES = new Set(["terminated", "pending_approval"]);
+// Terminated agents are hidden like archived companies. Agents waiting for
+// approval remain visible on the All tab so new developer hires do not look lost.
+const HIDDEN_AGENT_STATUSES = new Set(["terminated"]);
 
 function matchesFilter(status: string, tab: FilterTab): boolean {
   if (tab === "all") return true;
@@ -564,7 +563,11 @@ function IssueAccelerationSquad({ agents }: { agents: Agent[] }) {
                       <span className="truncate text-sm font-medium">{lane.label}</span>
                     </span>
                     <span className="text-[11px] text-muted-foreground">
-                      {matches.length > 0 ? `${matches.length} ready` : "missing"}
+                      {matches.length > 0
+                        ? matches.some((agent) => agent.status !== "pending_approval")
+                          ? `${matches.length} ready`
+                          : "pending approval"
+                        : "missing"}
                     </span>
                   </span>
                   <span className="text-xs text-muted-foreground">{lane.objective}</span>
@@ -578,7 +581,7 @@ function IssueAccelerationSquad({ agents }: { agents: Agent[] }) {
                   </Link>
                 ) : (
                   <span className="mt-auto truncate text-[11px] text-muted-foreground">
-                    Lead: {matches[0].name}
+                    {matches[0].status === "pending_approval" ? "Awaiting approval" : "Lead"}: {matches[0].name}
                   </span>
                 )}
               </div>
