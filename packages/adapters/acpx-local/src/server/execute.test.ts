@@ -281,7 +281,31 @@ describe("acpx_local runtime skill isolation", () => {
     expect(env).not.toContain("old-key");
   });
 
+  it("writes Paperclip-owned temp env for ACPX wrappers and Claude Code", async () => {
+    const root = await makeTempRoot();
+    const stateDir = path.join(root, "state");
+
+    await runExecutor({
+      agent: "claude",
+      agentCommand: "node ./fake-acp.js",
+      stateDir,
+    });
+
+    const wrappers = await fs.readdir(path.join(stateDir, "wrappers"));
+    const envPath = path.join(stateDir, "wrappers", wrappers.find((name) => name.endsWith(".env"))!);
+    const env = await fs.readFile(envPath, "utf8");
+    const tmpDir = env.match(/^TMPDIR='([^']+)'$/m)?.[1];
+
+    expect(tmpDir).toBeTruthy();
+    expect(tmpDir).toContain(`${path.join(stateDir, "tmp")}${path.sep}`);
+    expect((await fs.stat(tmpDir!)).mode & 0o777).toBe(0o700);
+    expect(env).toContain(`TMP='${tmpDir}'`);
+    expect(env).toContain(`TEMP='${tmpDir}'`);
+    expect(env).toContain(`CLAUDE_CODE_TMPDIR='${tmpDir}'`);
+  });
+
   it("shapes ACPX wrapper workspace env for remote execution identities", async () => {
+
     const root = await makeTempRoot();
     const stateDir = path.join(root, "state");
     const workspaceDir = path.join(root, "workspace");

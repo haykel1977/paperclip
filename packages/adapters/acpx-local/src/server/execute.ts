@@ -834,19 +834,25 @@ async function buildRuntime(input: {
   const hasExplicitTempDir = ["TMPDIR", "TMP", "TEMP"].some(
     (key) => typeof shapedEnvConfig[key] === "string" && shapedEnvConfig[key].trim().length > 0,
   );
+  let effectiveTempDir = [env.TMPDIR, env.TMP, env.TEMP].find(
+    (value) => typeof value === "string" && value.trim().length > 0,
+  );
   if (!hasExplicitTempDir) {
-    const paperclipTempDir = path.join(stateDir, "tmp");
+    const paperclipTempDir = path.join(stateDir, "tmp", shortHash({ runId }));
     await fs.mkdir(paperclipTempDir, { recursive: true, mode: 0o700 });
     await fs.chmod(paperclipTempDir, 0o700).catch(() => {});
     env.TMPDIR = paperclipTempDir;
     env.TMP = paperclipTempDir;
     env.TEMP = paperclipTempDir;
+    effectiveTempDir = paperclipTempDir;
   }
+  if (!env.CLAUDE_CODE_TMPDIR && effectiveTempDir) env.CLAUDE_CODE_TMPDIR = effectiveTempDir;
   if (!hasExplicitApiKey && authToken) env.PAPERCLIP_API_KEY = authToken;
   // For the claude agent, set model via ANTHROPIC_MODEL at startup rather than
   // via session/set_config_option — the ACP server's set_config_option handler
   // validates the value against its internal available-models list and rejects
   // bare model IDs (e.g. "claude-opus-4-7") that don't exactly match a model
+
   // entry in some versions. ANTHROPIC_MODEL is read during initialization, so
   // it reliably sets the model before any turns are run.
   if (requestedModel && acpxAgent === "claude" && !env.ANTHROPIC_MODEL) {
