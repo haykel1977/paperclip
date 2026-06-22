@@ -11,9 +11,10 @@ permissions:
   pull-requests: write
   security-events: write
   checks: write
-  contents: read
+  contents: write
 
 jobs:
+
   review:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -52,8 +53,10 @@ jobs:
           echo "value=$TOKEN" >> $GITHUB_OUTPUT
         env:
           COMMITPERCLIP_KEY: ${{ secrets.COMMITPERCLIP_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run quality gates
+
         id: quality
         if: github.event.pull_request.user.login != 'dependabot[bot]'
         run: node .github/scripts/run-quality-gates.mjs
@@ -80,3 +83,11 @@ jobs:
         run: |
           echo "One or more quality gates failed. See commitperclip comment on the PR for details."
           exit 1
+
+      - name: Enable native auto-merge for eligible automation PRs
+        run: node .github/scripts/enable-agent-automerge.mjs
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.value }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          DEFAULT_BRANCH: main

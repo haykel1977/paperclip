@@ -37,9 +37,14 @@ const DISALLOWED_CI_STATUS_CLAIMS = [
     pattern: /\bdraft(?:\s|-)*pr\s+guard\b/i,
     label: 'draft PR guard',
   },
+  {
+    pattern: /\b(green|passed|passing|success(?:ful)?|verified|all\s+checks\s+(?:are\s+)?green)\b/i,
+    label: 'unverified green CI',
+  },
 ];
 
 function extractSectionContent(body, heading) {
+
   const idx = body.indexOf(heading);
   if (idx === -1) return null;
   const after = body.slice(idx + heading.length);
@@ -70,7 +75,15 @@ function isPlaceholderReadinessValue(value) {
   return !value || /^[-_—–]+$/.test(value) || /^todo$/i.test(value) || /^tbd$/i.test(value);
 }
 
+function isPlaceholderSectionContent(content) {
+  const withoutComments = content.replace(/<!--[^]*?-->/g, '').trim();
+  if (!withoutComments) return true;
+  const lines = withoutComments.split('\n').map(line => line.trim()).filter(Boolean);
+  return lines.length > 0 && lines.every(line => /^[-*]>?\s*[-_—–]*$/.test(line) || /^\[[ xX]\]$/.test(line));
+}
+
 export function checkTemplate(body) {
+
   const failures = [];
 
   if (!body || !body.trim()) {
@@ -88,12 +101,13 @@ export function checkTemplate(body) {
       continue;
     }
 
-    if (!content || content === '_No response_' || /^<!--/.test(content)) {
+    if (!content || content === '_No response_' || /^<!--/.test(content) || isPlaceholderSectionContent(content)) {
       failures.push(`Empty section: **${heading}**`);
       continue;
     }
 
     if (heading === '## Thinking Path') {
+
       const n = countSentences(content);
       if (n < minSentences) {
         failures.push(
@@ -114,8 +128,11 @@ export function checkTemplate(body) {
       for (const claim of DISALLOWED_CI_STATUS_CLAIMS) {
         if (claim.pattern.test(ciStatus)) {
           failures.push(
-            `**PR Readiness Gate** CI status mentions ${claim.label}, which is not a configured required PR check here — cite actual checks or state that CI is pending.`,
+            claim.label === 'unverified green CI'
+              ? '**PR Readiness Gate** CI status must not self-certify green/passed checks. State that GitHub required checks are pending or cite the actual external blocker; GitHub check-runs are the source of truth.'
+              : `**PR Readiness Gate** CI status mentions ${claim.label}, which is not a configured required PR check here — cite actual checks or state that CI is pending.`,
           );
+
         }
       }
     }

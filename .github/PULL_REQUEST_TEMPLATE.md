@@ -56,13 +56,13 @@
   - Keep the diff focused on this task. Split unrelated cleanup/refactors into follow-ups.
   - Fill this PR template completely.
   - Include verification evidence that matches the current diff.
-  - Confirm required/relevant CI is green, or name the external blocker.
+  - State CI as pending/source-of-truth until GitHub check-runs have actually completed, or name the external blocker.
 -->
 
 - Diff scope:
 - Template status:
 - Verification evidence:
-- CI status:
+- CI status: Pending — GitHub required checks are the source of truth.
 
 ## Risks
 
@@ -102,7 +102,8 @@
 - [ ] If this change affects the UI, I have included before/after screenshots
 - [ ] I have updated relevant documentation to reflect my changes
 - [ ] I have considered and documented any risks above
-- [ ] The PR readiness gate is satisfied: focused diff, completed template, verification evidence, and green required/relevant CI or documented external blocker
-- [ ] All Paperclip CI gates are green
-- [ ] Greptile is 5/5 with no open P2s, recommendations, or follow-ups
+- [ ] The PR readiness gate is satisfied: focused diff, completed template, verification evidence, and CI status grounded in GitHub check-runs or a documented external blocker
+- [ ] I will not claim CI is green until GitHub check-runs show it; required checks are the source of truth
+
+- [ ] Greptile is 5/5 with no open P2s, recommendations, or follow-ups, or this PR documents why Greptile is not applicable
 - [ ] I will address all Greptile and reviewer comments before requesting merge

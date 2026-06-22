@@ -80,15 +80,31 @@ export async function resolveInstallationId(fetchInstallation, token, repo, owne
   );
 }
 
+export function resolveFallbackToken(env = process.env) {
+  const fallback = env.GITHUB_TOKEN;
+  if (!fallback) return null;
+  return {
+    token: fallback,
+    warning: 'COMMITPERCLIP_KEY is not set; using GITHUB_TOKEN fallback for PR review gates.',
+  };
+}
+
 async function main() {
   const privateKey = process.env.COMMITPERCLIP_KEY;
   if (!privateKey) {
-    console.error('ERROR: COMMITPERCLIP_KEY env var not set.');
-    console.error('Add to ~/.bash_profile: export COMMITPERCLIP_KEY="$(cat ~/.config/commitperclip/private-key.pem)"');
+    const fallback = resolveFallbackToken();
+    if (fallback) {
+      console.error(`WARNING: ${fallback.warning}`);
+      process.stdout.write(fallback.token);
+      return;
+    }
+    console.error('ERROR: COMMITPERCLIP_KEY env var not set and GITHUB_TOKEN fallback is unavailable.');
+    console.error('Add COMMITPERCLIP_KEY as a repository secret or run inside GitHub Actions with GITHUB_TOKEN.');
     process.exit(1);
   }
 
   const jwt = generateJWT(privateKey);
+
   const repo = process.env.GH_REPO ?? process.env.GITHUB_REPOSITORY;
   const owner = process.env.GITHUB_REPOSITORY_OWNER ?? repo?.split('/')[0];
 

@@ -76,7 +76,8 @@ test('requires checkbox for feat: prefix', () => {
 test('does not match unrelated checked items mentioning "PR"', () => {
   const body = `
 - [x] I have run tests locally and they pass
-- [x] All Paperclip CI gates are green
+- [x] I will not claim CI is green until GitHub check-runs show it; required checks are the source of truth
+
 `;
   assert.equal(checkDedupSearch(body, 'feat: thing').passed, false);
 });

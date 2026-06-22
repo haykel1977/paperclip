@@ -1,8 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveInstallationId } from '../get-bot-token.mjs';
+import { resolveFallbackToken, resolveInstallationId } from '../get-bot-token.mjs';
+
+test('resolveFallbackToken: returns GITHUB_TOKEN with an explicit fallback warning', () => {
+  assert.deepEqual(resolveFallbackToken({ GITHUB_TOKEN: 'ghs_test' }), {
+    token: 'ghs_test',
+    warning: 'COMMITPERCLIP_KEY is not set; using GITHUB_TOKEN fallback for PR review gates.',
+  });
+});
+
+test('resolveFallbackToken: returns null when GITHUB_TOKEN is unavailable', () => {
+  assert.equal(resolveFallbackToken({}), null);
+});
 
 test('resolveInstallationId: uses the repo installation endpoint when repo context is available', async () => {
+
   const seenPaths = [];
   const installationId = await resolveInstallationId(async (path) => {
     seenPaths.push(path);

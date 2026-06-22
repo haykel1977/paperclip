@@ -16,9 +16,10 @@ Run pnpm test:run:general and verify the cursor pagination tests pass.
 - Diff scope: Focused on the cursor pagination query fix only.
 - Template status: All required sections completed.
 - Verification evidence: pnpm test:run:general passed locally for cursor pagination coverage.
-- CI status: Required checks are green.
+- CI status: Pending — GitHub required checks are the source of truth.
 
 ## Risks
+
 Low risk — isolated change to one query parameter.
 
 ## Model Used
@@ -122,8 +123,8 @@ test('fails when PR Readiness Gate fields are empty', () => {
 
 test('fails when PR Readiness Gate CI status cites hallucinated checks', () => {
   const body = VALID_BODY.replace(
-    'CI status: Required checks are green.',
-    'CI status: CodeQL and the draft PR guard are green.',
+    'CI status: Pending — GitHub required checks are the source of truth.',
+    'CI status: CodeQL and the draft PR guard are pending.',
   );
   const result = checkTemplate(body);
   assert.equal(result.passed, false);
@@ -131,7 +132,28 @@ test('fails when PR Readiness Gate CI status cites hallucinated checks', () => {
   assert.ok(result.failures.some(f => f.includes('draft PR guard')));
 });
 
+test('fails when PR Readiness Gate CI status self-certifies green checks', () => {
+  const body = VALID_BODY.replace(
+    'CI status: Pending — GitHub required checks are the source of truth.',
+    'CI status: Required checks are green.',
+  );
+  const result = checkTemplate(body);
+  assert.equal(result.passed, false);
+  assert.ok(result.failures.some(f => f.includes('must not self-certify green/passed checks')));
+});
+
+test('fails when a required section only contains a placeholder bullet', () => {
+  const body = VALID_BODY.replace(
+    /## What Changed\n[\s\S]*?\n## Verification/,
+    '## What Changed\n-\n\n## Verification'
+  );
+  const result = checkTemplate(body);
+  assert.equal(result.passed, false);
+  assert.ok(result.failures.some(f => f.includes('What Changed')));
+});
+
 test('fails when Model Used section is missing', () => {
+
   const body = VALID_BODY.replace('## Model Used', '## Removed');
   const result = checkTemplate(body);
   assert.equal(result.passed, false);

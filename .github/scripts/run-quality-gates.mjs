@@ -22,10 +22,11 @@ const COMMENT_SIGNATURE = '— commitperclip';
 
 function buildComment(author, failures, informational) {
   if (failures.length === 0 && informational.length === 0) {
-    return `✅ All checks passing — ready for Greptile review and maintainer approval.\n\n${COMMENT_SIGNATURE}`;
+    return `✅ Quality gates passing — ready for branch-protection checks and the configured review/auto-merge policy.\n\n${COMMENT_SIGNATURE}`;
   }
 
   const lines = [
+
     `Hey @${author}! Before this PR can be reviewed, a few things need attention:\n`,
   ];
 
