@@ -320,7 +320,45 @@ describe("teamsCatalogService", () => {
     );
   });
 
+  it("disables executable scripts for agent-triggered catalog skill installs after team install", async () => {
+    const svc = teamsCatalogService({} as any);
+
+    await svc.installCatalogTeam("company-1", "core-exec-team", {
+      actor: {
+        actorType: "agent",
+        actorId: "agent-1",
+        agentId: "agent-1",
+        runId: "run-1",
+      },
+    });
+
+    expect(mockCompanySkillService.installFromCatalog).toHaveBeenCalledWith(
+      "company-1",
+      { catalogSkillId: "paperclipai:bundled:software-development:github-pr-workflow" },
+      { allowExecutableScripts: false },
+    );
+  });
+
+  it("allows executable scripts for user-triggered catalog skill installs after team install", async () => {
+    const svc = teamsCatalogService({} as any);
+
+    await svc.installCatalogTeam("company-1", "core-exec-team", {
+      actor: {
+        actorType: "user",
+        actorId: "user-1",
+        userId: "user-1",
+      },
+    });
+
+    expect(mockCompanySkillService.installFromCatalog).toHaveBeenCalledWith(
+      "company-1",
+      { catalogSkillId: "paperclipai:bundled:software-development:github-pr-workflow" },
+      { allowExecutableScripts: true },
+    );
+  });
+
   it("disables executable scripts for agent-triggered external skill imports after team install", async () => {
+
     await withTempCatalogManifest(async (serviceFactory) => {
       const svc = serviceFactory({} as any);
 

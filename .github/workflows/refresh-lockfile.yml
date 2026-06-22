@@ -84,6 +84,7 @@ jobs:
               --body "Auto-generated lockfile refresh after dependencies changed on main. This PR only updates pnpm-lock.yaml.")"
             echo "Created new PR: $pr_url"
           else
+
             echo "PR already exists: $pr_url"
           fi
           echo "pr_url=$pr_url" >> "$GITHUB_OUTPUT"

@@ -85,15 +85,18 @@ export function collectRuntimeConfigAdapterWorkspaceCommandPaths(
   prefix = "runtimeConfig",
 ): string[] {
   const runtimeRecord = isRecord(runtimeConfig) ? runtimeConfig : null;
-  const modelProfiles = isRecord(runtimeRecord?.modelProfiles) ? runtimeRecord.modelProfiles : null;
+  const modelProfiles = isRecord(runtimeRecord?.modelProfiles)
+    ? runtimeRecord.modelProfiles
+    : null;
   if (!modelProfiles) return [];
 
   const paths: string[] = [];
   for (const [profileKey, rawProfile] of Object.entries(modelProfiles)) {
-    if (!isRecord(rawProfile) || !isRecord(rawProfile.adapterConfig)) continue;
+    const profile = isRecord(rawProfile) ? rawProfile : null;
+    if (!profile || !isRecord(profile.adapterConfig)) continue;
     paths.push(
       ...collectAgentAdapterWorkspaceCommandPaths(
-        rawProfile.adapterConfig,
+        profile.adapterConfig,
         `${prefix}.modelProfiles.${profileKey}.adapterConfig`,
       ),
     );
@@ -121,6 +124,9 @@ export function collectProjectWorkspaceCommandPaths(
 ): string[] {
   if (!isRecord(workspacePatch)) return [];
   const paths: string[] = [];
+  if (hasOwn(workspacePatch, "setupCommand")) {
+    paths.push(prefixPath(prefix, "setupCommand"));
+  }
   if (hasOwn(workspacePatch, "cleanupCommand")) {
     paths.push(prefixPath(prefix, "cleanupCommand"));
   }
@@ -132,6 +138,7 @@ export function collectProjectWorkspaceCommandPaths(
       ),
     );
   }
+
   if (isRecord(workspacePatch.metadata) && isRecord(workspacePatch.metadata.runtimeConfig)) {
     paths.push(
       ...collectWorkspaceRuntimeCommandPaths(
@@ -147,6 +154,7 @@ export function collectIssueWorkspaceCommandPaths(input: {
   executionWorkspaceSettings?: unknown;
   assigneeAdapterOverrides?: unknown;
 }): string[] {
+
   const paths: string[] = [];
   if (isRecord(input.executionWorkspaceSettings)) {
     paths.push(
@@ -154,7 +162,6 @@ export function collectIssueWorkspaceCommandPaths(input: {
         input.executionWorkspaceSettings.workspaceStrategy,
         "executionWorkspaceSettings.workspaceStrategy",
       ),
-
       ...collectWorkspaceRuntimeCommandPaths(
         input.executionWorkspaceSettings.workspaceRuntime,
         "executionWorkspaceSettings.workspaceRuntime",

@@ -58,11 +58,13 @@ import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } f
 import {
   assertNoAgentHostWorkspaceCommandMutation,
   collectAgentAdapterWorkspaceCommandPaths,
+  collectRuntimeConfigAdapterWorkspaceCommandPaths,
 } from "./workspace-command-authz.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
 import { environmentService } from "../services/environments.js";
 import { resolveEnvironmentExecutionTarget } from "../services/environment-execution-target.js";
 import { environmentRuntimeService } from "../services/environment-runtime.js";
+
 import type { AdapterExecutionTarget } from "@paperclipai/adapter-utils/execution-target";
 import type {
   AdapterEnvironmentCheck,
@@ -1100,14 +1102,19 @@ export function agentRoutes(
 
   function assertNoAgentRuntimeConfigAdapterConfigMutation(req: Request, runtimeConfig: unknown) {
     for (const entry of listRuntimeModelProfileAdapterConfigs(runtimeConfig)) {
-      assertNoAgentAdapterConfigMutation(req, entry.adapterConfig, entry.path);
+      assertNoAgentInstructionsConfigMutation(req, entry.adapterConfig, entry.path);
     }
+    assertNoAgentHostWorkspaceCommandMutation(
+      req,
+      collectRuntimeConfigAdapterWorkspaceCommandPaths(runtimeConfig),
+    );
   }
 
   async function normalizeMediatedAdapterConfigForPersistence(input: {
     companyId: string;
     adapterType: string | null | undefined;
     adapterConfig: Record<string, unknown>;
+
     constraintAdapterConfig?: Record<string, unknown>;
     pathLabel?: string;
   }): Promise<Record<string, unknown>> {

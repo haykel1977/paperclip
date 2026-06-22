@@ -127,8 +127,9 @@ export function checkLinkedIssue(body, prTitle = '') {
         : 'No closing issue link or inline issue description found — either tag an existing issue ' +
           'with `Fixes #NNN` / `Closes #NNN` / `Resolves #NNN`, or describe the underlying issue ' +
           'inline in the PR body following one of our issue templates ' +
-          '(https://github.com/paperclipai/paperclip/tree/master/.github/ISSUE_TEMPLATE). ' +
+          '(https://github.com/paperclipai/paperclip/tree/main/.github/ISSUE_TEMPLATE). ' +
           'See CONTRIBUTING.md → "Link Issues or Describe Them In-PR".',
+
     ],
   };
 }

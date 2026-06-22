@@ -18,9 +18,9 @@ import {
   secretService,
 } from "../services/index.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
+import { forbidden } from "../errors.js";
 import { redactEventPayload } from "../redaction.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
-import { forbidden } from "../errors.js";
 import {
   collectAgentAdapterWorkspaceCommandPaths,
   collectRuntimeConfigAdapterWorkspaceCommandPaths,
@@ -30,6 +30,47 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function collectHireApprovalWorkspaceCommandPaths(payload: unknown): string[] {
+  if (!isRecord(payload)) return [];
+  const paths = [
+    ...collectAgentAdapterWorkspaceCommandPaths(payload.adapterConfig, "payload.adapterConfig"),
+    ...collectRuntimeConfigAdapterWorkspaceCommandPaths(payload.runtimeConfig, "payload.runtimeConfig"),
+  ];
+  const snapshot = payload.requestedConfigurationSnapshot;
+  if (isRecord(snapshot)) {
+    paths.push(
+      ...collectAgentAdapterWorkspaceCommandPaths(
+        snapshot.adapterConfig,
+        "payload.requestedConfigurationSnapshot.adapterConfig",
+      ),
+      ...collectRuntimeConfigAdapterWorkspaceCommandPaths(
+        snapshot.runtimeConfig,
+        "payload.requestedConfigurationSnapshot.runtimeConfig",
+      ),
+    );
+  }
+  return paths;
+}
+
+function assertHireApprovalPayloadDoesNotSetHostWorkspaceCommands(payload: unknown) {
+  const paths = collectHireApprovalWorkspaceCommandPaths(payload);
+  if (paths.length === 0) return;
+  throw forbidden(
+    `Agent-requested hire approvals cannot set host-executed workspace commands (${paths.join(", ")}).`,
+  );
+}
+
+function isAgentRequestedHireApproval(approval: {
+  type: string;
+  requestedByAgentId?: string | null;
+  payload?: unknown;
+}) {
+  if (approval.type !== "hire_agent") return false;
+  if (approval.requestedByAgentId) return true;
+  const payload = isRecord(approval.payload) ? approval.payload : null;
+  return typeof payload?.requestedByAgentId === "string" && payload.requestedByAgentId.length > 0;
+}
+
 function redactApprovalPayload<T extends { payload: Record<string, unknown> }>(approval: T): T {
   return {
     ...approval,
@@ -37,39 +78,11 @@ function redactApprovalPayload<T extends { payload: Record<string, unknown> }>(a
   };
 }
 
-function collectHireApprovalHostWorkspaceCommandPaths(payload: unknown) {
-  if (!isRecord(payload)) return [];
-  const requestedConfigurationSnapshot = isRecord(payload.requestedConfigurationSnapshot)
-    ? payload.requestedConfigurationSnapshot
-    : null;
-  return [
-    ...collectAgentAdapterWorkspaceCommandPaths(payload.adapterConfig, "payload.adapterConfig"),
-    ...collectRuntimeConfigAdapterWorkspaceCommandPaths(payload.runtimeConfig, "payload.runtimeConfig"),
-    ...collectAgentAdapterWorkspaceCommandPaths(
-      requestedConfigurationSnapshot?.adapterConfig,
-      "payload.requestedConfigurationSnapshot.adapterConfig",
-    ),
-    ...collectRuntimeConfigAdapterWorkspaceCommandPaths(
-      requestedConfigurationSnapshot?.runtimeConfig,
-      "payload.requestedConfigurationSnapshot.runtimeConfig",
-    ),
-  ];
-}
-
-function assertNoAgentControlledHireApprovalHostWorkspaceCommands(payload: unknown) {
-  const paths = collectHireApprovalHostWorkspaceCommandPaths(payload);
-  if (paths.length === 0) return;
-  throw forbidden(
-    `Agent-requested hire approvals cannot set host-executed workspace commands (${paths.join(", ")}).`,
-  );
-}
-
 export function approvalRoutes(
   db: Db,
   options: { pluginWorkerManager?: PluginWorkerManager } = {},
 ) {
   const router = Router();
-
   const svc = approvalService(db);
   const access = accessService(db);
   const heartbeat = heartbeatService(db, {
@@ -130,6 +143,9 @@ export function approvalRoutes(
       : [];
     const uniqueIssueIds = Array.from(new Set(issueIds));
     const { issueIds: _issueIds, ...approvalInput } = req.body;
+    const actor = getActorInfo(req);
+    const requestedByAgentId =
+      approvalInput.requestedByAgentId ?? (actor.actorType === "agent" ? actor.actorId : null);
     const normalizedPayload =
       approvalInput.type === "hire_agent"
         ? await secretsSvc.normalizeHireApprovalPayloadForPersistence(
@@ -138,17 +154,15 @@ export function approvalRoutes(
             { strictMode: strictSecretsMode },
           )
         : approvalInput.payload;
-
-    const actor = getActorInfo(req);
-    if (actor.actorType === "agent" && approvalInput.type === "hire_agent") {
-      assertNoAgentControlledHireApprovalHostWorkspaceCommands(normalizedPayload);
+    if (approvalInput.type === "hire_agent" && requestedByAgentId) {
+      assertHireApprovalPayloadDoesNotSetHostWorkspaceCommands(normalizedPayload);
     }
+
     const approval = await svc.create(companyId, {
       ...approvalInput,
       payload: normalizedPayload,
       requestedByUserId: actor.actorType === "user" ? actor.actorId : null,
-      requestedByAgentId:
-        approvalInput.requestedByAgentId ?? (actor.actorType === "agent" ? actor.actorId : null),
+      requestedByAgentId,
       status: "pending",
       decisionNote: null,
       decidedByUserId: null,
@@ -198,8 +212,8 @@ export function approvalRoutes(
       res.status(404).json({ error: "Approval not found" });
       return;
     }
-    if (existingApproval.type === "hire_agent" && existingApproval.requestedByAgentId) {
-      assertNoAgentControlledHireApprovalHostWorkspaceCommands(existingApproval.payload);
+    if (isAgentRequestedHireApproval(existingApproval)) {
+      assertHireApprovalPayloadDoesNotSetHostWorkspaceCommands(existingApproval.payload);
     }
     const decidedByUserId = req.actor.userId ?? "board";
     const { approval, applied } = await svc.approve(id, decidedByUserId, req.body.decisionNote);
@@ -366,16 +380,16 @@ export function approvalRoutes(
           )
         : req.body.payload
       : undefined;
-    if (req.actor.type === "agent" && existing.type === "hire_agent" && normalizedPayload !== undefined) {
-      assertNoAgentControlledHireApprovalHostWorkspaceCommands(normalizedPayload);
+    if (normalizedPayload && isAgentRequestedHireApproval(existing)) {
+      assertHireApprovalPayloadDoesNotSetHostWorkspaceCommands(normalizedPayload);
     }
     const approval = await svc.resubmit(id, normalizedPayload);
     const actor = getActorInfo(req);
     await logActivity(db, {
       companyId: approval.companyId,
-
       actorType: actor.actorType,
       actorId: actor.actorId,
+
       agentId: actor.agentId,
       action: "approval.resubmitted",
       entityType: "approval",

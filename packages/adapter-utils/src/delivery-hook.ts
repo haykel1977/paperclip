@@ -303,6 +303,7 @@ async function pushWithRetry(input: {
 }): Promise<{ exitCode: number; stderr: string }> {
   const { branch, worktreeCwd, env, log, ts, runProc, retryDelayMs = 3000 } = input;
 
+  // paperclip:allow-git-push: delivery-hook pushes agent commits to the operator-configured remote (PAPA-432, see packages/adapters/AUTHORING.md)
   const tryPush = () => runProc("git", ["push", "-u", "origin", branch], worktreeCwd, env);
 
   const first = await tryPush();

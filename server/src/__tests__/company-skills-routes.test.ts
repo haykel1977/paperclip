@@ -296,12 +296,15 @@ describe("company skill mutation permissions", () => {
     expect(mockCompanySkillService.installFromCatalog).toHaveBeenCalledWith("company-1", {
       catalogSkillId: "paperclipai:bundled:software-development:review",
       slug: "review",
+    }, {
+      allowExecutableScripts: true,
     });
     expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
       companyId: "company-1",
       action: "company.skill_catalog_installed",
       entityType: "company_skill",
       entityId: "skill-1",
+
       details: expect.objectContaining({
         catalogId: "paperclipai:bundled:software-development:review",
         catalogKey: "paperclipai/bundled/software-development/review",
@@ -508,6 +511,30 @@ describe("company skill mutation permissions", () => {
     );
   });
 
+  it("disables executable scripts for agent-triggered catalog skill installs", async () => {
+    mockAgentService.getById.mockResolvedValue({
+      id: "agent-1",
+      companyId: "company-1",
+      permissions: { canCreateAgents: true },
+    });
+
+    const res = await request(await createApp({
+      type: "agent",
+      agentId: "agent-1",
+      companyId: "company-1",
+      runId: "run-1",
+    }))
+      .post("/api/companies/company-1/skills/install-catalog")
+      .send({ catalogSkillId: "paperclipai:optional:research:last30days" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockCompanySkillService.installFromCatalog).toHaveBeenCalledWith(
+      "company-1",
+      { catalogSkillId: "paperclipai:optional:research:last30days" },
+      { allowExecutableScripts: false },
+    );
+  });
+
   it("allows board users with agents:create to import skills with executable scripts enabled", async () => {
     mockAccessService.canUser.mockResolvedValue(true);
 
@@ -530,6 +557,7 @@ describe("company skill mutation permissions", () => {
   });
 
   it("returns a blocking error when attempting to delete a skill still used by agents", async () => {
+
     const { unprocessable } = await import("../errors.js");
     mockCompanySkillService.deleteSkill.mockImplementationOnce(async () => {
 

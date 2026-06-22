@@ -17,10 +17,11 @@ test('passes when dedup checkbox is checked (uppercase X)', () => {
   assert.equal(checkDedupSearch(body, 'feat: thing').passed, true);
 });
 
-test('passes with current PR template wording (master)', () => {
+test('passes with current PR template wording (main)', () => {
   const body = `
 - [x] I have searched GitHub for duplicate or related PRs and linked them above
 `;
+
   assert.equal(checkDedupSearch(body, 'feat: thing').passed, true);
 });
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * check-branch-protection.mjs
- * Reports whether the default branch (master) has the recommended protections.
+ * Reports whether the default branch (main) has the recommended protections.
  * READ-ONLY: this script never changes repository settings — it only reads the
  * branch-protection API and prints a report. Enforcement of the settings remains
  * a manual maintainer action (see doc/SECURITY-BRANCH-PROTECTION.md).
@@ -9,7 +9,8 @@
  * Env:
  *   GH_TOKEN (or GITHUB_TOKEN) — token with repo read access
  *   GH_REPO                    — owner/repo (defaults to GITHUB_REPOSITORY)
- *   BRANCH                     — branch to check (default: master)
+ *   BRANCH                     — branch to check (default: main)
+
  *   STRICT                     — when "1"/"true", exit non-zero if any
  *                                recommended protection is missing. Default is
  *                                report-only (always exit 0) so it is safe to
@@ -153,8 +154,9 @@ async function fetchProtection(repo, branch, token) {
 
 async function main() {
   const repo = process.env.GH_REPO || process.env.GITHUB_REPOSITORY || '';
-  const branch = process.env.BRANCH || 'master';
+  const branch = process.env.BRANCH || 'main';
   const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || '';
+
   const strict = isTruthy((process.env.STRICT || '').toLowerCase());
 
   if (!repo || !/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repo)) {
