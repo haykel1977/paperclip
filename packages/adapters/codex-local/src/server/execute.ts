@@ -109,7 +109,13 @@ function readOpenAiBaseUrl(env: Record<string, string>): string | null {
 
 function isLocalOssCodexModel(model: string): boolean {
   const normalized = model.trim().toLowerCase();
-  return normalized.startsWith("ollama/") || normalized === "qwen2.5-coder:32b";
+  return (
+    normalized === "oss" ||
+    normalized === "qwen2.5-coder:32b" ||
+    normalized.startsWith("ollama/") ||
+    normalized.startsWith("gpt-oss") ||
+    normalized.includes("/gpt-oss")
+  );
 }
 
 function resolveCodexInvocationModel(input: {
@@ -119,7 +125,12 @@ function resolveCodexInvocationModel(input: {
   const configuredModel = input.configuredModel.trim();
   const openAiBaseUrl = readOpenAiBaseUrl(input.env);
   const routedModel = readNonEmptyEnv(input.env, "OPENAI_MODEL_NAME");
-  if (!configuredModel || !openAiBaseUrl || !routedModel || !isLocalOssCodexModel(configuredModel)) {
+  const shouldRoute = Boolean(
+    openAiBaseUrl &&
+      routedModel &&
+      (configuredModel.length === 0 || isLocalOssCodexModel(configuredModel)),
+  );
+  if (!shouldRoute) {
     return { model: configuredModel, configArgs: [], note: null };
   }
 
@@ -129,7 +140,9 @@ function resolveCodexInvocationModel(input: {
       'model_provider="openai"',
       `openai_base_url=${JSON.stringify(openAiBaseUrl)}`,
     ],
-    note: `Routed configured OSS model ${configuredModel} through OpenAI-compatible sovereign endpoint as ${routedModel}.`,
+    note: configuredModel
+      ? `Routed configured OSS model ${configuredModel} through OpenAI-compatible sovereign endpoint as ${routedModel}.`
+      : `Routed Codex default model through OpenAI-compatible sovereign endpoint as ${routedModel}.`,
   };
 }
 
@@ -776,7 +789,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
     const proc = await runAdapterExecutionTargetProcess(runId, runtimeExecutionTarget, command, args, {
       cwd,
-      env,
+      env: runtimeEnv,
       stdin: prompt,
       timeoutSec,
       graceSec,

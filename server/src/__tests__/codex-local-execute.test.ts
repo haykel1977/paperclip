@@ -18,6 +18,10 @@ const payload = {
   paperclipApiUrl: process.env.PAPERCLIP_API_URL || null,
   paperclipApiKey: process.env.PAPERCLIP_API_KEY || null,
   paperclipApiBridgeMode: process.env.PAPERCLIP_API_BRIDGE_MODE || null,
+  openAiBaseUrl: process.env.OPENAI_BASE_URL || null,
+  openAiApiBase: process.env.OPENAI_API_BASE || null,
+  openAiApiBaseUrl: process.env.OPENAI_API_BASE_URL || null,
+  openAiModelName: process.env.OPENAI_MODEL_NAME || null,
   paperclipEnvKeys: Object.keys(process.env)
     .filter((key) => key.startsWith("PAPERCLIP_"))
     .sort(),
@@ -50,6 +54,10 @@ type CapturePayload = {
   paperclipApiUrl?: string | null;
   paperclipApiKey?: string | null;
   paperclipApiBridgeMode?: string | null;
+  openAiBaseUrl?: string | null;
+  openAiApiBase?: string | null;
+  openAiApiBaseUrl?: string | null;
+  openAiModelName?: string | null;
   paperclipEnvKeys: string[];
 };
 
@@ -195,8 +203,10 @@ describe("codex execute", () => {
     { model: "ollama/qwen2.5-coder:32b", baseUrlEnvKey: "OPENAI_BASE_URL" },
     { model: "qwen2.5-coder:32b", baseUrlEnvKey: "OPENAI_API_BASE" },
     { model: "ollama/qwen2.5-coder:32b", baseUrlEnvKey: "OPENAI_API_BASE_URL" },
+    { model: "oss", baseUrlEnvKey: "OPENAI_BASE_URL" },
+    { model: "", baseUrlEnvKey: "OPENAI_BASE_URL" },
   ] as const)(
-    "routes configured OSS model $model through the sovereign OpenAI-compatible endpoint from $baseUrlEnvKey",
+    "routes configured/default OSS model $model through the sovereign OpenAI-compatible endpoint from $baseUrlEnvKey",
     async ({ model, baseUrlEnvKey }) => {
       const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-execute-oss-route-"));
       const workspace = path.join(root, "workspace");
@@ -257,8 +267,16 @@ describe("codex execute", () => {
         expect(capture.argv[capture.argv.indexOf("--model") + 1]).toBe("qwen3-coder");
         expect(capture.argv).toContain("model_provider=\"openai\"");
         expect(capture.argv).toContain('openai_base_url="https://litellm.kantum.dev/v1"');
+        expect(capture.openAiModelName).toBe("qwen3-coder");
+        if (baseUrlEnvKey === "OPENAI_BASE_URL") expect(capture.openAiBaseUrl).toBe("https://litellm.kantum.dev/v1");
+        if (baseUrlEnvKey === "OPENAI_API_BASE") expect(capture.openAiApiBase).toBe("https://litellm.kantum.dev/v1");
+        if (baseUrlEnvKey === "OPENAI_API_BASE_URL") expect(capture.openAiApiBaseUrl).toBe("https://litellm.kantum.dev/v1");
         expect(capture.argv).not.toContain(model);
-        expect(commandNotes.some((note) => note.includes("Routed configured OSS model"))).toBe(true);
+        expect(
+          commandNotes.some(
+            (note) => note.includes("Routed") && note.includes("sovereign endpoint"),
+          ),
+        ).toBe(true);
       } finally {
         if (previousHome === undefined) delete process.env.HOME;
         else process.env.HOME = previousHome;
