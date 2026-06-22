@@ -6,12 +6,13 @@ import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { queryKeys } from "../lib/queryKeys";
 import { agentUrl } from "../lib/utils";
+import { agentRoleLabel } from "../lib/agent-roles";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { AgentIcon } from "../components/AgentIconPicker";
 import { Download, Maximize2, Minus, Network, Plus, Upload } from "lucide-react";
-import { AGENT_ROLE_LABELS, type Agent } from "@paperclipai/shared";
+import { type Agent } from "@paperclipai/shared";
 
 // Layout constants
 const CARD_W = 200;
@@ -620,8 +621,6 @@ export function OrgChart() {
   );
 }
 
-const roleLabels: Record<string, string> = AGENT_ROLE_LABELS;
-
 function roleLabel(role: string): string {
-  return roleLabels[role] ?? role;
+  return agentRoleLabel(role);
 }

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@/lib/router";
-import { AGENT_ROLE_LABELS, type Agent, type AgentRuntimeState } from "@paperclipai/shared";
+import { type Agent, type AgentRuntimeState } from "@paperclipai/shared";
 import { agentsApi } from "../api/agents";
 import { useCompany } from "../context/CompanyContext";
 import { getAdapterLabel } from "../adapters/adapter-display-registry";
@@ -8,14 +8,13 @@ import { queryKeys } from "../lib/queryKeys";
 import { AgentStatusBadge } from "./StatusBadge";
 import { Identity } from "./Identity";
 import { formatDate, agentUrl } from "../lib/utils";
+import { agentRoleLabel } from "../lib/agent-roles";
 import { Separator } from "@/components/ui/separator";
 
 interface AgentPropertiesProps {
   agent: Agent;
   runtimeState?: AgentRuntimeState;
 }
-
-const roleLabels = AGENT_ROLE_LABELS as Record<string, string>;
 
 function PropertyRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -44,7 +43,7 @@ export function AgentProperties({ agent, runtimeState }: AgentPropertiesProps) {
           <AgentStatusBadge status={agent.status} />
         </PropertyRow>
         <PropertyRow label="Role">
-          <span className="text-sm">{roleLabels[agent.role] ?? agent.role}</span>
+          <span className="text-sm">{agentRoleLabel(agent.role)}</span>
         </PropertyRow>
         {agent.title && (
           <PropertyRow label="Title">

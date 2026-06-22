@@ -15,6 +15,7 @@ import { EntityRow } from "../components/EntityRow";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { relativeTime, cn, agentRouteRef, agentUrl } from "../lib/utils";
+import { agentRoleLabel, agentRoleMatches } from "../lib/agent-roles";
 import { PageTabBar } from "../components/PageTabBar";
 import { Tabs } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -33,7 +34,7 @@ import {
   Sparkles,
   TestTube2,
 } from "lucide-react";
-import { AGENT_ROLE_LABELS, type Agent, type AgentRole } from "@paperclipai/shared";
+import { type Agent, type AgentRole } from "@paperclipai/shared";
 import {
   resourceMembershipState,
   useResourceMembershipMutation,
@@ -41,8 +42,6 @@ import {
 } from "../hooks/useResourceMemberships";
 
 import { getAdapterLabel } from "../adapters/adapter-display-registry";
-
-const roleLabels = AGENT_ROLE_LABELS as Record<string, string>;
 
 type FilterTab = "all" | "active" | "paused" | "error";
 
@@ -103,8 +102,8 @@ const ACCELERATOR_LANES: AcceleratorLane[] = [
   {
     id: "coder",
     role: "engineer",
-    label: "Coder",
-    createName: "Code Agent",
+    label: "Developer",
+    createName: "Developer Agent",
     createTitle: "Focused implementation",
     objective: "Appliquer le patch le plus petit possible en respectant le style existant.",
     output: "Diff ciblé et notes d'implémentation.",
@@ -147,7 +146,7 @@ const ACCELERATOR_LANES: AcceleratorLane[] = [
 ];
 
 function agentMatchesLane(agent: Agent, lane: AcceleratorLane): boolean {
-  return agent.role === lane.role && !HIDDEN_AGENT_STATUSES.has(agent.status);
+  return agentRoleMatches(agent.role, lane.role) && !HIDDEN_AGENT_STATUSES.has(agent.status);
 }
 
 function createAgentPresetHref(lane: AcceleratorLane): string {
@@ -332,7 +331,7 @@ export function Agents() {
                 // columns line up vertically (PAP-86). Agent names vary in width, so
                 // a content-sized title (`min-w-[7rem]`) shifted meta's start per row.
                 titleClassName="w-56"
-                subtitle={`${roleLabels[agent.role] ?? agent.role}${agent.title ? ` - ${agent.title}` : ""}`}
+                subtitle={`${agentRoleLabel(agent.role)}${agent.title ? ` - ${agent.title}` : ""}`}
                 to={agentUrl(agent)}
                 className={cn(
                   "group",
@@ -707,7 +706,7 @@ function OrgTreeNode({
         <div className="flex-1 min-w-[7rem]">
           <span className="text-sm font-medium">{node.name}</span>
           <span className="text-xs text-muted-foreground ml-2">
-            {roleLabels[node.role] ?? node.role}
+            {agentRoleLabel(node.role)}
             {agent?.title ? ` - ${agent.title}` : ""}
           </span>
         </div>
