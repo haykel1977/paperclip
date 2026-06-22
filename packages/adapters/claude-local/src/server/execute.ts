@@ -46,11 +46,13 @@ import {
   shapePaperclipWorkspaceEnvForExecution,
   stringifyPaperclipWakePayload,
   resolvePaperclipAgentPromptTemplate,
+  resolvePaperclipInstanceRootForAdapter,
 } from "@paperclipai/adapter-utils/server-utils";
 import { shellQuote } from "@paperclipai/adapter-utils/ssh";
 import {
 
   parseClaudeStreamJson,
+
   describeClaudeFailure,
   detectClaudeLoginRequired,
   extractClaudeRetryNotBefore,
@@ -92,6 +94,45 @@ interface ClaudeRuntimeConfig {
   extraArgs: string[];
 }
 
+function safeTempPathSegment(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80) || "run";
+}
+
+async function applyClaudeTempEnv(input: {
+  env: Record<string, string>;
+  shapedEnvConfig: Record<string, unknown>;
+  companyId: string;
+  agentId: string;
+  runId: string;
+  executionTargetIsRemote: boolean;
+}): Promise<void> {
+  const hasExplicitTempDir = ["TMPDIR", "TMP", "TEMP"].some(
+    (key) => typeof input.shapedEnvConfig[key] === "string" && input.shapedEnvConfig[key].trim().length > 0,
+  );
+  let effectiveTempDir = input.env.CLAUDE_CODE_TMPDIR || [input.env.TMPDIR, input.env.TMP, input.env.TEMP].find(
+    (value) => typeof value === "string" && value.trim().length > 0,
+  );
+  if (!hasExplicitTempDir && !input.env.CLAUDE_CODE_TMPDIR && !input.executionTargetIsRemote) {
+    const tempDir = path.join(
+      resolvePaperclipInstanceRootForAdapter(),
+      "companies",
+      input.companyId,
+      "claude-local",
+      "agents",
+      input.agentId,
+      "tmp",
+      safeTempPathSegment(input.runId),
+    );
+    await fs.mkdir(tempDir, { recursive: true, mode: 0o700 });
+    await fs.chmod(tempDir, 0o700).catch(() => {});
+    input.env.TMPDIR = tempDir;
+    input.env.TMP = tempDir;
+    input.env.TEMP = tempDir;
+    effectiveTempDir = tempDir;
+  }
+  if (!input.env.CLAUDE_CODE_TMPDIR && effectiveTempDir) input.env.CLAUDE_CODE_TMPDIR = effectiveTempDir;
+}
+
 export function claudeSessionCwdMatchesExecutionTarget(input: {
   runtimeSessionCwd: string;
   effectiveExecutionCwd: string;
@@ -102,6 +143,7 @@ export function claudeSessionCwdMatchesExecutionTarget(input: {
 }
 
 function buildLoginResult(input: {
+
   proc: RunProcessResult;
   loginUrl: string | null;
 }) {
@@ -267,6 +309,14 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   for (const [key, value] of Object.entries(shapedEnvConfig)) {
     if (typeof value === "string") env[key] = value;
   }
+  await applyClaudeTempEnv({
+    env,
+    shapedEnvConfig,
+    companyId: agent.companyId,
+    agentId: agent.id,
+    runId,
+    executionTargetIsRemote,
+  });
 
   if (!hasExplicitApiKey && authToken) {
     env.PAPERCLIP_API_KEY = authToken;
@@ -275,6 +325,7 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
   const runtimeEnv = Object.fromEntries(
     Object.entries(ensurePathInEnv({ ...process.env, ...env })).filter(
       (entry): entry is [string, string] => typeof entry[1] === "string",
+
     ),
   );
   const timeoutSec = resolveAdapterExecutionTargetTimeoutSec(

@@ -62,11 +62,16 @@ const payload = {
   paperclipApiUrl: process.env.PAPERCLIP_API_URL || null,
   paperclipApiKey: process.env.PAPERCLIP_API_KEY || null,
   paperclipApiBridgeMode: process.env.PAPERCLIP_API_BRIDGE_MODE || null,
+  tmpdir: process.env.TMPDIR || null,
+  tmp: process.env.TMP || null,
+  temp: process.env.TEMP || null,
+  claudeCodeTmpdir: process.env.CLAUDE_CODE_TMPDIR || null,
 };
 if (capturePath) {
   fs.writeFileSync(capturePath, JSON.stringify(payload), "utf8");
 }
 console.log(JSON.stringify({ type: "system", subtype: "init", session_id: "claude-session-1", model: "claude-sonnet" }));
+
 console.log(JSON.stringify({ type: "assistant", session_id: "claude-session-1", message: { content: [{ type: "text", text: "hello" }] } }));
 console.log(JSON.stringify({ type: "result", session_id: "claude-session-1", result: "hello", usage: { input_tokens: 1, cache_read_input_tokens: 0, output_tokens: 1 } }));
 `;
@@ -86,11 +91,16 @@ type CapturePayload = {
   paperclipApiUrl?: string | null;
   paperclipApiKey?: string | null;
   paperclipApiBridgeMode?: string | null;
+  tmpdir?: string | null;
+  tmp?: string | null;
+  temp?: string | null;
+  claudeCodeTmpdir?: string | null;
   appendedSystemPromptFilePath?: string | null;
   appendedSystemPromptFileContents?: string | null;
 };
 
 async function writeRetryThenSucceedClaudeCommand(commandPath: string): Promise<void> {
+
   const script = `#!/usr/bin/env node
 const fs = require("node:fs");
 
@@ -230,8 +240,61 @@ describe("claude execute", () => {
     }
   });
 
+  it("sets a Paperclip-owned Claude temp directory for local runs", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-claude-exec-temp-"));
+    const { workspace, commandPath, capturePath, restore } = await setupExecuteEnv(root);
+    const previousPaperclipHome = process.env.PAPERCLIP_HOME;
+    const previousPaperclipInstanceId = process.env.PAPERCLIP_INSTANCE_ID;
+    const paperclipHome = path.join(root, ".paperclip");
+    try {
+      process.env.PAPERCLIP_HOME = paperclipHome;
+      process.env.PAPERCLIP_INSTANCE_ID = "default";
+      await execute({
+        runId: "run-temp",
+        agent: { id: "agent-1", companyId: "co-1", name: "Test", adapterType: "claude_local", adapterConfig: {} },
+        runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: { PAPERCLIP_TEST_CAPTURE_PATH: capturePath },
+          promptTemplate: "Do work.",
+        },
+        context: {},
+        authToken: "tok",
+        onLog: async () => {},
+        onMeta: async () => {},
+      });
+
+      const captured = JSON.parse(await fs.readFile(capturePath, "utf-8")) as CapturePayload;
+      const expectedPrefix = path.join(
+        paperclipHome,
+        "instances",
+        "default",
+        "companies",
+        "co-1",
+        "claude-local",
+        "agents",
+        "agent-1",
+        "tmp",
+      );
+      expect(captured.tmpdir).toBe(path.join(expectedPrefix, "run-temp"));
+      expect(captured.tmp).toBe(captured.tmpdir);
+      expect(captured.temp).toBe(captured.tmpdir);
+      expect(captured.claudeCodeTmpdir).toBe(captured.tmpdir);
+      expect((await fs.stat(captured.tmpdir!)).mode & 0o777).toBe(0o700);
+    } finally {
+      if (previousPaperclipHome === undefined) delete process.env.PAPERCLIP_HOME;
+      else process.env.PAPERCLIP_HOME = previousPaperclipHome;
+      if (previousPaperclipInstanceId === undefined) delete process.env.PAPERCLIP_INSTANCE_ID;
+      else process.env.PAPERCLIP_INSTANCE_ID = previousPaperclipInstanceId;
+      restore();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("omits --append-system-prompt-file on a resumed session even when instructionsFile is set", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-claude-exec-resume-"));
+
     const { workspace, commandPath, capturePath, restore } = await setupExecuteEnv(root);
     const instructionsFile = path.join(root, "instructions.md");
     await fs.writeFile(instructionsFile, "# Agent instructions", "utf-8");
