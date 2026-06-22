@@ -169,8 +169,8 @@ function filterOrgTree(nodes: OrgNode[], tab: FilterTab): OrgNode[] {
   return nodes
     .reduce<OrgNode[]>((acc, node) => {
       const filteredReports = filterOrgTree(node.reports, tab);
-      // Hidden agents (terminated / pending_approval) never render as a row, but
-      // any visible reports are promoted so the tree doesn't lose live agents.
+      // Hidden agents never render as a row, but any visible reports are promoted
+      // so the tree doesn't lose live agents.
       if (HIDDEN_AGENT_STATUSES.has(node.status)) {
         acc.push(...filteredReports);
         return acc;

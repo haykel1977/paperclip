@@ -16,7 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { HelpCircle, ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "../lib/utils";
-import { AGENT_ROLE_LABELS } from "@paperclipai/shared";
+import { AGENT_DEVELOPER_ROLE_ALIASES, AGENT_ROLE_LABELS } from "@paperclipai/shared";
 import { agentRoleLabel } from "../lib/agent-roles";
 
 /* ---- Help text for (?) tooltips ---- */
@@ -69,10 +69,9 @@ export const adapterLabels = getAdapterLabels();
 
 export const roleLabels: Record<string, string> = {
   ...AGENT_ROLE_LABELS,
-  engineer: agentRoleLabel("engineer"),
-  developer: agentRoleLabel("developer"),
-  developper: agentRoleLabel("developper"),
-  développeur: agentRoleLabel("développeur"),
+  ...Object.fromEntries(
+    AGENT_DEVELOPER_ROLE_ALIASES.map((role) => [role, agentRoleLabel(role)]),
+  ),
 };
 
 /* ---- Primitive components ---- */

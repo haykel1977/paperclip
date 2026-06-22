@@ -61,6 +61,16 @@ export const AGENT_ROLES = [
 ] as const;
 export type AgentRole = (typeof AGENT_ROLES)[number];
 
+export const AGENT_DEVELOPER_ROLE_ALIASES = [
+  "engineer",
+  "developer",
+  "developper",
+  "ddevelopper",
+  "developpeur",
+  "développeur",
+  "développer",
+] as const;
+
 export const AGENT_ROLE_LABELS: Record<AgentRole, string> = {
   ceo: "CEO",
   cto: "CTO",

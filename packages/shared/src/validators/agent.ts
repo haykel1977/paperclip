@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  AGENT_DEVELOPER_ROLE_ALIASES,
   AGENT_ICON_NAMES,
   AGENT_ROLES,
   AGENT_STATUSES,
@@ -66,14 +67,7 @@ export const agentRuntimeConfigSchema = z.object({
   }).strict().optional(),
 }).catchall(z.unknown());
 
-const DEVELOPER_ROLE_ALIASES = new Set([
-  "developer",
-  "developper",
-  "ddevelopper",
-  "developpeur",
-  "développeur",
-  "développer",
-]);
+const DEVELOPER_ROLE_ALIASES = new Set<string>(AGENT_DEVELOPER_ROLE_ALIASES);
 
 function normalizeAgentRoleInput(value: unknown) {
   if (typeof value !== "string") return value;

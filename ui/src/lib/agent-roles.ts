@@ -1,11 +1,11 @@
-import { AGENT_ROLE_LABELS, AGENT_ROLES, type AgentRole } from "@paperclipai/shared";
+import {
+  AGENT_DEVELOPER_ROLE_ALIASES,
+  AGENT_ROLE_LABELS,
+  AGENT_ROLES,
+  type AgentRole,
+} from "@paperclipai/shared";
 
-const DEVELOPER_ROLE_ALIASES = new Set([
-  "engineer",
-  "developer",
-  "developper",
-  "développeur",
-]);
+const DEVELOPER_ROLE_ALIASES = new Set<string>(AGENT_DEVELOPER_ROLE_ALIASES);
 
 export function normalizeAgentRole(value: string | null | undefined): AgentRole | null {
   const role = String(value ?? "").trim().toLowerCase();

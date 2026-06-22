@@ -85,12 +85,11 @@ export const statusBadgeDefault = "bg-muted text-muted-foreground";
 // ---------------------------------------------------------------------------
 // Agent status — brand state system (PAP-75)
 //
-// The agents section shows four states only. Each maps to a brand colour name;
-// the indicator is a brand heartbeat capsule (8×16, r4) and the row chip is a
-// brand `.task-chip` (1px border, light/dark variants). `active` is dead code
-// that folds into idle; `running` pulses and `error` blinks. `terminated` and
-// `pending_approval` are excluded from the list but may still render on detail
-// pages, where they fall through to the gray default.
+// The agents section maps each state to a brand colour name; the indicator is a
+// brand heartbeat capsule (8×16, r4) and the row chip is a brand `.task-chip`
+// (1px border, light/dark variants). `active` folds into idle; `running` pulses
+// and `error` blinks. `terminated` agents are hidden from primary lists, while
+// `pending_approval` remains visible so new hires do not look lost.
 // ---------------------------------------------------------------------------
 
 export type AgentBadgeColor = "gray" | "blue" | "amber" | "red";
