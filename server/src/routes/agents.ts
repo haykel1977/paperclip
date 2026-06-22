@@ -271,11 +271,11 @@ export function agentRoutes(
     return false;
   }
 
-  async function filterIssuesReadableByActor<T extends IssueReadSubject>(req: Request, issues: T[]) {
+  async function filterIssuesReadableByActor<T extends IssueReadSubject>(req: Request, issues: T[]): Promise<T[]> {
     const decisions = await Promise.all(
       issues.map(async (issue) => ((await decideIssueRead(req, issue)).allowed ? issue : null)),
     );
-    return decisions.filter((issue): issue is T => issue !== null);
+    return decisions.filter((issue) => issue !== null) as T[];
   }
 
   async function assertCompanyRunReadAllowed(req: Request, res: Response, companyId: string) {

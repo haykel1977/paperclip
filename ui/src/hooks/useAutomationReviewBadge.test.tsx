@@ -18,7 +18,7 @@ vi.mock("../api/dashboard", () => ({
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-function makeSummary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
+function makeSummary(overrides: any = {}): DashboardSummary {
   return {
     companyId: "company-1",
     agents: {

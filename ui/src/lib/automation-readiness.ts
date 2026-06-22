@@ -121,38 +121,40 @@ export function computeAutomationReadiness(input: {
     },
   ];
 
-  const interventionItems: AutopilotInterventionItem[] = [
-    {
-      kind: "approval_decisions",
-      label: "Approval decisions",
-      count: pendingApprovalCount,
-      href: "/approvals",
-    },
-    {
-      kind: "budget_incidents",
-      label: "Budget incidents",
-      count: budgetApprovalCount + activeBudgetIncidents,
-      href: "/costs",
-    },
-    {
-      kind: "blocked_tasks",
-      label: "Blocked tasks",
-      count: blockedTaskCount,
-      href: "/issues",
-    },
-    {
-      kind: "agent_errors",
-      label: "Agent errors",
-      count: erroredAgents,
-      href: "/agents/error",
-    },
-    {
-      kind: "agent_setup",
-      label: "Agent setup",
-      count: setupRequiredCount,
-      href: "/agents/new",
-    },
-  ].filter((item) => item.count > 0);
+  const interventionItems: AutopilotInterventionItem[] = (
+    [
+      {
+        kind: "approval_decisions",
+        label: "Approval decisions",
+        count: pendingApprovalCount,
+        href: "/approvals",
+      },
+      {
+        kind: "budget_incidents",
+        label: "Budget incidents",
+        count: budgetApprovalCount + activeBudgetIncidents,
+        href: "/costs",
+      },
+      {
+        kind: "blocked_tasks",
+        label: "Blocked tasks",
+        count: blockedTaskCount,
+        href: "/issues",
+      },
+      {
+        kind: "agent_errors",
+        label: "Agent errors",
+        count: erroredAgents,
+        href: "/agents/error",
+      },
+      {
+        kind: "agent_setup",
+        label: "Agent setup",
+        count: setupRequiredCount,
+        href: "/agents/new",
+      },
+    ] as AutopilotInterventionItem[]
+  ).filter((item) => item.count > 0);
 
   const readyChecks = checks.filter((check) => check.state === "ready").length;
   const score = Math.round((readyChecks / checks.length) * 100);
