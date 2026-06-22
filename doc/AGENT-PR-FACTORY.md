@@ -47,8 +47,9 @@ The script enables GitHub native auto-merge only when all conditions are true:
 - PR has explicit opt-in labels `agent-pr` and `automerge`, except for the
   lockfile refresh branch `chore/refresh-lockfile`.
 - No hard-block label is present.
-- Branch protection for the target branch is readable and requires the expected
-  checks (`verify` and `gitleaks` by default).
+- Branch protection for the target branch is readable, requires branches to be
+  up to date before merging, and requires the expected checks (`verify` and
+  `gitleaks` by default).
 - Auto-merge is not already enabled.
 
 The script does **not** merge immediately. It only enables GitHub auto-merge with
@@ -62,6 +63,7 @@ Protect `main` with at least:
 
 - pull request required before merge
 - required status checks, including `verify` and `gitleaks`
+- branches required to be up to date before merging
 - stale approvals dismissed when new commits are pushed
 - force pushes and deletion disabled
 

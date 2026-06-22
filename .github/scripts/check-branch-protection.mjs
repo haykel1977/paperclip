@@ -25,6 +25,17 @@ import { execFileSync } from 'node:child_process';
 
 // ── Pure evaluation (exported for testing) ────────────────────────────────────
 
+export const REQUIRED_STATUS_CHECKS = ['verify', 'gitleaks'];
+
+function requiredCheckNames(protection) {
+  const requiredStatusChecks = protection?.required_status_checks;
+  const contexts = Array.isArray(requiredStatusChecks?.contexts) ? requiredStatusChecks.contexts : [];
+  const checks = Array.isArray(requiredStatusChecks?.checks)
+    ? requiredStatusChecks.checks.map(check => check?.context).filter(Boolean)
+    : [];
+  return new Set([...contexts, ...checks].map(check => String(check)));
+}
+
 /**
  * Recommended protections for the default branch. Each entry maps a
  * human-readable requirement to a predicate over the GitHub branch-protection
@@ -46,6 +57,16 @@ export const RECOMMENDED = [
     label: 'Require status checks to pass before merging',
     ok: (p) => Boolean(p?.required_status_checks),
   },
+  {
+    id: 'strict-status-checks',
+    label: 'Require branches to be up to date before merging',
+    ok: (p) => p?.required_status_checks?.strict === true,
+  },
+  ...REQUIRED_STATUS_CHECKS.map(check => ({
+    id: `required-check-${check}`,
+    label: `Require status check \`${check}\``,
+    ok: (p) => requiredCheckNames(p).has(check),
+  })),
   {
     id: 'enforce-admins',
     label: 'Include administrators (enforce_admins)',

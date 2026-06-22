@@ -8,7 +8,7 @@ import {
 
 const fullyProtected = {
   required_pull_request_reviews: { required_approving_review_count: 1 },
-  required_status_checks: { strict: true, contexts: ['verify'] },
+  required_status_checks: { strict: true, contexts: ['verify', 'gitleaks'] },
   enforce_admins: { enabled: true },
   allow_force_pushes: { enabled: false },
   allow_deletions: { enabled: false },
@@ -58,6 +58,30 @@ test('evaluateProtection: missing required_status_checks flagged', () => {
   const { required_status_checks, ...rest } = fullyProtected;
   const result = evaluateProtection(rest);
   assert.ok(result.missing.some((m) => m.includes('status checks')));
+});
+
+test('evaluateProtection: detects non-strict required status checks', () => {
+  const result = evaluateProtection({
+    ...fullyProtected,
+    required_status_checks: { strict: false, contexts: ['verify', 'gitleaks'] },
+  });
+  assert.ok(result.missing.some((m) => m.includes('up to date')));
+});
+
+test('evaluateProtection: detects missing required check context', () => {
+  const result = evaluateProtection({
+    ...fullyProtected,
+    required_status_checks: { strict: true, contexts: ['verify'] },
+  });
+  assert.ok(result.missing.some((m) => m.includes('`gitleaks`')));
+});
+
+test('evaluateProtection: accepts required checks declared via GitHub checks array', () => {
+  const result = evaluateProtection({
+    ...fullyProtected,
+    required_status_checks: { strict: true, checks: [{ context: 'verify' }, { context: 'gitleaks' }] },
+  });
+  assert.equal(result.missing.length, 0);
 });
 
 // ── formatReport ────────────────────────────────────────────────────────────────

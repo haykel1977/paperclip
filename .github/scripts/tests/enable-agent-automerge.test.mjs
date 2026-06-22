@@ -9,6 +9,7 @@ import {
 
 const protectedMain = {
   required_status_checks: {
+    strict: true,
     contexts: ['verify', 'gitleaks'],
   },
 };
@@ -67,10 +68,18 @@ test('evaluateAutomergeEligibility: rejects PRs when branch protection is missin
 
 test('evaluateAutomergeEligibility: rejects PRs when a required check is absent from branch protection', () => {
   const result = evaluateAutomergeEligibility(pr(), {
-    branchProtection: { required_status_checks: { contexts: ['verify'] } },
+    branchProtection: { required_status_checks: { strict: true, contexts: ['verify'] } },
   });
   assert.equal(result.eligible, false);
   assert.ok(result.failures.some(failure => failure.includes('`gitleaks`')));
+});
+
+test('evaluateAutomergeEligibility: rejects PRs when branch protection does not require up-to-date branches', () => {
+  const result = evaluateAutomergeEligibility(pr(), {
+    branchProtection: { required_status_checks: { strict: false, contexts: ['verify', 'gitleaks'] } },
+  });
+  assert.equal(result.eligible, false);
+  assert.ok(result.failures.some(failure => failure.includes('up to date')));
 });
 
 test('evaluateAutomergeEligibility: allows lockfile automation branch without labels when branch protection is configured', () => {
@@ -85,6 +94,7 @@ test('evaluateAutomergeEligibility: allows lockfile automation branch without la
 test('evaluateBranchProtection: accepts required checks declared via GitHub checks array', () => {
   const result = evaluateBranchProtection({
     required_status_checks: {
+      strict: true,
       checks: [{ context: 'verify' }, { context: 'gitleaks' }],
     },
   });

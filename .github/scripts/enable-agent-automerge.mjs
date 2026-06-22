@@ -65,6 +65,8 @@ export function evaluateBranchProtection(protection, requiredChecks = DEFAULT_RE
 
   if (!protection.required_status_checks) {
     failures.push('Branch protection does not require status checks.');
+  } else if (protection.required_status_checks.strict !== true) {
+    failures.push('Branch protection must require branches to be up to date before merging.');
   }
 
   const checkNames = requiredCheckNames(protection);

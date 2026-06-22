@@ -16,6 +16,8 @@ Enable the following on `main`
 - **Require status checks to pass before merging** — at minimum the `verify`
   check produced by `.github/workflows/pr.yml` and the `gitleaks` check produced
   by `.github/workflows/secret-scan.yml`.
+- **Require branches to be up to date before merging** — stale branches must
+  re-run required checks against the current `main` tip before GitHub can merge.
 - **Dismiss stale approvals** when new commits are pushed.
 - **Include administrators** (`enforce_admins`) — rules apply to admins too.
 - **Block force pushes** — `allow_force_pushes` disabled.
