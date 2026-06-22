@@ -831,6 +831,17 @@ async function buildRuntime(input: {
   for (const [key, value] of Object.entries(shapedEnvConfig)) {
     if (typeof value === "string") env[key] = value;
   }
+  const hasExplicitTempDir = ["TMPDIR", "TMP", "TEMP"].some(
+    (key) => typeof shapedEnvConfig[key] === "string" && shapedEnvConfig[key].trim().length > 0,
+  );
+  if (!hasExplicitTempDir) {
+    const paperclipTempDir = path.join(stateDir, "tmp");
+    await fs.mkdir(paperclipTempDir, { recursive: true, mode: 0o700 });
+    await fs.chmod(paperclipTempDir, 0o700).catch(() => {});
+    env.TMPDIR = paperclipTempDir;
+    env.TMP = paperclipTempDir;
+    env.TEMP = paperclipTempDir;
+  }
   if (!hasExplicitApiKey && authToken) env.PAPERCLIP_API_KEY = authToken;
   // For the claude agent, set model via ANTHROPIC_MODEL at startup rather than
   // via session/set_config_option — the ACP server's set_config_option handler
