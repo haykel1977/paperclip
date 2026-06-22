@@ -7,6 +7,7 @@ import { resolvePaperclipInstanceRootForAdapter } from "@paperclipai/adapter-uti
 const TRUTHY_ENV_RE = /^(1|true|yes|on)$/i;
 const COPIED_SHARED_FILES = ["config.json", "config.toml", "instructions.md"] as const;
 const SYMLINKED_SHARED_FILES = ["auth.json"] as const;
+const symlinkLocks = new Map<string, Promise<void>>();
 
 function nonEmpty(value: string | undefined): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
@@ -65,27 +66,57 @@ async function createExpectedSymlink(target: string, source: string): Promise<vo
   }
 }
 
+async function withSymlinkLock(target: string, run: () => Promise<void>): Promise<void> {
+  const previous = symlinkLocks.get(target) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const current = previous.catch(() => {}).then(() => gate);
+  symlinkLocks.set(target, current);
+
+  await previous.catch(() => {});
+  try {
+    await run();
+  } finally {
+    release();
+    if (symlinkLocks.get(target) === current) symlinkLocks.delete(target);
+  }
+}
+
+async function ensureSymlinkUnlocked(target: string, source: string): Promise<void> {
+  await ensureParentDir(target);
+  const resolvedSource = path.resolve(source);
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const existing = await fs.lstat(target).catch(() => null);
+    if (!existing) {
+      try {
+        await fs.symlink(resolvedSource, target);
+        return;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "EEXIST" && await isExpectedSymlink(target, resolvedSource)) return;
+        if (code !== "EEXIST") throw error;
+        continue;
+      }
+    }
+
+    if (existing.isSymbolicLink() && await isExpectedSymlink(target, resolvedSource)) return;
+    await fs.rm(target, { recursive: true, force: true });
+  }
+
+  await createExpectedSymlink(target, resolvedSource);
+}
+
 async function ensureSymlink(target: string, source: string): Promise<void> {
-  const existing = await fs.lstat(target).catch(() => null);
-  if (!existing) {
-    await ensureParentDir(target);
-    await createExpectedSymlink(target, source);
-    return;
-  }
-
-  if (!existing.isSymbolicLink()) {
-    return;
-  }
-
-  if (await isExpectedSymlink(target, source)) return;
-
-  await fs.unlink(target);
-  await createExpectedSymlink(target, source);
+  await withSymlinkLock(target, () => ensureSymlinkUnlocked(target, source));
 }
 
 async function ensureCopiedFile(target: string, source: string): Promise<void> {
   const existing = await fs.lstat(target).catch(() => null);
   if (existing) return;
+
   await ensureParentDir(target);
   await fs.copyFile(source, target);
 }

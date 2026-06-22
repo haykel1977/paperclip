@@ -54,4 +54,82 @@ describe("codex managed home", () => {
       await fs.rm(root, { recursive: true, force: true });
     }
   });
+
+  it("replaces a stale regular auth file with the shared auth symlink", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-home-"));
+    const sharedCodexHome = path.join(root, "shared-codex-home");
+    const paperclipHome = path.join(root, "paperclip-home");
+    const managedCodexHome = path.join(
+      paperclipHome,
+      "instances",
+      "default",
+      "companies",
+      "company-1",
+      "codex-home",
+    );
+    const sharedAuth = path.join(sharedCodexHome, "auth.json");
+    const managedAuth = path.join(managedCodexHome, "auth.json");
+
+    await fs.mkdir(sharedCodexHome, { recursive: true });
+    await fs.mkdir(managedCodexHome, { recursive: true });
+    await fs.writeFile(sharedAuth, '{"token":"shared"}\n', "utf8");
+    await fs.writeFile(managedAuth, '{"token":"stale"}\n', "utf8");
+
+    try {
+      await prepareManagedCodexHome(
+        {
+          CODEX_HOME: sharedCodexHome,
+          PAPERCLIP_HOME: paperclipHome,
+          PAPERCLIP_INSTANCE_ID: "default",
+        },
+        async () => {},
+        "company-1",
+      );
+
+      expect((await fs.lstat(managedAuth)).isSymbolicLink()).toBe(true);
+      expect(await fs.realpath(managedAuth)).toBe(await fs.realpath(sharedAuth));
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("serializes concurrent auth symlink preparation", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-home-"));
+    const sharedCodexHome = path.join(root, "shared-codex-home");
+    const paperclipHome = path.join(root, "paperclip-home");
+    const managedCodexHome = path.join(
+      paperclipHome,
+      "instances",
+      "default",
+      "companies",
+      "company-1",
+      "codex-home",
+    );
+    const sharedAuth = path.join(sharedCodexHome, "auth.json");
+    const managedAuth = path.join(managedCodexHome, "auth.json");
+
+    await fs.mkdir(sharedCodexHome, { recursive: true });
+    await fs.writeFile(sharedAuth, '{"token":"shared"}\n', "utf8");
+
+    try {
+      await Promise.all(
+        Array.from({ length: 5 }, () =>
+          prepareManagedCodexHome(
+            {
+              CODEX_HOME: sharedCodexHome,
+              PAPERCLIP_HOME: paperclipHome,
+              PAPERCLIP_INSTANCE_ID: "default",
+            },
+            async () => {},
+            "company-1",
+          ),
+        ),
+      );
+
+      expect((await fs.lstat(managedAuth)).isSymbolicLink()).toBe(true);
+      expect(await fs.realpath(managedAuth)).toBe(await fs.realpath(sharedAuth));
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
 });
