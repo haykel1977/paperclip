@@ -15,6 +15,22 @@ if (!existsSync(join(packageDir, "package.json"))) {
   throw new Error(`No package.json found in plugin directory: ${packageDir}`);
 }
 
+// Guard 1: sdk source directory is not present (Docker deps-only stage, or
+// published npm package context) — nothing to link, exit cleanly.
+if (!existsSync(sdkDir)) {
+  console.log("  i SDK source not found, skipping local link (Docker / published-package context)");
+  process.exit(0);
+}
+
+// Guard 2: running inside a pnpm workspace — pnpm resolves workspace:*
+// dependencies natively so the dev symlink is redundant and can cause
+// conflicts with the virtual store entries pnpm already manages.
+const pnpmVirtualStore = join(repoRoot, "node_modules", ".pnpm");
+if (existsSync(pnpmVirtualStore)) {
+  console.log("  i pnpm workspace detected, skipping local link (workspace:* protocol handles resolution)");
+  process.exit(0);
+}
+
 mkdirSync(scopeDir, { recursive: true });
 
 try {

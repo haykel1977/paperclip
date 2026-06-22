@@ -35,19 +35,29 @@ COPY packages/adapters/openclaw-gateway/package.json packages/adapters/openclaw-
 COPY packages/adapters/opencode-local/package.json packages/adapters/opencode-local/
 COPY packages/adapters/pi-local/package.json packages/adapters/pi-local/
 COPY packages/plugins/sdk/package.json packages/plugins/sdk/
-COPY --parents packages/plugins/sandbox-providers/./*/package.json packages/plugins/sandbox-providers/
+COPY packages/plugins/sandbox-providers/cloudflare/package.json packages/plugins/sandbox-providers/cloudflare/
+COPY packages/plugins/sandbox-providers/daytona/package.json packages/plugins/sandbox-providers/daytona/
+COPY packages/plugins/sandbox-providers/e2b/package.json packages/plugins/sandbox-providers/e2b/
+COPY packages/plugins/sandbox-providers/exe-dev/package.json packages/plugins/sandbox-providers/exe-dev/
+COPY packages/plugins/sandbox-providers/modal/package.json packages/plugins/sandbox-providers/modal/
 COPY packages/plugins/paperclip-plugin-fake-sandbox/package.json packages/plugins/paperclip-plugin-fake-sandbox/
 COPY packages/plugins/plugin-llm-wiki/package.json packages/plugins/plugin-llm-wiki/
 COPY packages/plugins/plugin-workspace-diff/package.json packages/plugins/plugin-workspace-diff/
 COPY patches/ patches/
 COPY scripts/link-plugin-dev-sdk.mjs scripts/
 
+# link-plugin-dev-sdk.mjs postinstall now exits early in pnpm workspace contexts
+# (Guard 2: detects node_modules/.pnpm) and when sdk source is absent (Guard 1).
+# Native modules (sqlite3) require scripts to run — do NOT use --ignore-scripts.
 RUN pnpm install --frozen-lockfile
 
 FROM base AS build
 WORKDIR /app
 COPY --from=deps /app /app
 COPY . .
+# node_modules already fully installed from deps stage via COPY --from=deps.
+# The link-plugin-dev-sdk.mjs postinstall is a dev-mode symlink helper;
+# pnpm workspace:* resolution handles plugin-sdk natively in Docker builds.
 RUN pnpm --filter @paperclipai/ui build
 RUN pnpm --filter @paperclipai/plugin-sdk build
 RUN pnpm --filter @paperclipai/server build
