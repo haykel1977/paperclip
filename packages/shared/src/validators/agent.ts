@@ -1,10 +1,10 @@
 import { z } from "zod";
 import {
-  AGENT_DEVELOPER_ROLE_ALIASES,
   AGENT_ICON_NAMES,
   AGENT_ROLES,
   AGENT_STATUSES,
   INBOX_MINE_ISSUE_STATUS_FILTER,
+  normalizeAgentRoleValue,
 } from "../constants.js";
 import { agentAdapterTypeSchema } from "../adapter-type.js";
 import { envConfigSchema } from "./secret.js";
@@ -67,13 +67,9 @@ export const agentRuntimeConfigSchema = z.object({
   }).strict().optional(),
 }).catchall(z.unknown());
 
-const DEVELOPER_ROLE_ALIASES = new Set<string>(AGENT_DEVELOPER_ROLE_ALIASES);
-
 function normalizeAgentRoleInput(value: unknown) {
   if (typeof value !== "string") return value;
-  const role = value.trim().toLowerCase();
-  if (DEVELOPER_ROLE_ALIASES.has(role)) return "engineer";
-  return role;
+  return normalizeAgentRoleValue(value) ?? value.trim().toLowerCase();
 }
 
 const agentRoleSchema = z.preprocess(normalizeAgentRoleInput, z.enum(AGENT_ROLES));

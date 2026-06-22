@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/popover";
 import { Shield } from "lucide-react";
 import { cn, agentUrl } from "../lib/utils";
+import { normalizeAgentRole } from "../lib/agent-roles";
 import { roleLabels } from "../components/agent-config-primitives";
 import {
   AgentConfigForm,
@@ -132,8 +133,9 @@ export function NewAgent() {
   }, [isFirstAgent]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (presetRole && (AGENT_ROLES as readonly string[]).includes(presetRole)) {
-      setRole(presetRole);
+    const normalizedPresetRole = normalizeAgentRole(presetRole);
+    if (normalizedPresetRole) {
+      setRole(normalizedPresetRole);
     }
     const requestedName = presetName?.trim();
     if (requestedName) {

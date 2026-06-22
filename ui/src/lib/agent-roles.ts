@@ -1,18 +1,11 @@
 import {
-  AGENT_DEVELOPER_ROLE_ALIASES,
   AGENT_ROLE_LABELS,
-  AGENT_ROLES,
+  normalizeAgentRoleValue,
   type AgentRole,
 } from "@paperclipai/shared";
 
-const DEVELOPER_ROLE_ALIASES = new Set<string>(AGENT_DEVELOPER_ROLE_ALIASES);
-
 export function normalizeAgentRole(value: string | null | undefined): AgentRole | null {
-  const role = String(value ?? "").trim().toLowerCase();
-  if (!role) return null;
-  if (DEVELOPER_ROLE_ALIASES.has(role)) return "engineer";
-  if ((AGENT_ROLES as readonly string[]).includes(role)) return role as AgentRole;
-  return null;
+  return normalizeAgentRoleValue(value);
 }
 
 export function agentRoleLabel(value: string | null | undefined): string {

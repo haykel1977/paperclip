@@ -12,7 +12,7 @@ import type {
   PluginManagedAgentDeclaration,
   PluginManagedAgentResolution,
 } from "@paperclipai/shared";
-import { isSovereignAgentModelValue } from "@paperclipai/shared";
+import { isSovereignAgentModelValue, normalizeAgentRoleValue } from "@paperclipai/shared";
 import { notFound, unprocessable } from "../errors.js";
 
 import { agentService } from "./agents.js";
@@ -195,11 +195,16 @@ function managedAgentRuntimeConfig(
   return { ...runtimeConfig, modelProfiles: normalizedProfiles };
 }
 
+function managedAgentRole(role: PluginManagedAgentDeclaration["role"]): string {
+  const rawRole = typeof role === "string" ? role.trim() : "";
+  return normalizeAgentRoleValue(rawRole) ?? rawRole || "general";
+}
+
 function declarationPatch(declaration: PluginManagedAgentDeclaration, input: { adapterType?: string } = {}) {
   const adapterType = input.adapterType ?? fallbackAdapterType(declaration);
   return {
     name: declaration.displayName,
-    role: declaration.role ?? "general",
+    role: managedAgentRole(declaration.role),
     title: declaration.title ?? null,
     icon: declaration.icon ?? null,
     capabilities: declaration.capabilities ?? null,

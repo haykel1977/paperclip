@@ -71,6 +71,14 @@ export const AGENT_DEVELOPER_ROLE_ALIASES = [
   "développer",
 ] as const;
 
+export function normalizeAgentRoleValue(value: string | null | undefined): AgentRole | null {
+  const role = String(value ?? "").trim().toLowerCase();
+  if (!role) return null;
+  if ((AGENT_DEVELOPER_ROLE_ALIASES as readonly string[]).includes(role)) return "engineer";
+  if ((AGENT_ROLES as readonly string[]).includes(role)) return role as AgentRole;
+  return null;
+}
+
 export const AGENT_ROLE_LABELS: Record<AgentRole, string> = {
   ceo: "CEO",
   cto: "CTO",
