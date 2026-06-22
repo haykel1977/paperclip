@@ -57,8 +57,9 @@ squash merge. The PR merges later only if branch protection permits it. If branc
 protection is absent, unreadable, missing required checks, or not configured to
 require up-to-date branches, the script exits 0 with a skip reason and does not
 enable auto-merge. If native auto-merge was already enabled for a managed
-automation PR and the PR later loses its opt-in labels, becomes draft, or gains a
-hard-block label, the script disables native auto-merge again.
+automation PR and the PR later loses its opt-in labels, becomes draft, is edited
+or retargeted out of eligibility, or gains a hard-block label, the workflow reruns
+and disables native auto-merge again.
 
 ## Required branch protection
 
