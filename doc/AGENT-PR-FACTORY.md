@@ -54,8 +54,9 @@ The script enables GitHub native auto-merge only when all conditions are true:
 
 The script does **not** merge immediately. It only enables GitHub auto-merge with
 squash merge. The PR merges later only if branch protection permits it. If branch
-protection is absent, unreadable, or missing required checks, the script exits 0
-with a skip reason and does not enable auto-merge.
+protection is absent, unreadable, missing required checks, or not configured to
+require up-to-date branches, the script exits 0 with a skip reason and does not
+enable auto-merge.
 
 ## Required branch protection
 
