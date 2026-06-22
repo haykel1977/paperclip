@@ -197,7 +197,7 @@ function managedAgentRuntimeConfig(
 
 function managedAgentRole(role: PluginManagedAgentDeclaration["role"]): string {
   const rawRole = typeof role === "string" ? role.trim() : "";
-  return normalizeAgentRoleValue(rawRole) ?? rawRole || "general";
+  return normalizeAgentRoleValue(rawRole) ?? (rawRole || "general");
 }
 
 function declarationPatch(declaration: PluginManagedAgentDeclaration, input: { adapterType?: string } = {}) {
