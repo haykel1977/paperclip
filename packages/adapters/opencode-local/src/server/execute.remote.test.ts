@@ -240,6 +240,80 @@ describe("opencode remote execution", () => {
     expect(restoreWorkspaceFromSshExecution).toHaveBeenCalledTimes(1);
   });
 
+  it("routes OSS OpenCode models through the sovereign OpenAI-compatible endpoint without probing local OSS providers", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-opencode-sovereign-route-"));
+    cleanupDirs.push(rootDir);
+    const workspaceDir = path.join(rootDir, "workspace");
+    await mkdir(workspaceDir, { recursive: true });
+
+    const previousOpenAiBaseUrl = process.env.OPENAI_BASE_URL;
+    const previousOpenAiModelName = process.env.OPENAI_MODEL_NAME;
+    const previousOpenAiApiKey = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_BASE_URL = "https://litellm.kantum.dev/v1";
+    process.env.OPENAI_MODEL_NAME = "qwen3-coder";
+    process.env.OPENAI_API_KEY = "sk-test";
+
+    try {
+      const result = await execute({
+        runId: "run-opencode-sovereign",
+        agent: {
+          id: "agent-1",
+          companyId: "company-1",
+          name: "OpenCode Builder",
+          adapterType: "opencode_local",
+          adapterConfig: {},
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          command: "opencode",
+          model: "oss",
+        },
+        context: {
+          paperclipWorkspace: {
+            cwd: workspaceDir,
+            source: "project_primary",
+          },
+        },
+        executionTransport: {
+          remoteExecution: {
+            host: "127.0.0.1",
+            port: 2222,
+            username: "fixture",
+            remoteWorkspacePath: "/remote/workspace",
+            remoteCwd: "/remote/workspace",
+            privateKey: "PRIVATE KEY",
+            knownHosts: "[127.0.0.1]:2222 ssh-ed25519 AAAA",
+            strictHostKeyChecking: true,
+          },
+        },
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      const modelProbeCall = runChildProcess.mock.calls.find((entry) => Array.isArray(entry[2]) && entry[2].includes("models"));
+      expect(modelProbeCall).toBeUndefined();
+      const runCall = runChildProcess.mock.calls.find((entry) => Array.isArray(entry[2]) && entry[2].includes("run")) as
+        | [string, string, string[], { env: Record<string, string> }]
+        | undefined;
+      expect(runCall?.[2]).toContain("--model");
+      expect(runCall?.[2][runCall[2].indexOf("--model") + 1]).toBe("openai/qwen3-coder");
+      expect(runCall?.[3].env.OPENAI_BASE_URL).toBe("https://litellm.kantum.dev/v1");
+      expect(runCall?.[3].env.OPENAI_MODEL_NAME).toBe("qwen3-coder");
+    } finally {
+      if (previousOpenAiBaseUrl === undefined) delete process.env.OPENAI_BASE_URL;
+      else process.env.OPENAI_BASE_URL = previousOpenAiBaseUrl;
+      if (previousOpenAiModelName === undefined) delete process.env.OPENAI_MODEL_NAME;
+      else process.env.OPENAI_MODEL_NAME = previousOpenAiModelName;
+      if (previousOpenAiApiKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previousOpenAiApiKey;
+    }
+  });
+
   it("fails before the remote run when the configured model is unavailable on the SSH target", async () => {
     runChildProcess.mockImplementationOnce(async () => ({
       exitCode: 0,

@@ -138,6 +138,65 @@ function resolvePiBiller(env: Record<string, string>, provider: string | null): 
   return inferOpenAiCompatibleBiller(env, null) ?? provider ?? "unknown";
 }
 
+function readNonEmptyEnv(env: Record<string, string>, key: string): string | null {
+  const value = env[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readOpenAiBaseUrl(env: Record<string, string>): string | null {
+  return readNonEmptyEnv(env, "OPENAI_BASE_URL") ??
+    readNonEmptyEnv(env, "OPENAI_API_BASE") ??
+    readNonEmptyEnv(env, "OPENAI_API_BASE_URL");
+}
+
+function copyOpenAiSovereignEnv(target: Record<string, string>, source: Record<string, string>) {
+  for (const key of ["OPENAI_BASE_URL", "OPENAI_API_BASE", "OPENAI_API_BASE_URL", "OPENAI_MODEL_NAME", "OPENAI_API_KEY"]) {
+    if (!readNonEmptyEnv(target, key)) {
+      const value = readNonEmptyEnv(source, key);
+      if (value) target[key] = value;
+    }
+  }
+}
+
+function isLocalOssPiModel(model: string): boolean {
+  const normalized = model.trim().toLowerCase();
+  return (
+    normalized.length === 0 ||
+    normalized === "oss" ||
+    normalized === "qwen2.5-coder:32b" ||
+    normalized.startsWith("ollama/") ||
+    normalized.startsWith("gpt-oss") ||
+    normalized.includes("/gpt-oss")
+  );
+}
+
+function resolvePiInvocationModel(input: {
+  configuredModel: string;
+  env: Record<string, string>;
+}): { model: string; note: string | null } {
+  const configuredModel = input.configuredModel.trim();
+  const openAiBaseUrl = readOpenAiBaseUrl(input.env);
+  const routedModel = readNonEmptyEnv(input.env, "OPENAI_MODEL_NAME");
+  if (!openAiBaseUrl || !routedModel || !isLocalOssPiModel(configuredModel)) {
+    return { model: configuredModel, note: null };
+  }
+
+  const model = `openai/${routedModel}`;
+  return {
+    model,
+    note: configuredModel
+      ? `Routed configured OSS model ${configuredModel} through OpenAI-compatible sovereign endpoint as ${model}.`
+      : `Routed Pi default model through OpenAI-compatible sovereign endpoint as ${model}.`,
+  };
+}
+
+function shouldSkipPiModelAvailabilityProbe(input: {
+  model: string;
+  env: Record<string, string>;
+}): boolean {
+  return input.model.trim().toLowerCase().startsWith("openai/") && Boolean(readOpenAiBaseUrl(input.env));
+}
+
 async function ensureSessionsDir(): Promise<string> {
   await fs.mkdir(PAPERCLIP_SESSIONS_DIR, { recursive: true });
   return PAPERCLIP_SESSIONS_DIR;
@@ -225,12 +284,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   const promptTemplate = resolvePaperclipAgentPromptTemplate(config.promptTemplate);
   const command = asString(config.command, "pi");
-  const model = asString(config.model, "").trim();
+  let model = asString(config.model, "").trim();
   const thinking = asString(config.thinking, "").trim();
-
-  // Parse model into provider and model id
-  const provider = parseModelProvider(model);
-  const modelId = parseModelId(model);
+  let provider: string | null = null;
+  let modelId: string | null = null;
 
   const workspaceContext = parseObject(context.paperclipWorkspace);
   const workspaceCwd = asString(workspaceContext.cwd, "");
@@ -351,6 +408,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       (entry): entry is [string, string] => typeof entry[1] === "string",
     ),
   );
+  copyOpenAiSovereignEnv(env, runtimeEnv);
+  const piInvocation = resolvePiInvocationModel({ configuredModel: model, env: runtimeEnv });
+  if (piInvocation.model !== model) model = piInvocation.model;
+  provider = parseModelProvider(model);
+  modelId = parseModelId(model);
   const timeoutSec = resolveAdapterExecutionTargetTimeoutSec(
     executionTarget,
     asNumber(config.timeoutSec, 0),
@@ -378,7 +440,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     resolvedCommand,
   });
 
-  if (!executionTargetIsRemote) {
+  if (!executionTargetIsRemote && !shouldSkipPiModelAvailabilityProbe({ model, env: runtimeEnv })) {
     await ensurePiModelConfiguredAndAvailable({
       model,
       command,

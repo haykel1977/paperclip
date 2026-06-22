@@ -79,6 +79,65 @@ function resolveOpenCodeBiller(env: Record<string, string>, provider: string | n
   return inferOpenAiCompatibleBiller(env, null) ?? provider ?? "unknown";
 }
 
+function readNonEmptyEnv(env: Record<string, string>, key: string): string | null {
+  const value = env[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readOpenAiBaseUrl(env: Record<string, string>): string | null {
+  return readNonEmptyEnv(env, "OPENAI_BASE_URL") ??
+    readNonEmptyEnv(env, "OPENAI_API_BASE") ??
+    readNonEmptyEnv(env, "OPENAI_API_BASE_URL");
+}
+
+function copyOpenAiSovereignEnv(target: Record<string, string>, source: Record<string, string>) {
+  for (const key of ["OPENAI_BASE_URL", "OPENAI_API_BASE", "OPENAI_API_BASE_URL", "OPENAI_MODEL_NAME", "OPENAI_API_KEY"]) {
+    if (!readNonEmptyEnv(target, key)) {
+      const value = readNonEmptyEnv(source, key);
+      if (value) target[key] = value;
+    }
+  }
+}
+
+function isLocalOssOpenCodeModel(model: string): boolean {
+  const normalized = model.trim().toLowerCase();
+  return (
+    normalized.length === 0 ||
+    normalized === "oss" ||
+    normalized === "qwen2.5-coder:32b" ||
+    normalized.startsWith("ollama/") ||
+    normalized.startsWith("gpt-oss") ||
+    normalized.includes("/gpt-oss")
+  );
+}
+
+function resolveOpenCodeInvocationModel(input: {
+  configuredModel: string;
+  env: Record<string, string>;
+}): { model: string; note: string | null } {
+  const configuredModel = input.configuredModel.trim();
+  const openAiBaseUrl = readOpenAiBaseUrl(input.env);
+  const routedModel = readNonEmptyEnv(input.env, "OPENAI_MODEL_NAME");
+  if (!openAiBaseUrl || !routedModel || !isLocalOssOpenCodeModel(configuredModel)) {
+    return { model: configuredModel, note: null };
+  }
+
+  const model = `openai/${routedModel}`;
+  return {
+    model,
+    note: configuredModel
+      ? `Routed configured OSS model ${configuredModel} through OpenAI-compatible sovereign endpoint as ${model}.`
+      : `Routed OpenCode default model through OpenAI-compatible sovereign endpoint as ${model}.`,
+  };
+}
+
+function shouldSkipOpenCodeModelAvailabilityProbe(input: {
+  model: string;
+  env: Record<string, string>;
+}): boolean {
+  return input.model.trim().toLowerCase().startsWith("openai/") && Boolean(readOpenAiBaseUrl(input.env));
+}
+
 const REMOTE_OPENCODE_MODELS_PROBE_DEFAULT_TIMEOUT_SEC = 20;
 const REMOTE_OPENCODE_MODELS_PROBE_SANDBOX_TIMEOUT_SEC = 120;
 
@@ -207,7 +266,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   const promptTemplate = resolvePaperclipAgentPromptTemplate(config.promptTemplate);
   const command = asString(config.command, "opencode");
-  const model = asString(config.model, "").trim();
+  let model = asString(config.model, "").trim();
   const variant = asString(config.variant, "").trim();
 
   const workspaceContext = parseObject(context.paperclipWorkspace);
@@ -310,6 +369,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         (entry): entry is [string, string] => typeof entry[1] === "string",
       ),
     );
+    copyOpenAiSovereignEnv(preparedRuntimeConfig.env, runtimeEnv);
+    const opencodeInvocation = resolveOpenCodeInvocationModel({ configuredModel: model, env: runtimeEnv });
+    if (opencodeInvocation.model !== model) model = opencodeInvocation.model;
+    if (opencodeInvocation.note) preparedRuntimeConfig.notes.push(opencodeInvocation.note);
     const timeoutSec = resolveAdapterExecutionTargetTimeoutSec(
       executionTarget,
       asNumber(config.timeoutSec, 0),
@@ -319,7 +382,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       runId,
       target: executionTarget,
       installCommand: ctx.runtimeCommandSpec?.installCommand,
-    detectCommand: ctx.runtimeCommandSpec?.detectCommand,
+      detectCommand: ctx.runtimeCommandSpec?.detectCommand,
       cwd,
       env: runtimeEnv,
       timeoutSec,
@@ -336,7 +399,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       includeRuntimeKeys: ["HOME"],
       resolvedCommand,
     });
-    if (!executionTargetIsRemote) {
+    if (!executionTargetIsRemote && !shouldSkipOpenCodeModelAvailabilityProbe({ model, env: runtimeEnv })) {
       await ensureOpenCodeModelConfiguredAndAvailable({
         model,
         command,
@@ -426,16 +489,18 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           { cwd, env: preparedRuntimeConfig.env, timeoutSec, graceSec, onLog },
         );
       }
-      await ensureRemoteOpenCodeModelConfiguredAndAvailable({
-        runId,
-        executionTarget,
-        command,
-        model,
-        cwd,
-        env: preparedRuntimeConfig.env,
-        timeoutSec,
-        graceSec,
-      });
+      if (!shouldSkipOpenCodeModelAvailabilityProbe({ model, env: preparedRuntimeConfig.env })) {
+        await ensureRemoteOpenCodeModelConfiguredAndAvailable({
+          runId,
+          executionTarget,
+          command,
+          model,
+          cwd,
+          env: preparedRuntimeConfig.env,
+          timeoutSec,
+          graceSec,
+        });
+      }
     }
     const runtimeExecutionTarget = overrideAdapterExecutionTargetRemoteCwd(executionTarget, effectiveExecutionCwd);
     if (executionTargetIsRemote && adapterExecutionTargetUsesPaperclipBridge(runtimeExecutionTarget)) {
