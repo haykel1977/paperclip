@@ -36,6 +36,13 @@ describe("company routes", () => {
     expect(toCompanyRelativePath("/PAP/search?q=foo")).toBe("/search?q=foo");
   });
 
+  it("treats /automation as a board route that needs a company prefix", () => {
+    expect(isBoardPathWithoutPrefix("/automation")).toBe(true);
+    expect(extractCompanyPrefixFromPath("/automation")).toBeNull();
+    expect(applyCompanyPrefix("/automation", "PAP")).toBe("/PAP/automation");
+    expect(toCompanyRelativePath("/PAP/automation")).toBe("/automation");
+  });
+
   it("does not prefix public lab and test routes", () => {
     expect(isBoardPathWithoutPrefix("/ux-lab/cloud-upstream")).toBe(false);
     expect(extractCompanyPrefixFromPath("/ux-lab/cloud-upstream")).toBeNull();
