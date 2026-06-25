@@ -362,11 +362,40 @@ async function resolveRemoteCollisionBranch(input: {
   return null;
 }
 
+async function checkoutFreshRemoteCollisionBranch(input: {
+  branch: string;
+  runId: string;
+  worktreeCwd: string;
+  env: Record<string, string>;
+  runProc: DeliveryHookRunProcess;
+}): Promise<{ ok: true; branch: string } | { ok: false; stderr: string; stdout: string }> {
+  for (const attempt of [1, 2, 3]) {
+    const candidate = buildRemoteCollisionBranch({
+      branch: input.branch,
+      runId: input.runId,
+      attempt,
+    });
+    if (await remoteBranchExists({
+      branch: candidate,
+      worktreeCwd: input.worktreeCwd,
+      env: input.env,
+      runProc: input.runProc,
+    })) {
+      continue;
+    }
+    const checkout = await input.runProc("git", ["checkout", "-b", candidate], input.worktreeCwd, input.env);
+    if (checkout.exitCode === 0) return { ok: true, branch: candidate };
+    if (isGitBranchAlreadyExistsError(checkout.stderr)) continue;
+    return { ok: false, stderr: checkout.stderr, stdout: checkout.stdout };
+  }
+  return { ok: false, stderr: "no available collision branch", stdout: "" };
+}
+
 /**
  * Fetch repo label names, returns [] on failure (non-fatal).
  */
 async function fetchRepoLabels(input: {
-  repo: string;
+  repo:
   worktreeCwd: string;
   env: Record<string, string>;
   log: DeliveryHookLog;
@@ -419,6 +448,14 @@ async function pushWithRetry(input: {
   await new Promise<void>((resolve) => setTimeout(resolve, retryDelayMs));
 
   return tryPush();
+}
+
+function isNonFastForwardPushError(stderr: string): boolean {
+  const normalized = stderr.toLowerCase();
+  return normalized.includes("non-fast-forward") ||
+    normalized.includes("fetch first") ||
+    normalized.includes("failed to push some refs") ||
+    normalized.includes("updates were rejected");
 }
 
 function formatPrValue(value: string | null | undefined): string {
@@ -750,7 +787,23 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
   }
 
   // ── 7. push (with retry on transient errors) ──────────────────────────────
-  const push = await pushWithRetry({ branch, worktreeCwd, env: deliveryCommandEnv, log, ts, runProc });
+  let push = await pushWithRetry({ branch, worktreeCwd, env: deliveryCommandEnv, log, ts, runProc });
+  if (push.exitCode !== 0 && isNonFastForwardPushError(push.stderr)) {
+    const recoveryBranch = await checkoutFreshRemoteCollisionBranch({
+      branch,
+      runId: input.runId,
+      worktreeCwd,
+      env,
+      runProc,
+    });
+    if (recoveryBranch.ok) {
+      await log("stderr", `[delivery ${ts()}] push_non_fast_forward branch=${branch} retry_branch=${recoveryBranch.branch}\n`);
+      branch = recoveryBranch.branch;
+      push = await pushWithRetry({ branch, worktreeCwd, env: deliveryCommandEnv, log, ts, runProc });
+    } else {
+      await log("stderr", `[delivery ${ts()}] push_non_fast_forward_recovery_failed: ${firstNonEmptyLine(recoveryBranch.stderr) || firstNonEmptyLine(recoveryBranch.stdout) || "checkout failed"}\n`);
+    }
+  }
   if (push.exitCode !== 0) {
     const s = (push.stderr || "").toLowerCase();
     const reason =

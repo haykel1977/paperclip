@@ -630,6 +630,39 @@ describe("executeDeliveryHook", () => {
     expect(pushAttempts).toBe(2);
   }, 10000); // allow retry delay
 
+  it("recovers from a non-fast-forward push race by creating a fresh branch at the committed HEAD", async () => {
+    const worktreeCwd = mkWorktree();
+    const calls: string[][] = [];
+    let pushAttempts = 0;
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
+      if (cmd === "git" && args[0] === "ls-remote") return { exitCode: 2, stdout: "", stderr: "" };
+      if (key === "git checkout -b") return { exitCode: 0, stdout: "", stderr: "" };
+      if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "agent-pr", "truth-first"]), stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/103\n", stderr: "" };
+      if (cmd === "git" && args[0] === "push") {
+        pushAttempts++;
+        if (pushAttempts === 1) {
+          return { exitCode: 1, stdout: "", stderr: "! [rejected] codex/HAS-222-x -> codex/HAS-222-x (non-fast-forward)\nerror: failed to push some refs\n" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
+
+    expect(result.reason).toBe("created");
+    expect(calls).toContainEqual(["git", "checkout", "-b", "codex/HAS-222-x-remote-r1"]);
+    expect(calls).toContainEqual(["git", "push", "-u", "origin", "codex/HAS-222-x-remote-r1"]);
+    const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
+    expect(createCall).toContain("codex/HAS-222-x-remote-r1");
+    expect(pushAttempts).toBe(2);
+  });
+
   it("push auth failure (403): no retry, returns push_auth_failed", async () => {
     const worktreeCwd = mkWorktree();
     let pushAttempts = 0;
