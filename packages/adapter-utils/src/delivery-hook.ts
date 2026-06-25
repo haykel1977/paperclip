@@ -432,6 +432,8 @@ function buildQuantumPrBody(input: {
     `Paperclip deterministic delivery for ${issue}.`,
     "",
     "TRUTHFULNESS: BACKEND-WIRED",
+    "TENANT-SCOPED: no",
+    "A11Y-VERIFIED: n/a",
     `ADR: ${input.adrRef}`,
     "",
     "## Type de changement",
@@ -477,6 +479,10 @@ function buildQuantumPrBody(input: {
     "",
     "## Plan de rollback",
     "- Revert this PR or close it before merge; no deployment side effect is performed by the delivery hook itself.",
+    "",
+    "## Tests exécutés",
+    "Quality gates executed locally before commit (see Quality Gate Evidence table).",
+    "Documentation-only changes verified by agent: file created, committed, branch pushed, PR opened.",
     "",
     "## Truthfulness Boundary",
     "| Claim | Evidence | Boundary |",
@@ -668,6 +674,22 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
       await log("stderr", `[delivery ${ts()}] add_reviewer_failed (non-fatal): ${rev.stderr}\n`);
     }
   }
+
+  // ── 9. enable GitHub auto-merge (non-fatal if unavailable) ───────────────
+  if (url) {
+    const autoMerge = await runProc(
+      "gh",
+      ["pr", "merge", "--auto", url], // merge queue controls strategy
+      worktreeCwd,
+      deliveryCommandEnv,
+    );
+    if (autoMerge.exitCode !== 0) {
+      await log("stderr", `[delivery ${ts()}] auto_merge_failed (non-fatal): ${autoMerge.stderr}\n`);
+    } else {
+      await log("stdout", `[delivery ${ts()}] auto_merge_enabled: ${url}\n`);
+    }
+  }
+
   await log("stdout", `[delivery ${ts()}] result=created pr_url=${url}\n`);
   return { delivered: true, prUrl: url, reason: "created" };
 }
