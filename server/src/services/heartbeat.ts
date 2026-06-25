@@ -715,6 +715,27 @@ export function stripWorkspaceRuntimeFromExecutionRunConfig(config: Record<strin
   return nextConfig;
 }
 
+export function shouldReuseRequestedExecutionWorkspace(input: {
+  existingWorkspace: Pick<ExecutionWorkspace, "id" | "status" | "strategyType"> | null;
+  issueExecutionWorkspaceId?: string | null;
+  issueExecutionWorkspacePreference?: string | null;
+  contextExecutionWorkspaceId?: string | null;
+}) {
+  if (!input.existingWorkspace || input.existingWorkspace.status === "archived") {
+    return false;
+  }
+  if (input.issueExecutionWorkspacePreference === "reuse_existing") {
+    return true;
+  }
+  if (readNonEmptyString(input.contextExecutionWorkspaceId)) {
+    return true;
+  }
+  return (
+    input.existingWorkspace.strategyType === "git_worktree" &&
+    readNonEmptyString(input.issueExecutionWorkspaceId) === input.existingWorkspace.id
+  );
+}
+
 export function buildRealizedExecutionWorkspaceFromPersisted(input: {
   base: ExecutionWorkspaceInput;
   workspace: ExecutionWorkspace;
@@ -8080,13 +8101,12 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       : null;
     const existingExecutionWorkspace =
       loadedExecutionWorkspace?.companyId === agent.companyId ? loadedExecutionWorkspace : null;
-    const requestedShouldReuseExisting =
-      existingExecutionWorkspace !== null &&
-      existingExecutionWorkspace.status !== "archived" &&
-      (
-        issueRef?.executionWorkspacePreference === "reuse_existing" ||
-        Boolean(contextExecutionWorkspaceId)
-      );
+    const requestedShouldReuseExisting = shouldReuseRequestedExecutionWorkspace({
+      existingWorkspace: existingExecutionWorkspace,
+      issueExecutionWorkspaceId: issueRef?.executionWorkspaceId ?? null,
+      issueExecutionWorkspacePreference: issueRef?.executionWorkspacePreference ?? null,
+      contextExecutionWorkspaceId,
+    });
     const requestedReusableExecutionWorkspaceConfig = requestedShouldReuseExisting
       ? existingExecutionWorkspace?.config ?? null
       : null;
