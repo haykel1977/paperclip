@@ -528,6 +528,30 @@ describe("executeDeliveryHook", () => {
     expect(calls.some((call) => call[0] === "pnpm")).toBe(false);
   });
 
+  it("uses a unique branch when the target branch already exists on the remote without an open PR", async () => {
+    const worktreeCwd = mkWorktree();
+    const calls: string[][] = [];
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
+      if (key === "git ls-remote --exit-code") return { exitCode: 0, stdout: "abc123\trefs/heads/codex/HAS-222-x\n", stderr: "" };
+      if (key === "git checkout -b") return { exitCode: 0, stdout: "", stderr: "" };
+      if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "agent-pr", "truth-first"]), stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/100\n", stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
+
+    expect(result.reason).toBe("created");
+    expect(calls).toContainEqual(["git", "checkout", "-b", "codex/HAS-222-x-remote-r1"]);
+    expect(calls).toContainEqual(["git", "push", "-u", "origin", "codex/HAS-222-x-remote-r1"]);
+    const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
+    expect(createCall).toContain("codex/HAS-222-x-remote-r1");
+  });
+
   it("push retry: transient 429 -> retries once, succeeds on second attempt", async () => {
     const worktreeCwd = mkWorktree();
     let pushAttempts = 0;

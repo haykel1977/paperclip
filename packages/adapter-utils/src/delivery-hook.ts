@@ -299,6 +299,26 @@ async function findExistingPr(input: {
   return null;
 }
 
+async function remoteBranchExists(input: {
+  branch: string;
+  worktreeCwd: string;
+  env: Record<string, string>;
+  runProc: DeliveryHookRunProcess;
+}): Promise<boolean> {
+  const remote = await input.runProc(
+    "git",
+    ["ls-remote", "--exit-code", "--heads", "origin", input.branch],
+    input.worktreeCwd,
+    input.env,
+  );
+  return remote.exitCode === 0 && remote.stdout.trim().length > 0;
+}
+
+function buildRemoteCollisionBranch(input: { branch: string; runId: string }): string {
+  const runSuffix = sanitizeDeliveryBranchName(input.runId).split("/").join("-").slice(0, 12) || "run";
+  return sanitizeDeliveryBranchName(`${input.branch}-remote-${runSuffix}`);
+}
+
 /**
  * Fetch repo label names, returns [] on failure (non-fatal).
  */
@@ -542,7 +562,8 @@ function buildQuantumPrBody(input: {
  * - fix: `executeConfiguredDeliveryHook` no longer creates a second redactor
  */
 export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Promise<DeliveryHookResult> {
-  const { worktreeCwd, branch, env, runProc } = input;
+  const { worktreeCwd, env, runProc } = input;
+  let branch = input.branch;
   const log = createDeliveryLogRedactor(env, input.log);
 
   const ts = () => new Date().toISOString();
@@ -599,6 +620,16 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     }
     await log("stdout", `[delivery ${ts()}] result=pr_exists pr_url=${existingPrUrl}\n`);
     return { delivered: true, prUrl: existingPrUrl, reason: "pr_exists" };
+  }
+  if (await remoteBranchExists({ branch, worktreeCwd, env: deliveryCommandEnv, runProc })) {
+    const collisionBranch = buildRemoteCollisionBranch({ branch, runId: input.runId });
+    const checkoutCollisionBranch = await runProc("git", ["checkout", "-b", collisionBranch], worktreeCwd, env);
+    if (checkoutCollisionBranch.exitCode !== 0) {
+      await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="remote_branch_collision" detail="${firstNonEmptyLine(checkoutCollisionBranch.stderr) || firstNonEmptyLine(checkoutCollisionBranch.stdout) || "checkout failed"}"\n`);
+      return { delivered: false, prUrl: null, reason: "delivery_blocked: remote branch collision" };
+    }
+    await log("stdout", `[delivery ${ts()}] remote_branch_exists branch=${branch} using_branch=${collisionBranch}\n`);
+    branch = collisionBranch;
   }
 
   const signingPlan = await resolveDeliveryCommitSigningPlan({
