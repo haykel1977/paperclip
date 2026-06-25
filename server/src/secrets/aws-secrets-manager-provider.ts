@@ -1,6 +1,7 @@
 import { createHash, createHmac } from "node:crypto";
 import { S3Client } from "@aws-sdk/client-s3";
 import type { DeploymentMode, SecretProviderConfigDiscoveryPreviewResult } from "@paperclipai/shared";
+import { createSafeContainerCredentialsProviderFromEnv } from "../aws-container-credentials.js";
 import { unprocessable } from "../errors.js";
 import type {
   PreparedSecretVersion,
@@ -16,6 +17,7 @@ import type {
 import { SecretProviderClientError } from "./types.js";
 
 const AWS_SECRETS_MANAGER_SCHEME = "aws_secrets_manager_v1";
+
 const DEFAULT_PREFIX = "paperclip";
 const DEFAULT_OWNER_TAG = "paperclip";
 const DEFAULT_VERSION_STAGE = "AWSCURRENT";
@@ -218,8 +220,12 @@ async function loadAwsCredentials(region: string): Promise<AwsCredentialIdentity
   if (!cached) {
     // S3Client is only used as a carrier for the AWS SDK default credential provider chain.
     // No S3 API calls are made here; switch to defaultProvider({ region }) if we add that dependency.
+    const containerCredentials = createSafeContainerCredentialsProviderFromEnv();
     cached = {
-      client: new S3Client({ region }),
+      client: new S3Client({
+        region,
+        ...(containerCredentials ? { credentials: containerCredentials } : {}),
+      }),
       credentials: null,
       expiresAt: 0,
       pending: null,
@@ -228,6 +234,7 @@ async function loadAwsCredentials(region: string): Promise<AwsCredentialIdentity
   }
 
   if (cached.credentials && cached.expiresAt > now) return cached.credentials;
+
   if (cached.pending) return cached.pending;
 
   cached.pending = (async () => {

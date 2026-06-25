@@ -6,6 +6,7 @@ import {
   PutObjectCommand,
 } from "@aws-sdk/client-s3";
 import { Readable } from "node:stream";
+import { createSafeContainerCredentialsProviderFromEnv } from "../aws-container-credentials.js";
 import type { StorageProvider, GetObjectResult, HeadObjectResult } from "./types.js";
 import { notFound, unprocessable } from "../errors.js";
 
@@ -19,6 +20,7 @@ interface S3ProviderConfig {
 
 function normalizePrefix(prefix: string | undefined): string {
   if (!prefix) return "";
+
   return prefix
     .trim()
     .replace(/^\/+/, "")
@@ -70,10 +72,12 @@ export function createS3StorageProvider(config: S3ProviderConfig): StorageProvid
   if (!region) throw unprocessable("S3 storage region is required");
 
   const prefix = normalizePrefix(config.prefix);
+  const containerCredentials = createSafeContainerCredentialsProviderFromEnv();
   const client = new S3Client({
     region,
     endpoint: config.endpoint,
     forcePathStyle: Boolean(config.forcePathStyle),
+    ...(containerCredentials ? { credentials: containerCredentials } : {}),
   });
 
   return {
@@ -85,6 +89,7 @@ export function createS3StorageProvider(config: S3ProviderConfig): StorageProvid
         new PutObjectCommand({
           Bucket: bucket,
           Key: key,
+
           Body: input.body,
           ContentType: input.contentType,
           ContentLength: input.contentLength,
