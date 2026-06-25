@@ -91,6 +91,40 @@ function nonEmpty(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function readContextString(context: Record<string, unknown>, key: string): string | null {
+  return nonEmpty(context[key]) ?? nonEmpty(asRecord(context.paperclipIssue)?.[key]);
+}
+
+function sanitizeDeliveryBranchName(value: string): string {
+  const sanitized = value
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/[^a-zA-Z0-9._/-]+/g, "-")
+    .replace(/\.{2,}/g, ".")
+    .replace(/\/+/g, "/")
+    .split("/")
+    .map((segment) => segment.replace(/^[-.]+|[-.]+$/g, ""))
+    .filter(Boolean)
+    .join("/")
+    .replace(/\.lock$/i, "");
+  return sanitized && !sanitized.startsWith("-") ? sanitized : "paperclip/delivery";
+}
+
+function buildFallbackDeliveryBranch(input: {
+  runId: string;
+  context: Record<string, unknown>;
+}): string {
+  const issueRef = readContextString(input.context, "identifier") ?? readContextString(input.context, "issueId") ?? "run";
+  const runSuffix = sanitizeDeliveryBranchName(input.runId).split("/").join("-").slice(0, 12) || "run";
+  return sanitizeDeliveryBranchName(`paperclip/${issueRef}-${runSuffix}`);
+}
+
 function isAutonomousDeliveryEnabled(env: Record<string, string>): boolean {
   return (env.PAPERCLIP_AUTONOMOUS_DELIVERY ?? process.env.PAPERCLIP_AUTONOMOUS_DELIVERY ?? "0") === "1";
 }
@@ -692,14 +726,29 @@ export async function executeConfiguredDeliveryHook(
     return null;
   }
   const baseBranch = asString(input.config.deliveryBaseBranch, "main");
-  let branch = input.branch?.trim() ?? "";
-  if (!branch) {
-    const currentBranch = await input.runProc("git", ["rev-parse", "--abbrev-ref", "HEAD"], input.worktreeCwd, input.env);
-    const recoveredBranch = currentBranch.exitCode === 0 ? currentBranch.stdout.trim() : "";
-    if (recoveredBranch && recoveredBranch !== "HEAD" && recoveredBranch !== baseBranch) {
-      branch = recoveredBranch;
+  const configuredBranch = input.branch?.trim() ?? "";
+  let branch = configuredBranch && configuredBranch !== baseBranch ? configuredBranch : "";
+  let currentBranch: string | null = null;
+  if (!branch || configuredBranch === baseBranch) {
+    const currentBranchResult = await input.runProc("git", ["rev-parse", "--abbrev-ref", "HEAD"], input.worktreeCwd, input.env);
+    currentBranch = currentBranchResult.exitCode === 0 ? currentBranchResult.stdout.trim() : null;
+    if (currentBranch && currentBranch !== "HEAD" && currentBranch !== baseBranch) {
+      branch = currentBranch;
       await input.log("stdout", `[paperclip] delivery: recovered branch from git current_branch=${branch}\n`);
     }
+  }
+  if (!branch && (configuredBranch === baseBranch || currentBranch === baseBranch || currentBranch === "HEAD")) {
+    const fallbackBranch = buildFallbackDeliveryBranch({
+      runId: input.runId,
+      context: input.context,
+    });
+    const createBranch = await input.runProc("git", ["checkout", "-b", fallbackBranch], input.worktreeCwd, input.env);
+    if (createBranch.exitCode !== 0) {
+      await input.log("stderr", `[paperclip] delivery: skipped reason=branch_checkout_failed detail=${createBranch.stderr.trim()}\n`);
+      return null;
+    }
+    branch = fallbackBranch;
+    await input.log("stdout", `[paperclip] delivery: created branch for PR branch=${branch}\n`);
   }
   if (!branch) {
     await input.log("stdout", "[paperclip] delivery: skipped reason=missing_branch\n");
@@ -716,8 +765,8 @@ export async function executeConfiguredDeliveryHook(
     worktreeCwd: input.worktreeCwd,
     branch,
     env: input.env,
-    issueIdentifier: nonEmpty(input.context.issueIdentifier),
-    issueId: nonEmpty(input.context.issueId),
+    issueIdentifier: readContextString(input.context, "identifier") ?? readContextString(input.context, "issueIdentifier"),
+    issueId: readContextString(input.context, "issueId") ?? readContextString(input.context, "id"),
     repo: asString(input.config.deliveryRepo, "Beyn-SOLIDUS/quantum"),
     baseBranch,
     adapterType: nonEmpty(input.adapterType) ?? nonEmpty(input.context.adapterType),

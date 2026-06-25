@@ -366,10 +366,50 @@ describe("executeDeliveryHook", () => {
     expect(createCall).toContain("codex/HAS-222-recovered");
   });
 
-  it("configured delivery refuses to deliver from the base branch", async () => {
+  it("configured delivery creates a PR branch when the current branch is the base branch", async () => {
+    const worktreeCwd = mkWorktree();
+    const calls: string[][] = [];
+    const log = vi.fn(async () => {});
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git rev-parse --abbrev-ref") return { exitCode: 0, stdout: "main\n", stderr: "" };
+      if (key === "git checkout -b") return { exitCode: 0, stdout: "", stderr: "" };
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
+      if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "agent-pr", "truth-first"]), stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/48\n", stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const result = await executeConfiguredDeliveryHook({
+      ...base,
+      worktreeCwd,
+      branch: "main",
+      config: {},
+      context: { paperclipIssue: { identifier: "HAS-222", id: "issue-uuid" } },
+      executionTargetIsRemote: false,
+      exitCode: 0,
+      runProc,
+      log,
+    });
+
+    expect(result?.reason).toBe("created");
+    expect(calls).toContainEqual(["git", "checkout", "-b", "paperclip/HAS-222-r1"]);
+    expect(log).toHaveBeenCalledWith("stdout", "[paperclip] delivery: created branch for PR branch=paperclip/HAS-222-r1\n");
+    const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
+    expect(createCall).toContain("paperclip/HAS-222-r1");
+  });
+
+  it("configured delivery skips safely when base-branch checkout cannot create a PR branch", async () => {
     const worktreeCwd = mkWorktree();
     const log = vi.fn(async () => {});
-    const runProc = vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" }));
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git rev-parse --abbrev-ref") return { exitCode: 0, stdout: "main\n", stderr: "" };
+      if (key === "git checkout -b") return { exitCode: 1, stdout: "", stderr: "fatal: cannot lock ref\n" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
 
     const result = await executeConfiguredDeliveryHook({
       ...base,
@@ -384,8 +424,7 @@ describe("executeDeliveryHook", () => {
     });
 
     expect(result).toBeNull();
-    expect(runProc).not.toHaveBeenCalled();
-    expect(log).toHaveBeenCalledWith("stdout", "[paperclip] delivery: skipped reason=base_branch\n");
+    expect(log).toHaveBeenCalledWith("stderr", "[paperclip] delivery: skipped reason=branch_checkout_failed detail=fatal: cannot lock ref\n");
   });
 
   it("configured delivery reports remote skip unless remote delivery is explicitly enabled", async () => {
