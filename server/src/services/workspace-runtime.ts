@@ -1339,16 +1339,20 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
   if (strategy !== "git_worktree") {
     return realized;
   }
-  const repoRoot = await runGit(["rev-parse", "--show-toplevel"], input.base.baseCwd);
+  const persistedWorkspacePath = realized.worktreePath ?? cwd;
+  const repoRoot = await resolveGitOwnerRepoRoot(input.base.baseCwd).catch(async () =>
+    resolveGitOwnerRepoRoot(persistedWorkspacePath),
+  );
   const recordedBaseRefSha = readRecordedBaseRefSha(input.workspace.metadata);
   if (await directoryExists(cwd)) {
     const baseDrift = await inspectExecutionWorkspaceBaseDrift({
       repoRoot,
-      worktreePath: realized.worktreePath ?? cwd,
+      worktreePath: persistedWorkspacePath,
       branchName: realized.branchName,
       baseRef: input.workspace.baseRef ?? input.base.repoRef ?? null,
       recordedBaseRefSha,
     });
+
     realized.warnings = baseDrift.warnings;
     realized.baseRefSha = recordedBaseRefSha ?? baseDrift.branchBaseRefSha ?? baseDrift.currentBaseRefSha;
     if (provisionCommand) {
@@ -1370,13 +1374,14 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     return realized;
   }
 
-  const worktreePath = realized.worktreePath ?? cwd;
+  const worktreePath = persistedWorkspacePath;
   const branchName = asString(input.workspace.branchName, "").trim();
   if (!branchName) {
     throw new Error(`Execution workspace "${cwd}" is missing and cannot be restored because no branch name is recorded.`);
   }
 
   await fs.mkdir(path.dirname(worktreePath), { recursive: true });
+
   await runGit(["worktree", "prune"], repoRoot).catch(() => {});
   const restoreBaseRef = input.workspace.baseRef ?? input.base.repoRef ?? null;
   const restoreRefreshWarnings = restoreBaseRef ? await refreshRemoteTrackingBaseRef(repoRoot, restoreBaseRef) : [];

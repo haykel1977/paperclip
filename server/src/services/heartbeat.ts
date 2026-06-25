@@ -7783,8 +7783,16 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     const context = parseObject(run.contextSnapshot);
     const taskKey = deriveTaskKeyWithHeartbeatFallback(context, null);
     const sessionCodec = getAdapterSessionCodec(agent.adapterType);
-    const issueId = readNonEmptyString(context.issueId);
-    let issueContext = issueId ? await getIssueExecutionContext(agent.companyId, issueId) : null;
+    const explicitIssueId = readNonEmptyString(context.issueId);
+    const taskIssueId = readNonEmptyString(context.taskId);
+    let issueContext = explicitIssueId ? await getIssueExecutionContext(agent.companyId, explicitIssueId) : null;
+    if (!issueContext && taskIssueId && taskIssueId !== explicitIssueId) {
+      issueContext = await getIssueExecutionContext(agent.companyId, taskIssueId);
+      if (issueContext && !explicitIssueId) {
+        context.issueId = issueContext.id;
+      }
+    }
+    const issueId = issueContext?.id ?? explicitIssueId;
     const issueDependencyReadiness = issueId
       ? await issuesSvc.listDependencyReadiness(agent.companyId, [issueId]).then((rows) => rows.get(issueId) ?? null)
       : null;
@@ -7794,6 +7802,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       shouldAutoCheckoutIssueForWake({
         contextSnapshot: context,
         issueStatus: issueContext.status,
+
         issueAssigneeAgentId: issueContext.assigneeAgentId,
         isDependencyReady: issueDependencyReadiness?.isDependencyReady ?? true,
         agentId: agent.id,
@@ -8064,16 +8073,25 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     } else {
       delete context.paperclipTaskMarkdown;
     }
+    const contextExecutionWorkspaceId = readNonEmptyString(context.executionWorkspaceId);
+    const requestedExecutionWorkspaceId = issueRef?.executionWorkspaceId ?? contextExecutionWorkspaceId;
+    const loadedExecutionWorkspace = requestedExecutionWorkspaceId
+      ? await executionWorkspacesSvc.getById(requestedExecutionWorkspaceId)
+      : null;
     const existingExecutionWorkspace =
-      issueRef?.executionWorkspaceId ? await executionWorkspacesSvc.getById(issueRef.executionWorkspaceId) : null;
+      loadedExecutionWorkspace?.companyId === agent.companyId ? loadedExecutionWorkspace : null;
     const requestedShouldReuseExisting =
-      issueRef?.executionWorkspacePreference === "reuse_existing" &&
       existingExecutionWorkspace !== null &&
-      existingExecutionWorkspace.status !== "archived";
+      existingExecutionWorkspace.status !== "archived" &&
+      (
+        issueRef?.executionWorkspacePreference === "reuse_existing" ||
+        Boolean(contextExecutionWorkspaceId)
+      );
     const requestedReusableExecutionWorkspaceConfig = requestedShouldReuseExisting
       ? existingExecutionWorkspace?.config ?? null
       : null;
     const defaultEnvironment = await environmentsSvc.ensureLocalEnvironment(agent.companyId);
+
     const environmentResolution = resolveExecutionWorkspaceEnvironmentId({
       projectPolicy: projectExecutionWorkspacePolicy,
       issueSettings: issueExecutionWorkspaceSettings,
@@ -8516,7 +8534,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     });
     const runtimeSessionParams = runtimeSessionResolution.sessionParams;
     const runtimeWorkspaceWarnings = [
-      ...resolvedWorkspace.warnings,
+      ...(reusedExecutionWorkspace ? [] : resolvedWorkspace.warnings),
       ...executionWorkspace.warnings,
       ...(runtimeSessionResolution.warning ? [runtimeSessionResolution.warning] : []),
       ...(resetTaskSession && sessionResetReason
@@ -8527,6 +8545,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           ]
         : []),
     ];
+
     context.paperclipWorkspace = {
       cwd: executionWorkspace.cwd,
       source: executionWorkspace.source,
