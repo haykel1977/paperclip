@@ -148,22 +148,22 @@ function managedAgentAdapterConfig(
   adapterType: string,
 ): Record<string, unknown> {
   const adapterConfig = { ...(declaration.adapterConfig ?? {}) };
-  if (!SOVEREIGN_MODEL_REQUIRED_ADAPTER_TYPES.has(adapterType)) return adapterConfig;
-
   const model = typeof adapterConfig.model === "string" ? adapterConfig.model.trim() : "";
-  if (!model) {
+  if (model) {
+    if (isSovereignAgentModelValue(model)) {
+      adapterConfig.model = model;
+      return adapterConfig;
+    }
+    throw unprocessable(
+      `Plugin managed agent ${declaration.agentKey} adapterConfig.model must be a sovereign model`,
+    );
+  }
+
+  if (SOVEREIGN_MODEL_REQUIRED_ADAPTER_TYPES.has(adapterType)) {
     const defaultModel = SOVEREIGN_MANAGED_AGENT_MODEL_BY_ADAPTER_TYPE[adapterType];
     if (defaultModel) adapterConfig.model = defaultModel;
-    return adapterConfig;
   }
-  if (isSovereignAgentModelValue(model)) {
-    adapterConfig.model = model;
-    return adapterConfig;
-  }
-
-  throw unprocessable(
-    `Plugin managed agent ${declaration.agentKey} adapterConfig.model must be a sovereign model`,
-  );
+  return adapterConfig;
 }
 
 function managedAgentRuntimeConfig(
@@ -171,8 +171,8 @@ function managedAgentRuntimeConfig(
   adapterType: string,
 ): Record<string, unknown> {
   const runtimeConfig = { ...(declaration.runtimeConfig ?? {}) } as Record<string, unknown>;
-  if (!SOVEREIGN_MODEL_REQUIRED_ADAPTER_TYPES.has(adapterType)) return runtimeConfig;
   const modelProfiles = runtimeConfig.modelProfiles;
+
   if (typeof modelProfiles !== "object" || modelProfiles === null || Array.isArray(modelProfiles)) {
     return runtimeConfig;
   }

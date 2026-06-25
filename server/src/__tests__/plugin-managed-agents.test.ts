@@ -260,7 +260,23 @@ describeEmbeddedPostgres("plugin-managed agents", () => {
     ).rejects.toThrow("adapterConfig.model must be a sovereign model");
   });
 
+  it("rejects plugin-managed non-required adapters that still declare non-sovereign models", async () => {
+    const pluginManifest = manifest();
+
+    pluginManifest.agents![0] = {
+      ...pluginManifest.agents![0]!,
+      adapterType: "process",
+      adapterConfig: { command: "pnpm wiki:maintain", model: "gpt-4o" },
+    };
+    const { companyId, services } = await seedCompanyAndPlugin({ manifest: pluginManifest });
+
+    await expect(
+      services.agents.managedReconcile({ companyId, agentKey: "wiki-maintainer" }),
+    ).rejects.toThrow("adapterConfig.model must be a sovereign model");
+  });
+
   it("materializes declared managed agent instructions with local folder paths", async () => {
+
     const previousHome = process.env.PAPERCLIP_HOME;
     const previousInstance = process.env.PAPERCLIP_INSTANCE_ID;
 

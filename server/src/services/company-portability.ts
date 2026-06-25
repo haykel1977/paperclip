@@ -3027,21 +3027,20 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
     adapterConfig: Record<string, unknown>,
   ) {
     const model = typeof adapterConfig.model === "string" ? adapterConfig.model.trim() : "";
-    if (SOVEREIGN_MODEL_REQUIRED_ADAPTER_TYPES.has(adapterType)) {
-      if (!model) {
-        throw unprocessable(`adapterConfig.model is required for ${adapterType}`);
-      }
-      if (!isSovereignAgentModelValue(model)) {
-        const knownModel = (await listAdapterModels(adapterType)).find((entry) => entry.id === model);
-        if (!knownModel || !isSovereignAgentModel(knownModel)) {
-          throw unprocessable("adapterConfig.model must be a sovereign model");
-        }
+    if (!model && SOVEREIGN_MODEL_REQUIRED_ADAPTER_TYPES.has(adapterType)) {
+      throw unprocessable(`adapterConfig.model is required for ${adapterType}`);
+    }
+    if (model && !isSovereignAgentModelValue(model)) {
+      const knownModel = (await listAdapterModels(adapterType)).find((entry) => entry.id === model);
+      if (!knownModel || !isSovereignAgentModel(knownModel)) {
+        throw unprocessable("adapterConfig.model must be a sovereign model");
       }
     }
     if (adapterType !== "opencode_local") return;
     try {
       requireOpenCodeModelId(adapterConfig.model);
     } catch (err) {
+
       const reason = err instanceof Error ? err.message : String(err);
       throw unprocessable(`Invalid opencode_local adapterConfig: ${reason}`);
     }
