@@ -120,9 +120,14 @@ function buildFallbackDeliveryBranch(input: {
   runId: string;
   context: Record<string, unknown>;
 }): string {
-  const issueRef = readContextString(input.context, "identifier") ?? readContextString(input.context, "issueId") ?? "run";
+  const issueRef = readContextString(input.context, "identifier") ?? readContextString(input.context, "issueId") ?? readContextString(input.context, "id") ?? "run";
   const runSuffix = sanitizeDeliveryBranchName(input.runId).split("/").join("-").slice(0, 12) || "run";
   return sanitizeDeliveryBranchName(`paperclip/${issueRef}-${runSuffix}`);
+}
+
+function isGitBranchAlreadyExistsError(stderr: string): boolean {
+  const normalized = stderr.toLowerCase();
+  return normalized.includes("already exists") || normalized.includes("a branch named") || normalized.includes("cannot create branch");
 }
 
 function isAutonomousDeliveryEnabled(env: Record<string, string>): boolean {
@@ -744,11 +749,23 @@ export async function executeConfiguredDeliveryHook(
     });
     const createBranch = await input.runProc("git", ["checkout", "-b", fallbackBranch], input.worktreeCwd, input.env);
     if (createBranch.exitCode !== 0) {
-      await input.log("stderr", `[paperclip] delivery: skipped reason=branch_checkout_failed detail=${createBranch.stderr.trim()}\n`);
-      return null;
+      if (isGitBranchAlreadyExistsError(createBranch.stderr)) {
+        const checkoutExisting = await input.runProc("git", ["checkout", fallbackBranch], input.worktreeCwd, input.env);
+        if (checkoutExisting.exitCode === 0) {
+          branch = fallbackBranch;
+          await input.log("stdout", `[paperclip] delivery: checked out existing PR branch=${branch}\n`);
+        } else {
+          await input.log("stderr", `[paperclip] delivery: skipped reason=branch_checkout_failed detail=${checkoutExisting.stderr.trim()}\n`);
+          return null;
+        }
+      } else {
+        await input.log("stderr", `[paperclip] delivery: skipped reason=branch_checkout_failed detail=${createBranch.stderr.trim()}\n`);
+        return null;
+      }
+    } else {
+      branch = fallbackBranch;
+      await input.log("stdout", `[paperclip] delivery: created branch for PR branch=${branch}\n`);
     }
-    branch = fallbackBranch;
-    await input.log("stdout", `[paperclip] delivery: created branch for PR branch=${branch}\n`);
   }
   if (!branch) {
     await input.log("stdout", "[paperclip] delivery: skipped reason=missing_branch\n");

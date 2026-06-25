@@ -401,6 +401,40 @@ describe("executeDeliveryHook", () => {
     expect(createCall).toContain("paperclip/HAS-222-r1");
   });
 
+  it("configured delivery reuses the fallback PR branch if it already exists locally", async () => {
+    const worktreeCwd = mkWorktree();
+    const calls: string[][] = [];
+    const log = vi.fn(async () => {});
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git rev-parse --abbrev-ref") return { exitCode: 0, stdout: "main\n", stderr: "" };
+      if (key === "git checkout -b") return { exitCode: 1, stdout: "", stderr: "fatal: a branch named 'paperclip/HAS-222-r1' already exists\n" };
+      if (key === "git checkout paperclip/HAS-222-r1") return { exitCode: 0, stdout: "", stderr: "" };
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
+      if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "agent-pr", "truth-first"]), stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/49\n", stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const result = await executeConfiguredDeliveryHook({
+      ...base,
+      worktreeCwd,
+      branch: "main",
+      config: {},
+      context: { paperclipIssue: { identifier: "HAS-222", id: "issue-uuid" } },
+      executionTargetIsRemote: false,
+      exitCode: 0,
+      runProc,
+      log,
+    });
+
+    expect(result?.reason).toBe("created");
+    expect(calls).toContainEqual(["git", "checkout", "paperclip/HAS-222-r1"]);
+    expect(log).toHaveBeenCalledWith("stdout", "[paperclip] delivery: checked out existing PR branch=paperclip/HAS-222-r1\n");
+  });
+
   it("configured delivery skips safely when base-branch checkout cannot create a PR branch", async () => {
     const worktreeCwd = mkWorktree();
     const log = vi.fn(async () => {});
