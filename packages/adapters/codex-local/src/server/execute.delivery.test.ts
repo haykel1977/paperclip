@@ -663,6 +663,36 @@ describe("executeDeliveryHook", () => {
     expect(pushAttempts).toBe(2);
   });
 
+  it("treats an existing PR after gh pr create failure as delivered", async () => {
+    const worktreeCwd = mkWorktree();
+    const calls: string[][] = [];
+    let prListCalls = 0;
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      if (key === "gh pr list") {
+        prListCalls++;
+        return prListCalls === 1
+          ? { exitCode: 0, stdout: "", stderr: "" }
+          : { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/104\n", stderr: "" };
+      }
+      if (key === "gh pr create") return { exitCode: 1, stdout: "", stderr: "a pull request already exists for codex/HAS-222-x\n" };
+      if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "agent-pr", "truth-first"]), stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
+
+    expect(result).toEqual({
+      delivered: true,
+      prUrl: "https://github.com/Beyn-SOLIDUS/quantum/pull/104",
+      reason: "pr_exists",
+    });
+    expect(prListCalls).toBe(2);
+    expect(calls.some((call) => call[0] === "git" && call[1] === "push")).toBe(true);
+  });
+
   it("push auth failure (403): no retry, returns push_auth_failed", async () => {
     const worktreeCwd = mkWorktree();
     let pushAttempts = 0;

@@ -838,6 +838,17 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
 
   const pr = await runProc("gh", prArgs, worktreeCwd, deliveryCommandEnv);
   if (pr.exitCode !== 0) {
+    const existingAfterCreateFailure = await findExistingPr({
+      repo: input.repo,
+      branch,
+      worktreeCwd,
+      env: deliveryCommandEnv,
+      runProc,
+    });
+    if (existingAfterCreateFailure) {
+      await log("stdout", `[delivery ${ts()}] result=pr_exists_after_create_failure pr_url=${existingAfterCreateFailure}\n`);
+      return { delivered: true, prUrl: existingAfterCreateFailure, reason: "pr_exists" };
+    }
     await log("stderr", `[delivery ${ts()}] gh_pr_create_failed: ${pr.stderr}\n`);
     return { delivered: false, prUrl: null, reason: "pr_create_failed" };
   }
