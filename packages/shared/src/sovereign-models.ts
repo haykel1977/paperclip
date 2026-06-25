@@ -3,13 +3,24 @@ export interface AgentModelLike {
   label?: string | null;
 }
 
-const SOVEREIGN_MODEL_MARKERS = ["sovereign", "souverain"];
+const SOVEREIGN_MODEL_MARKERS = new Set(["sovereign", "souverain"]);
+const NEGATING_MODEL_MARKERS = new Set(["anti", "non", "not", "unsouverain"]);
+
+function sovereignMarkerIndex(value: string): number {
+  const tokens = value
+    .trim()
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+
+  return tokens.findIndex((token, index) =>
+    SOVEREIGN_MODEL_MARKERS.has(token) && !NEGATING_MODEL_MARKERS.has(tokens[index - 1] ?? ""),
+  );
+}
 
 export function isSovereignAgentModelValue(value: unknown): value is string {
   if (typeof value !== "string") return false;
-  const normalized = value.trim().toLowerCase();
-  if (!normalized) return false;
-  return SOVEREIGN_MODEL_MARKERS.some((marker) => normalized.includes(marker));
+  return sovereignMarkerIndex(value) >= 0;
 }
 
 export function isSovereignAgentModel(model: AgentModelLike): boolean {
