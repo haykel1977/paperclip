@@ -536,7 +536,11 @@ describe("executeDeliveryHook", () => {
       const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
       if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
-      if (key === "git ls-remote --exit-code") return { exitCode: 0, stdout: "abc123\trefs/heads/codex/HAS-222-x\n", stderr: "" };
+      if (cmd === "git" && args[0] === "ls-remote") {
+        return args[4] === "codex/HAS-222-x"
+          ? { exitCode: 0, stdout: "abc123\trefs/heads/codex/HAS-222-x\n", stderr: "" }
+          : { exitCode: 2, stdout: "", stderr: "" };
+      }
       if (key === "git checkout -b") return { exitCode: 0, stdout: "", stderr: "" };
       if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "agent-pr", "truth-first"]), stderr: "" };
       if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/100\n", stderr: "" };
@@ -550,6 +554,59 @@ describe("executeDeliveryHook", () => {
     expect(calls).toContainEqual(["git", "push", "-u", "origin", "codex/HAS-222-x-remote-r1"]);
     const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
     expect(createCall).toContain("codex/HAS-222-x-remote-r1");
+  });
+
+  it("tries another remote-collision branch when the first candidate already exists remotely", async () => {
+    const worktreeCwd = mkWorktree();
+    const calls: string[][] = [];
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
+      if (cmd === "git" && args[0] === "ls-remote") {
+        return args[4] === "codex/HAS-222-x" || args[4] === "codex/HAS-222-x-remote-r1"
+          ? { exitCode: 0, stdout: `abc123\trefs/heads/${args[4]}\n`, stderr: "" }
+          : { exitCode: 2, stdout: "", stderr: "" };
+      }
+      if (key === "git checkout -b") return { exitCode: 0, stdout: "", stderr: "" };
+      if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "agent-pr", "truth-first"]), stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/101\n", stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
+
+    expect(result.reason).toBe("created");
+    expect(calls).toContainEqual(["git", "checkout", "-b", "codex/HAS-222-x-remote-r1-2"]);
+    expect(calls).toContainEqual(["git", "push", "-u", "origin", "codex/HAS-222-x-remote-r1-2"]);
+  });
+
+  it("reuses an existing local remote-collision branch when it is available", async () => {
+    const worktreeCwd = mkWorktree();
+    const calls: string[][] = [];
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
+      if (cmd === "git" && args[0] === "ls-remote") {
+        return args[4] === "codex/HAS-222-x"
+          ? { exitCode: 0, stdout: "abc123\trefs/heads/codex/HAS-222-x\n", stderr: "" }
+          : { exitCode: 2, stdout: "", stderr: "" };
+      }
+      if (key === "git checkout -b") return { exitCode: 1, stdout: "", stderr: "fatal: a branch named 'codex/HAS-222-x-remote-r1' already exists\n" };
+      if (key === "git checkout codex/HAS-222-x-remote-r1") return { exitCode: 0, stdout: "", stderr: "" };
+      if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "agent-pr", "truth-first"]), stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/102\n", stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
+
+    expect(result.reason).toBe("created");
+    expect(calls).toContainEqual(["git", "checkout", "codex/HAS-222-x-remote-r1"]);
+    expect(calls).toContainEqual(["git", "push", "-u", "origin", "codex/HAS-222-x-remote-r1"]);
   });
 
   it("push retry: transient 429 -> retries once, succeeds on second attempt", async () => {

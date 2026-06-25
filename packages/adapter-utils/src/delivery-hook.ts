@@ -130,6 +130,23 @@ function isGitBranchAlreadyExistsError(stderr: string): boolean {
   return normalized.includes("already exists") || normalized.includes("a branch named") || normalized.includes("cannot create branch");
 }
 
+async function checkoutNewOrExistingBranch(input: {
+  branch: string;
+  worktreeCwd: string;
+  env: Record<string, string>;
+  runProc: DeliveryHookRunProcess;
+}): Promise<{ ok: true; reused: boolean } | { ok: false; stderr: string; stdout: string }> {
+  const createBranch = await input.runProc("git", ["checkout", "-b", input.branch], input.worktreeCwd, input.env);
+  if (createBranch.exitCode === 0) return { ok: true, reused: false };
+  if (!isGitBranchAlreadyExistsError(createBranch.stderr)) {
+    return { ok: false, stderr: createBranch.stderr, stdout: createBranch.stdout };
+  }
+
+  const checkoutExisting = await input.runProc("git", ["checkout", input.branch], input.worktreeCwd, input.env);
+  if (checkoutExisting.exitCode === 0) return { ok: true, reused: true };
+  return { ok: false, stderr: checkoutExisting.stderr, stdout: checkoutExisting.stdout };
+}
+
 function isAutonomousDeliveryEnabled(env: Record<string, string>): boolean {
   return (env.PAPERCLIP_AUTONOMOUS_DELIVERY ?? process.env.PAPERCLIP_AUTONOMOUS_DELIVERY ?? "0") === "1";
 }
@@ -314,9 +331,35 @@ async function remoteBranchExists(input: {
   return remote.exitCode === 0 && remote.stdout.trim().length > 0;
 }
 
-function buildRemoteCollisionBranch(input: { branch: string; runId: string }): string {
+function buildRemoteCollisionBranch(input: { branch: string; runId: string; attempt: number }): string {
   const runSuffix = sanitizeDeliveryBranchName(input.runId).split("/").join("-").slice(0, 12) || "run";
-  return sanitizeDeliveryBranchName(`${input.branch}-remote-${runSuffix}`);
+  const attemptSuffix = input.attempt <= 1 ? "" : `-${input.attempt}`;
+  return sanitizeDeliveryBranchName(`${input.branch}-remote-${runSuffix}${attemptSuffix}`);
+}
+
+async function resolveRemoteCollisionBranch(input: {
+  branch: string;
+  runId: string;
+  worktreeCwd: string;
+  env: Record<string, string>;
+  runProc: DeliveryHookRunProcess;
+}): Promise<string | null> {
+  for (const attempt of [1, 2, 3]) {
+    const candidate = buildRemoteCollisionBranch({
+      branch: input.branch,
+      runId: input.runId,
+      attempt,
+    });
+    if (!await remoteBranchExists({
+      branch: candidate,
+      worktreeCwd: input.worktreeCwd,
+      env: input.env,
+      runProc: input.runProc,
+    })) {
+      return candidate;
+    }
+  }
+  return null;
 }
 
 /**
@@ -622,13 +665,28 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     return { delivered: true, prUrl: existingPrUrl, reason: "pr_exists" };
   }
   if (await remoteBranchExists({ branch, worktreeCwd, env: deliveryCommandEnv, runProc })) {
-    const collisionBranch = buildRemoteCollisionBranch({ branch, runId: input.runId });
-    const checkoutCollisionBranch = await runProc("git", ["checkout", "-b", collisionBranch], worktreeCwd, env);
-    if (checkoutCollisionBranch.exitCode !== 0) {
+    const collisionBranch = await resolveRemoteCollisionBranch({
+      branch,
+      runId: input.runId,
+      worktreeCwd,
+      env: deliveryCommandEnv,
+      runProc,
+    });
+    if (!collisionBranch) {
+      await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="remote_branch_collision" detail="no available collision branch"\n`);
+      return { delivered: false, prUrl: null, reason: "delivery_blocked: remote branch collision" };
+    }
+    const checkoutCollisionBranch = await checkoutNewOrExistingBranch({
+      branch: collisionBranch,
+      worktreeCwd,
+      env,
+      runProc,
+    });
+    if (!checkoutCollisionBranch.ok) {
       await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="remote_branch_collision" detail="${firstNonEmptyLine(checkoutCollisionBranch.stderr) || firstNonEmptyLine(checkoutCollisionBranch.stdout) || "checkout failed"}"\n`);
       return { delivered: false, prUrl: null, reason: "delivery_blocked: remote branch collision" };
     }
-    await log("stdout", `[delivery ${ts()}] remote_branch_exists branch=${branch} using_branch=${collisionBranch}\n`);
+    await log("stdout", `[delivery ${ts()}] remote_branch_exists branch=${branch} using_branch=${collisionBranch}${checkoutCollisionBranch.reused ? " reused_local=true" : ""}\n`);
     branch = collisionBranch;
   }
 
