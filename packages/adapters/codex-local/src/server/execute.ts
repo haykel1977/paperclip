@@ -135,7 +135,7 @@ function resolveCodexInvocationModel(input: {
   }
 
   return {
-    model: routedModel,
+    model: routedModel!, // non-null: shouldRoute guard above checks `routedModel &&`
     configArgs: [
       'model_provider="openai"',
       `openai_base_url=${JSON.stringify(openAiBaseUrl)}`,
