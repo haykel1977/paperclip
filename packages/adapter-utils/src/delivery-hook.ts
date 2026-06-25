@@ -691,9 +691,22 @@ export async function executeConfiguredDeliveryHook(
     await input.log("stdout", "[paperclip] delivery: skipped reason=adapter_exit_nonzero\n");
     return null;
   }
-  const branch = input.branch?.trim();
+  const baseBranch = asString(input.config.deliveryBaseBranch, "main");
+  let branch = input.branch?.trim() ?? "";
+  if (!branch) {
+    const currentBranch = await input.runProc("git", ["rev-parse", "--abbrev-ref", "HEAD"], input.worktreeCwd, input.env);
+    const recoveredBranch = currentBranch.exitCode === 0 ? currentBranch.stdout.trim() : "";
+    if (recoveredBranch && recoveredBranch !== "HEAD" && recoveredBranch !== baseBranch) {
+      branch = recoveredBranch;
+      await input.log("stdout", `[paperclip] delivery: recovered branch from git current_branch=${branch}\n`);
+    }
+  }
   if (!branch) {
     await input.log("stdout", "[paperclip] delivery: skipped reason=missing_branch\n");
+    return null;
+  }
+  if (branch === baseBranch) {
+    await input.log("stdout", "[paperclip] delivery: skipped reason=base_branch\n");
     return null;
   }
 
@@ -706,7 +719,7 @@ export async function executeConfiguredDeliveryHook(
     issueIdentifier: nonEmpty(input.context.issueIdentifier),
     issueId: nonEmpty(input.context.issueId),
     repo: asString(input.config.deliveryRepo, "Beyn-SOLIDUS/quantum"),
-    baseBranch: asString(input.config.deliveryBaseBranch, "main"),
+    baseBranch,
     adapterType: nonEmpty(input.adapterType) ?? nonEmpty(input.context.adapterType),
     agentId: nonEmpty(input.agentId) ?? nonEmpty(input.context.agentId),
     model: nonEmpty(input.model) ?? nonEmpty(input.context.model) ?? nonEmpty(input.config.model),

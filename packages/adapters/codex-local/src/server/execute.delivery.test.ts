@@ -332,6 +332,62 @@ describe("executeDeliveryHook", () => {
     expect(calls.some((call) => call[0] === "git" && call[1] === "push")).toBe(false);
   });
 
+  it("configured delivery recovers a missing branch from the current git branch", async () => {
+    const worktreeCwd = mkWorktree();
+    const calls: string[][] = [];
+    const log = vi.fn(async () => {});
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git rev-parse --abbrev-ref") return { exitCode: 0, stdout: "codex/HAS-222-recovered\n", stderr: "" };
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
+      if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "agent-pr", "truth-first"]), stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/47\n", stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const result = await executeConfiguredDeliveryHook({
+      ...base,
+      worktreeCwd,
+      branch: null,
+      config: {},
+      context: {},
+      executionTargetIsRemote: false,
+      exitCode: 0,
+      runProc,
+      log,
+    });
+
+    expect(result?.reason).toBe("created");
+    expect(log).toHaveBeenCalledWith("stdout", "[paperclip] delivery: recovered branch from git current_branch=codex/HAS-222-recovered\n");
+    const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
+    expect(createCall).toContain("--head");
+    expect(createCall).toContain("codex/HAS-222-recovered");
+  });
+
+  it("configured delivery refuses to deliver from the base branch", async () => {
+    const worktreeCwd = mkWorktree();
+    const log = vi.fn(async () => {});
+    const runProc = vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" }));
+
+    const result = await executeConfiguredDeliveryHook({
+      ...base,
+      worktreeCwd,
+      branch: "main",
+      config: {},
+      context: {},
+      executionTargetIsRemote: false,
+      exitCode: 0,
+      runProc,
+      log,
+    });
+
+    expect(result).toBeNull();
+    expect(runProc).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith("stdout", "[paperclip] delivery: skipped reason=base_branch\n");
+  });
+
   it("configured delivery reports remote skip unless remote delivery is explicitly enabled", async () => {
     const worktreeCwd = mkWorktree();
     const log = vi.fn(async () => {});
