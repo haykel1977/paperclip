@@ -712,6 +712,22 @@ export function pluginRoutes(
     return companyId;
   }
 
+  function pluginBridgeRequestCompanyId(body: {
+    companyId?: unknown;
+    params?: Record<string, unknown>;
+  } | undefined): unknown {
+    if (body?.companyId !== undefined) return body.companyId;
+    return body?.params?.companyId;
+  }
+
+  function paramsWithAuthorizedCompanyScope(
+    params: Record<string, unknown> | undefined,
+    companyId: string | undefined,
+  ): Record<string, unknown> {
+    const base = params ?? {};
+    return companyId === undefined ? base : { ...base, companyId };
+  }
+
   function performActionActorContext(req: Request, companyId: string | undefined): PluginPerformActionActorContext {
     const scopedCompanyId = companyId ?? null;
     if (req.actor.type === "agent") {
@@ -739,14 +755,6 @@ export function pluginRoutes(
       runId: req.actor.runId ?? null,
       companyId: scopedCompanyId,
     };
-  }
-
-  function actionParamsWithAuthorizedCompanyScope(
-    params: Record<string, unknown> | undefined,
-    companyId: string | undefined,
-  ): Record<string, unknown> {
-    const base = params ?? {};
-    return companyId === undefined ? base : { ...base, companyId };
   }
 
   async function validateToolRunContextScope(runContext: ToolRunContext): Promise<string | null> {
@@ -1307,7 +1315,7 @@ export function pluginRoutes(
       return;
     }
 
-    const companyId = assertPluginBridgeScope(req, body.companyId);
+    const companyId = assertPluginBridgeScope(req, pluginBridgeRequestCompanyId(body));
 
     try {
       const result = await bridgeDeps.workerManager.call(
@@ -1316,7 +1324,7 @@ export function pluginRoutes(
         {
           key: body.key,
           ...(companyId ? { companyId } : {}),
-          params: body.params ?? {},
+          params: paramsWithAuthorizedCompanyScope(body.params, companyId),
           renderEnvironment: body.renderEnvironment ?? null,
         },
       );
@@ -1400,7 +1408,7 @@ export function pluginRoutes(
       return;
     }
 
-    const companyId = assertPluginBridgeScope(req, body.companyId);
+    const companyId = assertPluginBridgeScope(req, pluginBridgeRequestCompanyId(body));
 
     try {
       const result = await bridgeDeps.workerManager.call(
@@ -1408,7 +1416,7 @@ export function pluginRoutes(
         "performAction",
         {
           key: body.key,
-          params: actionParamsWithAuthorizedCompanyScope(body.params, companyId),
+          params: paramsWithAuthorizedCompanyScope(body.params, companyId),
           actorContext: performActionActorContext(req, companyId),
           renderEnvironment: body.renderEnvironment ?? null,
         },
@@ -1494,7 +1502,7 @@ export function pluginRoutes(
       renderEnvironment?: PluginLauncherRenderContextSnapshot | null;
     } | undefined;
 
-    const companyId = assertPluginBridgeScope(req, body?.companyId);
+    const companyId = assertPluginBridgeScope(req, pluginBridgeRequestCompanyId(body));
 
     try {
       const result = await bridgeDeps.workerManager.call(
@@ -1503,7 +1511,7 @@ export function pluginRoutes(
         {
           key,
           ...(companyId ? { companyId } : {}),
-          params: body?.params ?? {},
+          params: paramsWithAuthorizedCompanyScope(body?.params, companyId),
           renderEnvironment: body?.renderEnvironment ?? null,
         },
       );
@@ -1584,7 +1592,7 @@ export function pluginRoutes(
       renderEnvironment?: PluginLauncherRenderContextSnapshot | null;
     } | undefined;
 
-    const companyId = assertPluginBridgeScope(req, body?.companyId);
+    const companyId = assertPluginBridgeScope(req, pluginBridgeRequestCompanyId(body));
 
     try {
       const result = await bridgeDeps.workerManager.call(
@@ -1592,7 +1600,7 @@ export function pluginRoutes(
         "performAction",
         {
           key,
-          params: actionParamsWithAuthorizedCompanyScope(body?.params, companyId),
+          params: paramsWithAuthorizedCompanyScope(body?.params, companyId),
           actorContext: performActionActorContext(req, companyId),
           renderEnvironment: body?.renderEnvironment ?? null,
         },

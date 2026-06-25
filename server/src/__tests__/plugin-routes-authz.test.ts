@@ -712,7 +712,29 @@ describe.sequential("plugin tool and bridge authz", () => {
     expect(call).toHaveBeenCalledWith(pluginId, "getData", {
       key: "health",
       companyId: companyA,
-      params: { view: "compact" },
+      params: { companyId: companyA, view: "compact" },
+      renderEnvironment: null,
+    });
+  });
+
+  it("derives bridge company scope from params.companyId when the bridge body omits companyId", async () => {
+    readyPlugin();
+    const call = vi.fn().mockResolvedValue({ ok: true });
+    const { app } = await createApp(boardActor(), {}, {
+      bridgeDeps: {
+        workerManager: { call },
+      },
+    });
+
+    const res = await request(app)
+      .post(`/api/plugins/${pluginId}/data/health`)
+      .send({ params: { companyId: companyA, view: "compact" } });
+
+    expect(res.status).toBe(200);
+    expect(call).toHaveBeenCalledWith(pluginId, "getData", {
+      key: "health",
+      companyId: companyA,
+      params: { companyId: companyA, view: "compact" },
       renderEnvironment: null,
     });
   });
