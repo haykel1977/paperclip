@@ -822,6 +822,7 @@ export async function startServer(): Promise<StartedServer> {
   }
 
   let drainHeartbeatRunsForShutdown: ((signal: "SIGINT" | "SIGTERM") => Promise<unknown>) | null = null;
+  let prepareHotRestartShutdown: ((signal: "SIGINT" | "SIGTERM") => Promise<{ skipDrain: boolean }>) | null = null;
   let heartbeatSchedulerStopped = false;
   let heartbeatSchedulerInterval: ReturnType<typeof setInterval> | null = null;
   const heartbeatSchedulerInFlight = new Set<Promise<void>>();
@@ -843,6 +844,7 @@ export async function startServer(): Promise<StartedServer> {
   if (config.heartbeatSchedulerEnabled) {
     const heartbeat = heartbeatService(db as any, { pluginWorkerManager });
     drainHeartbeatRunsForShutdown = heartbeat.drainRunningRunsForShutdown;
+    prepareHotRestartShutdown = heartbeat.prepareHotRestartShutdown;
     const environmentCustomImages = environmentCustomImageService(db as any, { pluginWorkerManager });
     const routines = routineService(db as any, { pluginWorkerManager });
     const tools = toolAccessService(db as any, {
@@ -873,6 +875,21 @@ export async function startServer(): Promise<StartedServer> {
       );
     } else {
       const startupHeartbeatRecovery = (async () => {
+        try {
+          const hotRestart = await heartbeat.reconcileHotRestartAdoption();
+          if (hotRestart.mode === "reported") {
+            logger.info(
+              hotRestart,
+              "startup hot-restart adoption reconciliation complete",
+            );
+          }
+        } catch (err) {
+          logger.error(
+            { err },
+            "startup hot-restart adoption reconciliation failed - orphan reaper will serve as degraded backstop",
+          );
+        }
+
         for (let attempt = 1; attempt <= 2; attempt++) {
           try {
             const result = await heartbeat.reapOrphanedRuns();
@@ -1194,7 +1211,20 @@ export async function startServer(): Promise<StartedServer> {
         await telemetryClient.flush();
       }
 
-      if (drainHeartbeatRunsForShutdown) {
+      let skipHeartbeatDrain = false;
+      if (prepareHotRestartShutdown) {
+        try {
+          const hotRestart = await prepareHotRestartShutdown(signal);
+          skipHeartbeatDrain = hotRestart.skipDrain;
+          if (skipHeartbeatDrain) {
+            logger.info({ signal, hotRestart }, "hot-restart shutdown prepared; skipping graceful heartbeat run drain");
+          }
+        } catch (err) {
+          logger.error({ err, signal }, "hot-restart shutdown preparation failed; falling back to graceful heartbeat run drain");
+        }
+      }
+
+      if (!skipHeartbeatDrain && drainHeartbeatRunsForShutdown) {
         try {
           const drain = await drainHeartbeatRunsForShutdown(signal);
           logger.info({ signal, drain }, "graceful heartbeat run drain complete");
