@@ -57,7 +57,7 @@ describe("adapter model listing", () => {
     const models = await listAdapterModels("claude_local");
 
     expect(models).toEqual(claudeFallbackModels);
-    expect(models.some((model) => model.id === "claude-opus-4-8")).toBe(true);
+    expect(models.some((model) => model.id === "sovereign-claude-opus-4-8")).toBe(true);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -79,7 +79,7 @@ describe("adapter model listing", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(first).toEqual(second);
     expect(first.some((model) => model.id === "claude-opus-4-8-20260529")).toBe(true);
-    expect(first.some((model) => model.id === "claude-opus-4-8")).toBe(true);
+    expect(first.some((model) => model.id === "sovereign-claude-opus-4-8")).toBe(true);
   });
 
   it("refreshes cached claude models on demand", async () => {

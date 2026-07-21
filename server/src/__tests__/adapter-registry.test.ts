@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { buildSandboxNpmInstallCommand } from "@paperclipai/adapter-utils";
 import type { ServerAdapterModule } from "../adapters/index.js";
 
