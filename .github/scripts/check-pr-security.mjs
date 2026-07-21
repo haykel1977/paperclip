@@ -160,11 +160,15 @@ export async function validateSensitivePaths(token, repo, prNumber, baseRef, fet
   const resolvedBaseRef = await resolveBaseRef(fetchFromGitHub, token, repo, prNumber, baseRef);
   const stale = [];
   await Promise.all(SENSITIVE_PATHS.map(async (path) => {
+    const normalizedPath = path.replace(/\/+$/, '');
     try {
-      await fetchFromGitHub(buildContentsPath(repo, path, resolvedBaseRef), token);
+      await fetchFromGitHub(buildContentsPath(repo, normalizedPath, resolvedBaseRef), token);
     } catch (err) {
+      const statusCode = typeof err?.statusCode === 'number'
+        ? err.statusCode
+        : Number.parseInt(String(err?.message ?? '').match(/\b([45]\d\d)\b/)?.[1] ?? '', 10);
       // 404 means the file/directory no longer exists at this path
-      if (err.statusCode === 404) stale.push(path);
+      if (statusCode === 404) stale.push(path);
       // Other errors (network, rate limit) — re-throw so we don't silently miss them
       else throw err;
     }
