@@ -291,13 +291,27 @@ function labelNames(pr) {
  * is green). This makes the neutral/skipped fail-closed logic LIVE in
  * production without preventing native auto-merge from being enabled early.
  */
+function checkRunRecency(run) {
+  // Order by the most meaningful timestamp available. The GitHub check-runs list
+  // order is NOT contractually newest-first, so we must sort explicitly — a
+  // stale `success` must never mask a newer `neutral`/`skipped`/`failure`.
+  const ts = run?.completed_at ?? run?.started_at ?? run?.created_at ?? null;
+  const parsed = ts ? Date.parse(ts) : NaN;
+  return Number.isFinite(parsed) ? parsed : -Infinity;
+}
+
 export function buildRequiredEvidence(checkRuns, requiredCheckNames) {
   const required = new Set(requiredCheckNames);
   const latestByName = new Map();
   for (const run of Array.isArray(checkRuns) ? checkRuns : []) {
     const name = String(run?.name ?? '').trim();
     if (!required.has(name)) continue;
-    if (!latestByName.has(name)) latestByName.set(name, run); // API returns newest first
+    const current = latestByName.get(name);
+    // Keep the most recent run per name by explicit timestamp comparison rather
+    // than trusting response order. Ties keep the earlier-seen run.
+    if (!current || checkRunRecency(run) > checkRunRecency(current)) {
+      latestByName.set(name, run);
+    }
   }
   const evidence = [];
   const requiredEvidenceNames = [];
@@ -414,15 +428,22 @@ async function main() {
 
   // The event payload's head SHA (captured when the workflow was triggered) is
   // an INDEPENDENT source from the freshly re-read pr.head.sha. If they differ,
-  // the PR advanced mid-run and the classification is stale → RED. Falls back to
-  // the API SHA only when the workflow did not supply EVENT_HEAD_SHA.
-  const eventHeadSha = process.env.EVENT_HEAD_SHA || pr?.head?.sha || '';
+  // the PR advanced mid-run and the classification is stale → RED. We do NOT
+  // fall back to the API SHA: a missing/empty EVENT_HEAD_SHA would make the
+  // stale-SHA guard compare the API SHA against itself (always equal), silently
+  // disabling the entire mid-run-advance defense. Absent the independent source
+  // we fail closed to RED instead.
+  const eventHeadSha = String(process.env.EVENT_HEAD_SHA ?? '').trim();
 
   // Fetch the file list and head-SHA check-runs. Any failure here fails closed:
   // we never enable auto-merge on an unclassifiable PR.
   let files = [];
   let checkRuns = [];
   let classificationError = false;
+  if (!eventHeadSha) {
+    classificationError = true;
+    console.log('::warning::[automerge] EVENT_HEAD_SHA missing/empty; the independent stale-SHA source is unavailable, failing closed to RED.');
+  }
   try {
     files = await fetchAllPullRequestFiles(ghFetch, GH_REPO, prNumber, GH_TOKEN);
     checkRuns = await fetchCheckRuns(ghFetch, GH_REPO, pr?.head?.sha, GH_TOKEN);

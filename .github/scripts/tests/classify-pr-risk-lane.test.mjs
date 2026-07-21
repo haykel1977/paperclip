@@ -5,6 +5,9 @@ import {
   evaluateEvidence,
   matchRedPaths,
   isDependencyManifestOnly,
+  resolveNumstatNewPath,
+  parseNameStatusOutput,
+  parseNumstatOutput,
   LANES,
   MAX_GREEN_CHANGED_LINES,
   MAX_GREEN_CHANGED_FILES,
@@ -95,10 +98,18 @@ test('RED: infrastructure/release/production changes', () => {
 });
 
 test('RED: dependency manifests and lockfiles', () => {
-  for (const path of ['package.json', 'server/package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc', 'yarn.lock']) {
+  for (const path of ['package.json', 'server/package.json', 'pnpm-lock.yaml', 'yarn.lock']) {
     const result = classifyPrRiskLane(basePr({ files: [file(path)] }));
     assert.equal(result.lane, LANES.RED, `expected RED for ${path}`);
     assert.ok(result.reasons.some(r => r.includes('dependency manifest/lockfile')));
+  }
+});
+
+test('RED: install-hook/registry configs are RED under their own non-exemptable label', () => {
+  for (const path of ['pnpm-workspace.yaml', '.npmrc', 'pnpmfile.cjs']) {
+    const result = classifyPrRiskLane(basePr({ files: [file(path)] }));
+    assert.equal(result.lane, LANES.RED, `expected RED for ${path}`);
+    assert.ok(result.reasons.some(r => r.includes('install-hook/registry')));
   }
 });
 
@@ -356,4 +367,113 @@ test('evaluateEvidence: undefined evidence is all missing (fail closed)', () => 
   const result = evaluateEvidence(undefined, ['verify']);
   assert.deepEqual(result.missing, ['verify']);
   assert.equal(result.allPassing, false);
+});
+
+// ── Exemption subset: install-hook / registry configs stay RED ────────────────
+
+test('RED: .npmrc and pnpmfile.* are RED even when the exemption label is applied', () => {
+  for (const path of ['.npmrc', 'server/.npmrc', 'pnpmfile.cjs', 'pnpmfile.js', 'pnpmfile.mjs', 'packages/x/pnpmfile.cjs', 'pnpm-workspace.yaml']) {
+    const result = classifyPrRiskLane(basePr({
+      author: 'dependabot[bot]',
+      files: [file(path)],
+      exemptRedPathLabels: [DEPENDENCY_MANIFEST_LABEL],
+    }));
+    assert.equal(result.lane, LANES.RED, `expected RED for ${path} despite exemption`);
+    assert.ok(
+      result.reasons.some(r => r.includes('install-hook/registry')),
+      `expected install-hook/registry reason for ${path}`,
+    );
+  }
+});
+
+test('isDependencyManifestOnly: install-hook/registry configs are NOT manifest-only', () => {
+  assert.equal(isDependencyManifestOnly([file('.npmrc')]), false);
+  assert.equal(isDependencyManifestOnly([file('pnpmfile.cjs')]), false);
+  assert.equal(isDependencyManifestOnly([file('pnpm-workspace.yaml')]), false);
+  assert.equal(isDependencyManifestOnly([file('pnpm-lock.yaml'), file('.npmrc')]), false);
+});
+
+test('exemption does NOT rescue a pnpmfile/.npmrc even for a lockfile-only-looking diff', () => {
+  // A dependency-automation actor editing pnpmfile.cjs must not reach GREEN: the
+  // exemption label only waives the lockfile/package.json label, and pnpmfile
+  // carries the distinct non-exemptable install-hook label.
+  const result = classifyPrRiskLane(basePr({
+    author: 'dependabot[bot]',
+    files: [file('pnpm-lock.yaml'), file('pnpmfile.cjs')],
+    exemptRedPathLabels: [DEPENDENCY_MANIFEST_LABEL],
+  }));
+  assert.equal(result.lane, LANES.RED);
+});
+
+// ── camelCase / PascalCase auth vocabulary (future-facing) ───────────────────
+
+test('RED: camelCase/PascalCase authorization file names classify RED', () => {
+  const authzPaths = [
+    'server/src/authMiddleware.ts',
+    'server/src/AuthGuard.ts',
+    'server/src/authorizationService.ts',
+    'server/src/permissionsService.ts',
+    'ui/src/PermissionChecker.tsx',
+    'ui/src/AccessControl.tsx',
+    'server/src/oauthProvider.ts',
+    'server/src/agent.permissions.ts',
+  ];
+  for (const path of authzPaths) {
+    const result = classifyPrRiskLane(basePr({ files: [file(path)] }));
+    assert.equal(result.lane, LANES.RED, `expected RED for ${path}`);
+    assert.ok(result.reasons.some(r => r.includes('auth/authz')), `expected auth/authz reason for ${path}`);
+  }
+});
+
+test('GREEN: camelCase look-alikes are not false-positived', () => {
+  for (const path of [
+    'ui/src/components/Accessibility.tsx',
+    'server/src/services/data-access.ts',
+    'server/src/lib/grantham.ts',
+    'server/src/models/author.ts',
+    'ui/src/components/AuthorCard.tsx',
+  ]) {
+    const result = classifyPrRiskLane(basePr({ files: [file(path)] }));
+    assert.equal(result.lane, LANES.GREEN, `expected GREEN (no false positive) for ${path}`);
+  }
+});
+
+// ── CLI rename/diff parsers (brace + subdirectory reconstruction) ────────────
+
+test('resolveNumstatNewPath: reconstructs brace-form renames with prefix/suffix', () => {
+  assert.equal(resolveNumstatNewPath('.github/workflows/{old.yml => new.yml}'), '.github/workflows/new.yml');
+  assert.equal(resolveNumstatNewPath('server/src/{routes => svc}/authz.ts'), 'server/src/svc/authz.ts');
+  assert.equal(resolveNumstatNewPath('{old => new}/file.ts'), 'new/file.ts');
+  assert.equal(resolveNumstatNewPath('old/path.ts => new/path.ts'), 'new/path.ts');
+  assert.equal(resolveNumstatNewPath('server/src/plain.ts'), 'server/src/plain.ts');
+});
+
+test('parseNumstatOutput: subdirectory brace rename keeps its directory prefix (no matcher evasion)', () => {
+  const counts = parseNumstatOutput('3\t1\tserver/src/{routes => svc}/authz.ts\n0\t0\t.github/workflows/{a.yml => b.yml}');
+  assert.deepEqual([...counts.keys()], ['server/src/svc/authz.ts', '.github/workflows/b.yml']);
+  assert.deepEqual(counts.get('server/src/svc/authz.ts'), { additions: 3, deletions: 1 });
+});
+
+test('parseNumstatOutput: binary files resolve to zero counts', () => {
+  const counts = parseNumstatOutput('-\t-\tassets/logo.png');
+  assert.deepEqual(counts.get('assets/logo.png'), { additions: 0, deletions: 0 });
+});
+
+test('parseNameStatusOutput: renames expose previous_filename (rename source is judged sacred)', () => {
+  const files = parseNameStatusOutput('R096\tserver/src/routes/authz.ts\tserver/src/services/notes.ts\nM\tserver/src/app.ts\nD\tpnpm-lock.yaml\nA\tserver/src/new.ts');
+  assert.deepEqual(files, [
+    { filename: 'server/src/services/notes.ts', status: 'renamed', previous_filename: 'server/src/routes/authz.ts' },
+    { filename: 'server/src/app.ts', status: 'modified' },
+    { filename: 'pnpm-lock.yaml', status: 'removed' },
+    { filename: 'server/src/new.ts', status: 'added' },
+  ]);
+});
+
+test('RED: a brace/subdirectory rename INTO .github is still caught (matcher not evaded)', () => {
+  // The classifier receives the resolved name-status list, so a numstat brace
+  // form can no longer strip the .github/ prefix and slip to GREEN.
+  const files = parseNameStatusOutput('R100\tdocs/old.md\t.github/workflows/deploy.yml');
+  const withCounts = files.map(f => ({ ...f, additions: 1, deletions: 0, changes: 1 }));
+  const result = classifyPrRiskLane(basePr({ files: withCounts }));
+  assert.equal(result.lane, LANES.RED);
 });

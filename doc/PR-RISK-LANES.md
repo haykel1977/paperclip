@@ -36,7 +36,11 @@ Any active changed file matching any of these makes the PR RED:
 - infrastructure / release / production (`Dockerfile*`, `docker/**`, `releases/**`,
   `scripts/release*`, `*.tf`, `k8s`/`helm`/`terraform`/`deploy`)
 - dependency manifests / lockfiles (`package.json`, `pnpm-lock.yaml`,
-  `pnpm-workspace.yaml`, `.npmrc`, `yarn.lock`, `pnpmfile.*`)
+  `yarn.lock`, `package-lock.json`) — the *exemptable* declarative subset
+- dependency install-hook / registry / workspace config (`.npmrc`,
+  `pnpmfile.*`, `pnpm-workspace.yaml`) — **never exemptable**: `pnpmfile.*`
+  runs arbitrary code at install time (RCE-class), `.npmrc` can repoint the
+  registry (supply-chain), and `pnpm-workspace.yaml` changes package topology
 - excessive diff size
 
 ## Fail-closed conditions (resolve to RED)
@@ -82,12 +86,16 @@ Requiring a human for every lockfile bump would silently disable the
 inherently touch dependency manifests (a RED surface). Instead there is one
 narrow, verifiable carve-out: a PR authored by the lockfile-refresh automation
 (`github-actions[bot]` on `chore/refresh-lockfile`) or `dependabot[bot]` whose
-changed files are **exclusively** dependency manifests/lockfiles may treat that
-single surface as non-blocking. The exemption is keyed to
+changed files are **exclusively** declarative dependency manifests/lockfiles
+(`package.json`, `pnpm-lock.yaml`, `yarn.lock`, `package-lock.json`) may treat
+that single surface as non-blocking. The exemption is keyed to
 `isDependencyManifestOnly` (every changed path — including rename sources — must
-be a manifest); if such a PR also touches a workflow, auth file, migration, or
-any other sacred surface, the exemption evaporates and the PR is RED. All other
-guardrails (evidence, size, actor, labels, stale SHA) still apply.
+be an exemptable manifest); if such a PR also touches a workflow, auth file,
+migration, **an install-hook/registry config (`.npmrc`, `pnpmfile.*`,
+`pnpm-workspace.yaml`)**, or any other sacred surface, the exemption evaporates
+and the PR is RED. Those install-hook/registry files carry a distinct
+non-exemptable label, so even a dependency-automation actor cannot green-light
+them. All other guardrails (evidence, size, actor, labels, stale SHA) still apply.
 
 The CLI exits `0` only for GREEN, non-zero for ORANGE/RED, so any caller that
 treats the exit code as an auto-merge gate also fails closed.

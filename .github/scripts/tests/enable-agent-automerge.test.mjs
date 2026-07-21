@@ -184,6 +184,42 @@ test('buildRequiredEvidence: keeps the newest run per required check name', () =
   assert.deepEqual(evidence, [{ name: 'verify', conclusion: 'failure' }]);
 });
 
+test('buildRequiredEvidence: an older success does NOT mask a newer neutral (explicit timestamp sort)', () => {
+  // Supplied oldest-first — the OPPOSITE of the "newest first" assumption the
+  // old code trusted. A stale `success` must not win over the newer `neutral`.
+  const { evidence } = buildRequiredEvidence([
+    { name: 'verify', status: 'completed', conclusion: 'success', completed_at: '2026-01-01T00:00:00Z' },
+    { name: 'verify', status: 'completed', conclusion: 'neutral', completed_at: '2026-01-02T00:00:00Z' },
+  ], ['verify']);
+  assert.deepEqual(evidence, [{ name: 'verify', conclusion: 'neutral' }]);
+});
+
+test('buildRequiredEvidence: an older success does NOT mask a newer failure (explicit timestamp sort)', () => {
+  const { evidence } = buildRequiredEvidence([
+    { name: 'verify', status: 'completed', conclusion: 'success', started_at: '2026-01-01T00:00:00Z' },
+    { name: 'verify', status: 'completed', conclusion: 'failure', started_at: '2026-01-03T00:00:00Z' },
+  ], ['verify']);
+  assert.deepEqual(evidence, [{ name: 'verify', conclusion: 'failure' }]);
+});
+
+test('buildRequiredEvidence: falls back through completed_at → started_at → created_at for recency', () => {
+  const { evidence } = buildRequiredEvidence([
+    { name: 'verify', status: 'completed', conclusion: 'neutral', created_at: '2026-01-05T00:00:00Z' },
+    { name: 'verify', status: 'completed', conclusion: 'success', created_at: '2026-01-04T00:00:00Z' },
+  ], ['verify']);
+  assert.deepEqual(evidence, [{ name: 'verify', conclusion: 'neutral' }]);
+});
+
+test('planAutomerge: an older success check-run cannot mask a newer neutral (RED, skipped)', () => {
+  const result = plan({ checkRuns: [
+    { name: 'verify', status: 'completed', conclusion: 'success', completed_at: '2026-01-01T00:00:00Z' },
+    { name: 'verify', status: 'completed', conclusion: 'neutral', completed_at: '2026-01-02T00:00:00Z' },
+    { name: 'gitleaks', status: 'completed', conclusion: 'success', completed_at: '2026-01-02T00:00:00Z' },
+  ] });
+  assert.equal(result.riskLane, 'RED');
+  assert.equal(result.action, 'skip');
+});
+
 test('evaluateAutomergeEligibility: allows opted-in same-repo agent PRs with protected required checks', () => {
   const result = evaluateAutomergeEligibility(pr(), { branchProtection: protectedMain });
   assert.equal(result.eligible, true);
