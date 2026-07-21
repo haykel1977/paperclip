@@ -84,6 +84,28 @@ test('evaluateAutomergeEligibility: rejects PRs when branch protection does not 
   assert.ok(result.failures.some(failure => failure.includes('up to date')));
 });
 
+test('evaluateAutomergeEligibility: blocks non-GREEN risk lane when a lane is supplied', () => {
+  for (const lane of ['ORANGE', 'RED', 'unknown', '']) {
+    const result = evaluateAutomergeEligibility(pr(), { branchProtection: protectedMain, riskLane: lane });
+    assert.equal(result.eligible, false, `expected ineligible for lane ${lane}`);
+    assert.ok(result.failures.some(failure => failure.includes('not GREEN')));
+  }
+});
+
+test('evaluateAutomergeEligibility: allows GREEN risk lane', () => {
+  const result = evaluateAutomergeEligibility(pr(), { branchProtection: protectedMain, riskLane: 'GREEN' });
+  assert.equal(result.eligible, true);
+  assert.deepEqual(result.failures, []);
+});
+
+test('evaluateAutoMergeRevocation: revokes already-enabled auto-merge when the risk lane is no longer GREEN', () => {
+  const result = evaluateAutoMergeRevocation(pr({
+    auto_merge: { enabled_by: { login: 'paperclipai[bot]' } },
+  }), { branchProtection: protectedMain, riskLane: 'RED' });
+  assert.equal(result.revoke, true);
+  assert.ok(result.reasons.some(reason => reason.includes('not GREEN')));
+});
+
 test('evaluateAutomergeEligibility: allows lockfile automation branch without labels when branch protection is configured', () => {
   const result = evaluateAutomergeEligibility(pr({
     user: { login: 'github-actions[bot]' },

@@ -103,6 +103,12 @@ jobs:
       - name: Test complete security PR check suite
         run: node --test ./.github/scripts/tests/check-pr-security.test.mjs
 
+      - name: Test PR risk-lane classifier
+        run: node --test ./.github/scripts/tests/classify-pr-risk-lane.test.mjs
+
+      - name: Test agent auto-merge gate
+        run: node --test ./.github/scripts/tests/enable-agent-automerge.test.mjs
+
       - name: Validate release package manifest
         run: node ./scripts/release-package-map.mjs check
 

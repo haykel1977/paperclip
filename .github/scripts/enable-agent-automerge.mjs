@@ -11,6 +11,8 @@
 import { fileURLToPath } from 'node:url';
 import { ghFetch } from './get-bot-token.mjs';
 import { HARD_BLOCK_LABELS } from './check-pr-governance.mjs';
+import { fetchAllPullRequestFiles } from './fetch-pr-files.mjs';
+import { classifyPrRiskLane, LANES } from './classify-pr-risk-lane.mjs';
 
 export const AUTOMERGE_LABEL = 'automerge';
 export const AGENT_PR_LABEL = 'agent-pr';
@@ -157,6 +159,15 @@ export function evaluateAutomergeEligibility(pr, options = {}) {
     failures.push('Missing explicit auto-merge opt-in: require labels `agent-pr` + `automerge` (or approved lockfile/dependabot automation).');
   }
 
+  // Deterministic risk-lane gate: only GREEN PRs may auto-merge. When a lane is
+  // supplied it is enforced fail-closed; ORANGE/RED (and any non-GREEN value)
+  // block auto-merge. When no lane is supplied the classifier is not consulted,
+  // so callers that cannot classify (e.g. unit tests of the pure eligibility
+  // rules) keep their existing behavior.
+  if (options.riskLane !== undefined && options.riskLane !== LANES.GREEN) {
+    failures.push(`Risk lane is ${options.riskLane || 'unknown'}, not GREEN; auto-merge is limited to the GREEN lane.`);
+  }
+
   return {
     eligible: failures.length === 0,
     failures,
@@ -281,10 +292,33 @@ async function main() {
   const branch = pr?.base?.ref ?? defaultBranch;
   const requiredChecks = parseRequiredChecks(process.env.REQUIRED_CHECKS);
   const branchProtection = await fetchBranchProtection(ghFetch, GH_REPO, branch, GH_TOKEN);
+
+  // Deterministically classify the PR risk lane from metadata + file list.
+  // Required check-run evidence is intentionally delegated to branch protection
+  // (GitHub will not merge until required checks are green), so the lane gate
+  // here enforces the deterministic dimensions: sacred paths, diff size, actor,
+  // and label consistency. Any classification error fails closed to RED.
+  let riskLane = LANES.RED;
+  try {
+    const files = await fetchAllPullRequestFiles(ghFetch, GH_REPO, prNumber, GH_TOKEN);
+    riskLane = classifyPrRiskLane({
+      title: pr?.title ?? '',
+      labels: (pr?.labels ?? []).map(label => (typeof label === 'string' ? label : label?.name)).filter(Boolean),
+      files,
+      author: authorLogin(pr),
+      headSha: pr?.head?.sha ?? '',
+      expectedHeadSha: pr?.head?.sha ?? '',
+      requiredEvidence: [],
+    }).lane;
+  } catch (error) {
+    console.log(`::warning::[automerge] risk-lane classification failed, failing closed to RED: ${error.message}`);
+  }
+
   const options = {
     defaultBranch,
     branchProtection,
     requiredChecks,
+    riskLane,
   };
   const revocation = evaluateAutoMergeRevocation(pr, options);
   if (revocation.revoke) {
