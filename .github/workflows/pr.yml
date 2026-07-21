@@ -61,8 +61,38 @@ jobs:
       - name: Test issue-read route guard check
         run: node --test ./scripts/check-issue-read-route-guards.test.mjs
 
+      - name: Enforce company-scoped route guards
+        run: node ./scripts/check-company-route-guards.mjs
+
+      - name: Test company route guard check
+        run: node --test ./scripts/check-company-route-guards.test.mjs
+
+      - name: Enforce object-scoped company route guards
+        run: node ./scripts/check-object-route-company-guards.mjs
+
+      - name: Test object-scoped company route guard check
+        run: node --test ./scripts/check-object-route-company-guards.test.mjs
+
+      - name: Enforce heartbeat-run route guards
+        run: node ./scripts/check-heartbeat-run-route-guards.mjs
+
+      - name: Test heartbeat-run route guard check
+        run: node --test ./scripts/check-heartbeat-run-route-guards.test.mjs
+
+      - name: Enforce Docker pinned tools
+        run: node ./scripts/check-docker-pinned-tools.mjs
+
       - name: Test Docker pinned-tools check
         run: node --test ./scripts/check-docker-pinned-tools.test.mjs
+
+      - name: Check root artifacts
+        run: node ./scripts/check-root-artifacts.mjs
+
+      - name: Test root artifacts check
+        run: node --test ./scripts/check-root-artifacts.test.mjs
+
+      - name: Enforce pnpm build allowlist
+        run: node ./scripts/check-pnpm-build-allowlist.mjs
 
       - name: Test pnpm build allowlist check
         run: node --test ./scripts/check-pnpm-build-allowlist.test.mjs
