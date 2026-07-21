@@ -63,12 +63,43 @@ function isPinnedNodeImage(image) {
 export function findFloatingDockerBaseImages(text) {
   const offenses = [];
   const lines = text.split("\n");
+  // Single-pass: aliases are registered only when their FROM ... AS <name>
+  // line is processed. A FROM referencing a name not yet defined is an
+  // external image reference and must be pinned.
+  const definedAliases = new Set();
+
   for (let index = 0; index < lines.length; index += 1) {
-    const image = parseFromImage(lines[index]);
+    const stripped = stripDockerfileInlineComment(lines[index]).trim();
+    // Parse the FROM tokens
+    const tokens = stripped.split(/\s+/);
+    if (tokens[0]?.toUpperCase() !== "FROM") continue;
+
+    // Skip platform flags (--platform=...)
+    let imageIndex = 1;
+    while (tokens[imageIndex]?.startsWith("--")) imageIndex += 1;
+
+    const image = tokens[imageIndex];
     if (!image) continue;
+
+    // Check for AS <alias>
+    const asIndex = tokens.findIndex((t, i) => i > imageIndex && t.toUpperCase() === "AS");
+    const alias = asIndex > 0 ? tokens[asIndex + 1] : null;
+
+    // If the image is a previously defined stage alias, it's an internal
+    // multi-stage reference — not an external image.
+    if (definedAliases.has(image)) {
+      // Register alias for this stage too if present
+      if (alias) definedAliases.add(alias);
+      continue;
+    }
+
+    // External image: must be pinned
     if (!isPinnedNodeImage(image)) {
       offenses.push({ lineNumber: index + 1, image, line: lines[index].trim() });
     }
+
+    // Register alias AFTER processing (forward references remain unresolved)
+    if (alias) definedAliases.add(alias);
   }
   return offenses;
 }

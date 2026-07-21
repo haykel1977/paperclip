@@ -61,6 +61,15 @@ jobs:
       - name: Test issue-read route guard check
         run: node --test ./scripts/check-issue-read-route-guards.test.mjs
 
+      - name: Test Docker pinned-tools check
+        run: node --test ./scripts/check-docker-pinned-tools.test.mjs
+
+      - name: Test pnpm build allowlist check
+        run: node --test ./scripts/check-pnpm-build-allowlist.test.mjs
+
+      - name: Test security PR check helpers
+        run: node --test ./.github/scripts/check-pr-security.test.mjs
+
       - name: Validate release package manifest
         run: node ./scripts/release-package-map.mjs check
 

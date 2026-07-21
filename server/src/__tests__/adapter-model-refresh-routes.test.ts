@@ -174,7 +174,7 @@ describe("adapter model refresh route", () => {
     mockEnvironmentService.getById.mockReset();
     mockEnvironmentService.getById.mockResolvedValue(null);
     mockListOpenCodeModels.mockReset();
-    mockListOpenCodeModels.mockResolvedValue([{ id: "dynamic-opencode-model", label: "dynamic-opencode-model" }]);
+    mockListOpenCodeModels.mockResolvedValue([{ id: "sovereign-dynamic-opencode-model", label: "sovereign-dynamic-opencode-model" }]);
     await unregisterTestAdapter(refreshableAdapterType);
   });
 
@@ -183,8 +183,8 @@ describe("adapter model refresh route", () => {
   });
 
   it("uses refreshModels when refresh=1 is requested", async () => {
-    const listModels = vi.fn(async () => [{ id: "stale-model", label: "stale-model" }]);
-    const refreshModels = vi.fn(async () => [{ id: "fresh-model", label: "fresh-model" }]);
+    const listModels = vi.fn(async () => [{ id: "sovereign-stale-model", label: "sovereign-stale-model" }]);
+    const refreshModels = vi.fn(async () => [{ id: "sovereign-fresh-model", label: "sovereign-fresh-model" }]);
     const { registerServerAdapter } = await import("../adapters/index.js");
     const adapter: ServerAdapterModule = {
       type: refreshableAdapterType,
@@ -206,7 +206,7 @@ describe("adapter model refresh route", () => {
     );
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(res.body).toEqual([{ id: "fresh-model", label: "fresh-model" }]);
+    expect(res.body).toEqual([{ id: "sovereign-fresh-model", label: "sovereign-fresh-model" }]);
     expect(refreshModels).toHaveBeenCalledTimes(1);
     expect(listModels).not.toHaveBeenCalled();
   });
@@ -245,7 +245,7 @@ describe("adapter model refresh route", () => {
     );
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(res.body).toEqual([{ id: "dynamic-opencode-model", label: "dynamic-opencode-model" }]);
+    expect(res.body).toEqual([{ id: "sovereign-dynamic-opencode-model", label: "sovereign-dynamic-opencode-model" }]);
     expect(mockListOpenCodeModels).toHaveBeenCalledTimes(1);
   });
 });
