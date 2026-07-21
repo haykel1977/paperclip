@@ -4,10 +4,12 @@ import {
   classifyPrRiskLane,
   evaluateEvidence,
   matchRedPaths,
+  isDependencyManifestOnly,
   LANES,
   MAX_GREEN_CHANGED_LINES,
   MAX_GREEN_CHANGED_FILES,
   DEFAULT_REQUIRED_EVIDENCE,
+  DEPENDENCY_MANIFEST_LABEL,
 } from '../classify-pr-risk-lane.mjs';
 import { MAX_CHANGED_FILES, MAX_CHANGED_LINES } from '../check-pr-governance.mjs';
 
@@ -234,10 +236,110 @@ test('RED wins when a large diff also touches a sacred surface', () => {
   assert.equal(result.lane, LANES.RED);
 });
 
+// ── RED: deleting a sacred surface (fail-open hole the review caught) ─────────
+
+test('RED: deleting a sacred surface reaches RED, never GREEN', () => {
+  const deletions = [
+    '.github/workflows/secret-scan.yml',
+    '.github/CODEOWNERS',
+    '.gitleaks.toml',
+    'server/src/routes/authz.ts',
+    'packages/shared/src/validators/access.ts',
+    'packages/db/migrations/0007_add_column.sql',
+    'pnpm-lock.yaml',
+  ];
+  for (const path of deletions) {
+    const result = classifyPrRiskLane(basePr({
+      files: [file(path, { status: 'removed', additions: 0, deletions: 20, changes: 20 })],
+    }));
+    assert.equal(result.lane, LANES.RED, `expected RED for deletion of ${path}`);
+  }
+});
+
+test('RED: renaming a sacred file out of a matched path stays RED', () => {
+  const result = classifyPrRiskLane(basePr({
+    files: [file('docs/notes.md', {
+      status: 'renamed',
+      previous_filename: '.github/workflows/deploy.yml',
+      additions: 1,
+      changes: 1,
+    })],
+  }));
+  assert.equal(result.lane, LANES.RED);
+});
+
+// ── RED: broadened auth/authz vocabulary against the repo's real paths ────────
+
+test('RED: repo-realistic authorization surfaces classify RED', () => {
+  const authzPaths = [
+    'packages/adapters/claude-local/src/server/permissions.ts',
+    'server/src/services/access.ts',
+    'packages/shared/src/validators/access.ts',
+    'packages/shared/src/types/access.ts',
+    'packages/db/src/schema/principal_permission_grants.ts',
+    'server/src/services/agent-permissions.ts',
+    'server/src/services/invite-grants.ts',
+    'cli/src/client/board-auth.ts',
+  ];
+  for (const path of authzPaths) {
+    const result = classifyPrRiskLane(basePr({ files: [file(path)] }));
+    assert.equal(result.lane, LANES.RED, `expected RED for ${path}`);
+    assert.ok(result.reasons.some(r => r.includes('auth/authz')), `expected auth/authz reason for ${path}`);
+  }
+});
+
+test('GREEN: authz-adjacent names are not false-positived', () => {
+  for (const path of [
+    'ui/src/components/Accessibility.tsx',
+    'server/src/services/data-access.ts',
+    'server/src/lib/grantham.ts',
+  ]) {
+    const result = classifyPrRiskLane(basePr({ files: [file(path)] }));
+    assert.equal(result.lane, LANES.GREEN, `expected GREEN (no false positive) for ${path}`);
+  }
+});
+
+// ── Dependency-manifest exemption (bounded, verifiable) ───────────────────────
+
+test('isDependencyManifestOnly: true only when every path is a manifest', () => {
+  assert.equal(isDependencyManifestOnly([file('pnpm-lock.yaml'), file('server/package.json')]), true);
+  assert.equal(isDependencyManifestOnly([file('pnpm-lock.yaml'), file('.github/workflows/pr.yml')]), false);
+  assert.equal(isDependencyManifestOnly([]), false);
+});
+
+test('dependency exemption: manifest-only diff can reach GREEN when exempted', () => {
+  const result = classifyPrRiskLane(basePr({
+    author: 'dependabot[bot]',
+    files: [file('pnpm-lock.yaml'), file('package.json')],
+    exemptRedPathLabels: [DEPENDENCY_MANIFEST_LABEL],
+  }));
+  assert.equal(result.lane, LANES.GREEN);
+});
+
+test('dependency exemption does NOT rescue a diff that also touches another sacred surface', () => {
+  const result = classifyPrRiskLane(basePr({
+    author: 'dependabot[bot]',
+    files: [file('pnpm-lock.yaml'), file('.github/workflows/pr.yml')],
+    exemptRedPathLabels: [DEPENDENCY_MANIFEST_LABEL],
+  }));
+  assert.equal(result.lane, LANES.RED);
+});
+
 // ── Unit helpers ─────────────────────────────────────────────────────────────
 
-test('matchRedPaths ignores removed files', () => {
-  assert.deepEqual(matchRedPaths([file('package.json', { status: 'removed' })]), []);
+test('matchRedPaths catches removed sacred files (deletion is high-blast-radius)', () => {
+  const hits = matchRedPaths([file('package.json', { status: 'removed' })]);
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].label, DEPENDENCY_MANIFEST_LABEL);
+});
+
+test('matchRedPaths judges the rename source (previous_filename), not just the new path', () => {
+  // Renaming a sacred file to an innocuous path must still be RED.
+  const hits = matchRedPaths([
+    file('server/src/services/notes.ts', { status: 'renamed', previous_filename: 'server/src/routes/authz.ts' }),
+  ]);
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].label, 'auth/authz');
 });
 
 test('evaluateEvidence flags missing and non-passing separately', () => {

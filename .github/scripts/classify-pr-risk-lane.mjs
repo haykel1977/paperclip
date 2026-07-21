@@ -71,7 +71,9 @@ export const LANE_HINT_LABELS = Object.freeze({
 export const AUTOMERGE_LABEL = 'automerge';
 
 // RED path matchers. Each entry documents the sacred/high-blast-radius surface
-// it guards. Any active (non-removed) changed file matching any matcher is RED.
+// it guards. Any changed file matching any matcher is RED — including deletions
+// (removing a guardrail is itself high-blast-radius) and rename sources (the
+// pre-rename path must still be judged sacred).
 export const RED_PATH_MATCHERS = Object.freeze([
   // .github/** — workflows, actions, governance config, issue/PR templates.
   { label: 'CI/workflow or .github governance', re: /^\.github\// },
@@ -80,10 +82,16 @@ export const RED_PATH_MATCHERS = Object.freeze([
   // Governance / checker code (the gate must not silently rewrite itself).
   { label: 'governance/checker code', re: /(^|\/)scripts\/check-[^/]+\.mjs$/ },
   { label: 'governance/checker code', re: /(^|\/)scripts\/(release-package-map|run-quality-gates)[^/]*\.mjs$/ },
-  // Auth / authz surfaces.
-  { label: 'auth/authz', re: /(^|\/)(auth|authz|authn|authorization|authentication)[^/]*\.(ts|tsx|js|mjs|cjs)$/i },
-  { label: 'auth/authz', re: /(^|\/)(auth|authz)\// },
-  { label: 'auth/authz', re: /workspace-command-authz\.ts$/ },
+  // Auth / authz / authn surfaces. The repo names its authorization code with
+  // `permission(s)`, `access`, `principal`, `grant`, etc. — not just `auth` —
+  // so the matchers cover that real vocabulary. Tokens must sit on a
+  // separator boundary (`/ _ - . ` or start/end) so `accessibility`,
+  // `data-access`, `author`, `oauth`, and `grantham` do not false-positive.
+  { label: 'auth/authz', re: /(^|[/_-])(auth|authz|authn|authorization|authentication|permissions?|rbac|principal|grants?)(?=[/_.-]|$)/i },
+  // `access` is generic, so only match it at a path-segment start (after `/`).
+  { label: 'auth/authz', re: /(^|\/)access(?=[/_.-]|$)/i },
+  // A whole directory named auth/authz/authn.
+  { label: 'auth/authz', re: /(^|\/)(auth|authz|authn)\// },
   // Secrets / credential material.
   { label: 'secrets', re: /(^|\/)\.env(\.[^/]+)?$/ },
   { label: 'secrets', re: /(^|\/)\.gitleaks\.toml$/ },
@@ -109,7 +117,28 @@ export const RED_PATH_MATCHERS = Object.freeze([
   { label: 'dependency manifest/lockfile', re: /(^|\/)pnpmfile\.(c|m)?js$/ },
 ]);
 
+// Label used by the dependency-manifest/lockfile RED matchers. Callers may
+// exempt exactly this surface (and nothing else) for a bounded, verifiable
+// dependency-automation carve-out — see isDependencyManifestOnly.
+export const DEPENDENCY_MANIFEST_LABEL = 'dependency manifest/lockfile';
+
 const SHA_RE = /^[0-9a-f]{40}$/i;
+
+/**
+ * True only when EVERY changed path (current filename AND any rename source)
+ * is a dependency manifest/lockfile. This is the precondition for the bounded
+ * dependency-automation exemption: if a PR also touches a workflow, auth file,
+ * migration, etc., this returns false and the exemption cannot apply.
+ */
+export function isDependencyManifestOnly(files) {
+  if (!Array.isArray(files) || files.length === 0) return false;
+  const isDepPath = path =>
+    RED_PATH_MATCHERS.some(m => m.label === DEPENDENCY_MANIFEST_LABEL && m.re.test(path));
+  return files.every(file => {
+    const paths = [file.filename, file.previous_filename].filter(Boolean).map(normalizePath);
+    return paths.length > 0 && paths.every(isDepPath);
+  });
+}
 
 function normalizeLabel(label) {
   return String(label ?? '').trim().toLowerCase();
@@ -126,20 +155,29 @@ function changedLineCount(file) {
   return changes || additions + deletions;
 }
 
-function activeFiles(files) {
-  return files.filter(file => file.status !== 'removed');
-}
-
-export function matchRedPaths(files) {
+export function matchRedPaths(files, exemptRedPathLabels = []) {
+  const exempt = new Set(exemptRedPathLabels);
   const hits = [];
-  for (const file of activeFiles(files)) {
-    const path = normalizePath(file.filename);
-    for (const matcher of RED_PATH_MATCHERS) {
-      if (matcher.re.test(path)) {
-        hits.push({ file: path, label: matcher.label });
-        break;
+  for (const file of files) {
+    // Evaluate every path the change touches: the current filename AND the
+    // rename source (previous_filename). Deletions are NOT excluded — deleting
+    // a sacred surface is the high-blast-radius change we must catch. Fail-open
+    // holes here would let a PR reach GREEN by *removing* a guardrail.
+    const candidatePaths = [file.filename, file.previous_filename]
+      .filter(Boolean)
+      .map(normalizePath);
+    let matched = null;
+    for (const path of candidatePaths) {
+      for (const matcher of RED_PATH_MATCHERS) {
+        if (exempt.has(matcher.label)) continue;
+        if (matcher.re.test(path)) {
+          matched = { file: path, label: matcher.label };
+          break;
+        }
       }
+      if (matched) break;
     }
+    if (matched) hits.push(matched);
   }
   return hits;
 }
@@ -183,6 +221,7 @@ export function classifyPrRiskLane({
   expectedHeadSha = '',
   evidence = [],
   requiredEvidence = DEFAULT_REQUIRED_EVIDENCE,
+  exemptRedPathLabels = [],
 } = {}) {
   const redReasons = [];
   const orangeReasons = [];
@@ -263,7 +302,7 @@ export function classifyPrRiskLane({
   }
 
   // ── RED path surfaces ────────────────────────────────────────────────────
-  const redPathHits = matchRedPaths(files);
+  const redPathHits = matchRedPaths(files, exemptRedPathLabels);
   if (redPathHits.length > 0) {
     const grouped = [...new Set(redPathHits.map(hit => hit.label))];
     redReasons.push(
@@ -331,13 +370,21 @@ function parseGitNumstat(baseSha, headSha) {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  const statusByPath = new Map();
+  // Track per-new-path metadata: status plus rename source. For a rename line
+  // (`R100\told\tnew`) the last column is the new path and the middle column is
+  // the pre-rename path, which must still be judged by the RED matchers.
+  const metaByPath = new Map();
   for (const line of statusOutput.split('\n')) {
     if (!line.trim()) continue;
     const columns = line.split('\t');
     const code = columns[0] ?? '';
     const filename = columns[columns.length - 1];
-    statusByPath.set(filename, code.startsWith('D') ? 'removed' : 'modified');
+    const previousFilename = code.startsWith('R') && columns.length >= 3 ? columns[1] : undefined;
+    let status = 'modified';
+    if (code.startsWith('D')) status = 'removed';
+    else if (code.startsWith('A')) status = 'added';
+    else if (code.startsWith('R')) status = 'renamed';
+    metaByPath.set(filename, { status, previousFilename });
   }
 
   const output = execFileSync('git', ['diff', '--numstat', '--find-renames', range], {
@@ -351,7 +398,11 @@ function parseGitNumstat(baseSha, headSha) {
     if (columns.length < 3) continue;
     const additions = Number.parseInt(columns[0], 10);
     const deletions = Number.parseInt(columns[1], 10);
-    const filename = columns[columns.length - 1];
+    // numstat rename format: `add\tdel\told => new` (or brace form). The
+    // name-status pass is the authority for the resolved new/old paths.
+    const rawPath = columns[columns.length - 1];
+    const filename = rawPath.includes(' => ') ? rawPath.replace(/.*=> /, '').replace(/[{}]/g, '') : rawPath;
+    const meta = metaByPath.get(filename) ?? metaByPath.get(rawPath) ?? { status: 'modified' };
     const safeAdditions = Number.isFinite(additions) ? additions : 0;
     const safeDeletions = Number.isFinite(deletions) ? deletions : 0;
     files.push({
@@ -359,7 +410,8 @@ function parseGitNumstat(baseSha, headSha) {
       additions: safeAdditions,
       deletions: safeDeletions,
       changes: safeAdditions + safeDeletions,
-      status: statusByPath.get(filename) ?? 'modified',
+      status: meta.status,
+      ...(meta.previousFilename ? { previous_filename: meta.previousFilename } : {}),
     });
   }
   return files;

@@ -56,10 +56,38 @@ The classifier picks the most restrictive lane when anything is uncertain:
 
 `.github/scripts/enable-agent-automerge.mjs` classifies the live PR and only
 enables GitHub native auto-merge when the lane is GREEN. Any classification
-error fails closed to RED. Required check-run evidence at merge time is still
-enforced by branch protection — the lane gate adds the deterministic
-path/size/actor/label guardrails *before* auto-merge is enabled. If a PR later
-loses GREEN status, the workflow reruns and disables native auto-merge.
+error (including a failed file-list or check-run fetch) fails closed to RED. If
+a PR later loses GREEN status, the workflow reruns and disables native
+auto-merge.
+
+The lane gate adds the deterministic path/size/actor/label guardrails *before*
+auto-merge is enabled, and additionally consumes real check-run evidence:
+
+- The head SHA's check-runs are fetched and matched against the required set
+  (`REQUIRED_CHECKS`, default `verify,gitleaks`). A **completed** required check
+  whose conclusion is `neutral`/`skipped`/`failure` fails closed to RED. A
+  required check that is still **pending** is not treated as evidence here — it
+  is left to branch protection, which will not merge until it is green. This
+  keeps the neutral/skipped fail-closed guarantee live in production without
+  preventing native auto-merge from being enabled early.
+- Stale-SHA detection compares two independent SHA sources: the workflow passes
+  the event payload's head SHA (`EVENT_HEAD_SHA`) while the script freshly
+  re-reads `pull.head.sha` from the API. If they differ the head advanced
+  mid-run and the classification is stale → RED.
+
+### Bounded dependency-automation exemption
+
+Requiring a human for every lockfile bump would silently disable the
+`chore/refresh-lockfile` automation and Dependabot auto-merge, since those PRs
+inherently touch dependency manifests (a RED surface). Instead there is one
+narrow, verifiable carve-out: a PR authored by the lockfile-refresh automation
+(`github-actions[bot]` on `chore/refresh-lockfile`) or `dependabot[bot]` whose
+changed files are **exclusively** dependency manifests/lockfiles may treat that
+single surface as non-blocking. The exemption is keyed to
+`isDependencyManifestOnly` (every changed path — including rename sources — must
+be a manifest); if such a PR also touches a workflow, auth file, migration, or
+any other sacred surface, the exemption evaporates and the PR is RED. All other
+guardrails (evidence, size, actor, labels, stale SHA) still apply.
 
 The CLI exits `0` only for GREEN, non-zero for ORANGE/RED, so any caller that
 treats the exit code as an auto-merge gate also fails closed.
@@ -80,6 +108,21 @@ treats the exit code as an auto-merge gate also fails closed.
     workflows, or forge its own passing check-runs;
   - **never** be used to lower required approving reviews to zero. Human review
     requirements set in branch protection stay in force.
+
+## Merge queue (`merge_group`) is out of scope
+
+This classifier is wired to `pull_request`/`pull_request_target` events only. It
+is **not** consulted in a GitHub merge-queue (`merge_group`) context, and the
+required checks in `commitperclip-review.yml`/`pr.yml` do not run on
+`merge_group`, so enabling a merge queue on this repo would stall. This is a
+pre-existing gap, not something this classifier introduces — and
+`evaluateBranchProtection` intentionally requires `strict: true` (branches must
+be up to date before merging), which is itself incompatible with a merge queue.
+Merge-queue support is therefore treated as **external / not implemented** in
+this lot. Adding it later would require: `merge_group` triggers on the review
+and required-check workflows, dropping the `strict: true` requirement, and a
+`merge_group`-aware classification entrypoint. Do not enable a merge queue until
+that work is done.
 
 ## What this does not do
 
