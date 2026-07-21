@@ -100,6 +100,9 @@ jobs:
       - name: Test security PR check helpers
         run: node --test ./.github/scripts/check-pr-security.test.mjs
 
+      - name: Test complete security PR check suite
+        run: node --test ./.github/scripts/tests/check-pr-security.test.mjs
+
       - name: Validate release package manifest
         run: node ./scripts/release-package-map.mjs check
 
