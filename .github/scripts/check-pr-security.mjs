@@ -342,16 +342,32 @@ async function main() {
 
   if (allFlags.length > 0) {
     console.error(`[security] ${allFlags.length} flag(s) detected — creating draft advisory and pending check run`);
-    await Promise.all([
-      syncDraftAdvisory(ghFetch, GH_TOKEN, GH_REPO, prNumber, pr.title, allFlags),
-      postSecurityCheckRun(ghFetch, GH_TOKEN, GH_REPO, pr.head.sha, true),
-    ]);
+    try {
+      await Promise.all([
+        syncDraftAdvisory(ghFetch, GH_TOKEN, GH_REPO, prNumber, pr.title, allFlags),
+        postSecurityCheckRun(ghFetch, GH_TOKEN, GH_REPO, pr.head.sha, true),
+      ]);
+    } catch (e) {
+      if (String(e.message).includes('403')) {
+        console.error('::error::[security] True vulnerabilities detected but token lacks permission to create security advisory (403). Action manuelle requise.');
+        process.exit(1);
+      }
+      throw e;
+    }
   } else {
     console.log('[security] all clear');
-    await postSecurityCheckRun(ghFetch, GH_TOKEN, GH_REPO, pr.head.sha, false);
+    try {
+      await postSecurityCheckRun(ghFetch, GH_TOKEN, GH_REPO, pr.head.sha, false);
+    } catch (e) {
+      if (String(e.message).includes('403')) {
+        console.log('::warning::[security] Token lacks permission (403), but no security flags detected.');
+      } else {
+        throw e;
+      }
+    }
   }
 
-  // Always exit 0 — security flags are silent, never block the PR publicly
+  // Always exit 0 — security flags are silent, never block the PR publicly (unless 403 blocks advisory creation)
   process.exit(0);
 }
 
