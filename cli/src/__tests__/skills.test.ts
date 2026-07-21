@@ -89,7 +89,7 @@ function agent(overrides: Record<string, unknown> = {}) {
     budgetMonthlyCents: 0,
     spentMonthlyCents: 0,
     adapterType: "codex_local",
-    adapterConfig: {},
+    adapterConfig: { model: "sovereign-test-codex" },
     runtimeConfig: {},
     permissions: {},
     createdAt: "2026-05-26T00:00:00.000Z",

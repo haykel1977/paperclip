@@ -87,7 +87,7 @@ describe("feedbackService.saveIssueVote", () => {
       role: "engineer",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: {},
+      adapterConfig: { model: "sovereign-test-codex" },
       runtimeConfig: {},
       permissions: {},
     });
@@ -291,7 +291,7 @@ describe("feedbackService.saveIssueVote", () => {
       role: "engineer",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: {},
+      adapterConfig: { model: "sovereign-test-codex" },
       runtimeConfig: {},
       permissions: {},
     });

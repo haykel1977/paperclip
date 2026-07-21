@@ -104,7 +104,7 @@ describe("codex remote execution", () => {
         companyId: "company-1",
         name: "CodexCoder",
         adapterType: "codex_local",
-        adapterConfig: {},
+        adapterConfig: { model: "sovereign-test-codex" },
       },
       runtime: {
         sessionId: null,
@@ -219,7 +219,7 @@ describe("codex remote execution", () => {
         companyId: "company-1",
         name: "CodexCoder",
         adapterType: "codex_local",
-        adapterConfig: {},
+        adapterConfig: { model: "sovereign-test-codex" },
       },
       runtime: {
         sessionId: "session-123",
@@ -283,7 +283,7 @@ describe("codex remote execution", () => {
         companyId: "company-1",
         name: "CodexCoder",
         adapterType: "codex_local",
-        adapterConfig: {},
+        adapterConfig: { model: "sovereign-test-codex" },
       },
       runtime: {
         sessionId: "session-123",
@@ -356,7 +356,7 @@ describe("codex remote execution", () => {
         companyId: "company-1",
         name: "CodexCoder",
         adapterType: "codex_local",
-        adapterConfig: {},
+        adapterConfig: { model: "sovereign-test-codex" },
       },
       runtime: {
         sessionId: "session-123",

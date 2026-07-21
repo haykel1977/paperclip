@@ -1635,7 +1635,7 @@ describe("company portability", () => {
         status: "idle",
         role: "ceo",
         adapterType: "claude_local",
-        adapterConfig: {},
+        adapterConfig: { model: "sovereign-test-claude" },
         runtimeConfig: {},
         budgetMonthlyCents: 0,
         permissions: {},
@@ -3615,12 +3615,12 @@ describe("company portability", () => {
       {
         id: "agent-a", name: "AgentA", status: "idle", role: "engineer", title: null, icon: null,
         reportsTo: "agent-b", capabilities: null, adapterType: "claude_local",
-        adapterConfig: {}, runtimeConfig: {}, budgetMonthlyCents: 0, permissions: {}, metadata: null,
+        adapterConfig: { model: "sovereign-test-claude" }, runtimeConfig: {}, budgetMonthlyCents: 0, permissions: {}, metadata: null,
       },
       {
         id: "agent-b", name: "AgentB", status: "idle", role: "manager", title: null, icon: null,
         reportsTo: "agent-a", capabilities: null, adapterType: "claude_local",
-        adapterConfig: {}, runtimeConfig: {}, budgetMonthlyCents: 0, permissions: {}, metadata: null,
+        adapterConfig: { model: "sovereign-test-claude" }, runtimeConfig: {}, budgetMonthlyCents: 0, permissions: {}, metadata: null,
       },
     ]);
     agentInstructionsSvc.exportFiles.mockResolvedValue({

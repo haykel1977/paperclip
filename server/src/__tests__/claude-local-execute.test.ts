@@ -595,7 +595,7 @@ describe("claude execute", () => {
           companyId: "company-1",
           name: "Claude Coder",
           adapterType: "claude_local",
-          adapterConfig: {},
+          adapterConfig: { model: "sovereign-test-claude" },
         },
         runtime: {
           sessionId: null,
@@ -666,7 +666,7 @@ describe("claude execute", () => {
           companyId: "company-1",
           name: "Claude Coder",
           adapterType: "claude_local",
-          adapterConfig: {},
+          adapterConfig: { model: "sovereign-test-claude" },
         },
         runtime: {
           sessionId: null,
@@ -768,7 +768,7 @@ describe("claude execute", () => {
           companyId: "company-1",
           name: "Claude Coder",
           adapterType: "claude_local",
-          adapterConfig: {},
+          adapterConfig: { model: "sovereign-test-claude" },
         },
         runtime: {
           sessionId: null,
@@ -805,7 +805,7 @@ describe("claude execute", () => {
           companyId: "company-1",
           name: "Claude Coder",
           adapterType: "claude_local",
-          adapterConfig: {},
+          adapterConfig: { model: "sovereign-test-claude" },
         },
         runtime: {
           sessionId: null,
@@ -927,7 +927,7 @@ describe("claude execute", () => {
           companyId: "company-1",
           name: "Claude Coder",
           adapterType: "claude_local",
-          adapterConfig: {},
+          adapterConfig: { model: "sovereign-test-claude" },
         },
         runtime: {
           sessionId: null,
@@ -958,7 +958,7 @@ describe("claude execute", () => {
           companyId: "company-1",
           name: "Claude Coder",
           adapterType: "claude_local",
-          adapterConfig: {},
+          adapterConfig: { model: "sovereign-test-claude" },
         },
         runtime: {
           sessionId: null,
@@ -1033,7 +1033,7 @@ describe("claude execute", () => {
           companyId: "company-1",
           name: "Claude Coder",
           adapterType: "claude_local",
-          adapterConfig: {},
+          adapterConfig: { model: "sovereign-test-claude" },
         },
         runtime: {
           sessionId: null,
@@ -1096,7 +1096,7 @@ describe("claude execute", () => {
           companyId: "company-1",
           name: "Claude Coder",
           adapterType: "claude_local",
-          adapterConfig: {},
+          adapterConfig: { model: "sovereign-test-claude" },
         },
         runtime: {
           sessionId: null,
@@ -1153,7 +1153,7 @@ describe("claude execute", () => {
           companyId: "company-1",
           name: "Claude Coder",
           adapterType: "claude_local",
-          adapterConfig: {},
+          adapterConfig: { model: "sovereign-test-claude" },
         },
         runtime: {
           sessionId: null,
