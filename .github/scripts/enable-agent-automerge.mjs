@@ -301,12 +301,13 @@ async function main() {
   let riskLane = LANES.RED;
   try {
     const files = await fetchAllPullRequestFiles(ghFetch, GH_REPO, prNumber, GH_TOKEN);
+    const latestPr = await ghFetch(`/repos/${GH_REPO}/pulls/${prNumber}`, GH_TOKEN);
     riskLane = classifyPrRiskLane({
       title: pr?.title ?? '',
       labels: (pr?.labels ?? []).map(label => (typeof label === 'string' ? label : label?.name)).filter(Boolean),
       files,
       author: authorLogin(pr),
-      headSha: pr?.head?.sha ?? '',
+      headSha: latestPr?.head?.sha ?? '',
       expectedHeadSha: pr?.head?.sha ?? '',
       requiredEvidence: [],
     }).lane;
