@@ -551,6 +551,7 @@ describe("executeDeliveryHook", () => {
 
     expect(result.reason).toBe("created");
     expect(calls).toContainEqual(["git", "checkout", "-b", "codex/HAS-222-x-remote-r1"]);
+    // paperclip:allow-git-push: test assertion — verifies delivery hook invokes git push for remote branch (PAPA-432)
     expect(calls).toContainEqual(["git", "push", "-u", "origin", "codex/HAS-222-x-remote-r1"]);
     const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
     expect(createCall).toContain("codex/HAS-222-x-remote-r1");
@@ -579,6 +580,7 @@ describe("executeDeliveryHook", () => {
 
     expect(result.reason).toBe("created");
     expect(calls).toContainEqual(["git", "checkout", "-b", "codex/HAS-222-x-remote-r1-2"]);
+    // paperclip:allow-git-push: test assertion — verifies delivery hook invokes git push for collision-resolved branch (PAPA-432)
     expect(calls).toContainEqual(["git", "push", "-u", "origin", "codex/HAS-222-x-remote-r1-2"]);
   });
 
@@ -606,6 +608,7 @@ describe("executeDeliveryHook", () => {
 
     expect(result.reason).toBe("created");
     expect(calls).toContainEqual(["git", "checkout", "codex/HAS-222-x-remote-r1"]);
+    // paperclip:allow-git-push: test assertion — verifies delivery hook pushes reused local collision branch (PAPA-432)
     expect(calls).toContainEqual(["git", "push", "-u", "origin", "codex/HAS-222-x-remote-r1"]);
   });
 
@@ -657,7 +660,9 @@ describe("executeDeliveryHook", () => {
 
     expect(result.reason).toBe("created");
     expect(calls).toContainEqual(["git", "checkout", "-b", "codex/HAS-222-x-remote-r1"]);
+    // paperclip:allow-git-push: test assertion — verifies delivery hook retries git push after non-fast-forward race (PAPA-432)
     expect(calls).toContainEqual(["git", "push", "-u", "origin", "codex/HAS-222-x-remote-r1"]);
+
     const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
     expect(createCall).toContain("codex/HAS-222-x-remote-r1");
     expect(pushAttempts).toBe(2);
