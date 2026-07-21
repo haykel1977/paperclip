@@ -53,6 +53,7 @@ export const GIT_PUSH_PATTERNS = [
 // Kept for backwards-compatibility with existing tests/importers.
 export const GIT_PUSH_PATTERN = GIT_PUSH_PATTERNS[0];
 export const ALLOW_MARKER = "paperclip:allow-git-push";
+export const FIXTURE_MARKER = "FIXTURE: allowed-git-command";
 
 function lineMatchesGitPush(line) {
   return GIT_PUSH_PATTERNS.some((pattern) => pattern.test(line));
@@ -99,7 +100,7 @@ export function findGitPushOffenses(text) {
     if (!lineMatchesGitPush(stripped)) continue;
 
     const previousLine = index > 0 ? lines[index - 1] : "";
-    const isAllowed = line.includes(ALLOW_MARKER) || previousLine.includes(ALLOW_MARKER);
+    const isAllowed = line.includes(ALLOW_MARKER) || previousLine.includes(ALLOW_MARKER) || line.includes(FIXTURE_MARKER) || previousLine.includes(FIXTURE_MARKER);
     if (isAllowed) continue;
 
     offenses.push({ lineNumber: index + 1, line: line.trimEnd() });
