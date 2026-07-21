@@ -42,6 +42,31 @@ test("findFloatingDockerBaseImages accepts exact Node versions and digests", () 
   assert.deepEqual(findFloatingDockerBaseImages(text), []);
 });
 
+test("findFloatingDockerBaseImages does not flag multistage FROM aliases", () => {
+  // 'FROM base AS deps' references the stage alias 'base' defined earlier —
+  // it is not an unpinned external image and must not be flagged.
+  const text = [
+    "FROM node:24.11.1-trixie-slim AS base",
+    "FROM base AS deps",
+    "FROM base AS build",
+    "FROM base AS production",
+  ].join("\n") + "\n";
+  assert.deepEqual(findFloatingDockerBaseImages(text), [],
+    "multistage stage-alias FROM lines should not be flagged");
+});
+
+test("findFloatingDockerBaseImages still flags floating external images in multistage files", () => {
+  // Even in a multistage file, a floating external image (e.g. node:lts) is an offense.
+  const text = [
+    "FROM node:24.11.1-trixie-slim AS base",
+    "FROM node:lts-trixie-slim AS sidecar",
+    "FROM base AS deps",
+  ].join("\n") + "\n";
+  const offenses = findFloatingDockerBaseImages(text);
+  assert.deepEqual(offenses.map((o) => o.lineNumber), [2],
+    "only the floating external image on line 2 should be flagged");
+});
+
 test("findFloatingDockerVersionDefaults flags latest defaults", () => {
   const offenses = findFloatingDockerVersionDefaults("ARG PAPERCLIPAI_VERSION=latest\nARG OTHER_VERSION=1.2.3\n");
   assert.equal(offenses.length, 1);

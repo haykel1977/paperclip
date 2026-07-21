@@ -63,9 +63,25 @@ function isPinnedNodeImage(image) {
 export function findFloatingDockerBaseImages(text) {
   const offenses = [];
   const lines = text.split("\n");
+
+  // Collect stage aliases defined via 'FROM <image> AS <alias>' so that
+  // subsequent 'FROM <alias> AS <next>' lines (multistage references) are
+  // not mistakenly flagged as unpinned external images.
+  const definedStages = new Set();
+  for (const line of lines) {
+    const tokens = stripDockerfileInlineComment(line).trim().split(/\s+/);
+    if (tokens[0]?.toUpperCase() !== "FROM") continue;
+    const asIndex = tokens.findIndex((t) => t.toUpperCase() === "AS");
+    if (asIndex > 0 && tokens[asIndex + 1]) {
+      definedStages.add(tokens[asIndex + 1].toLowerCase());
+    }
+  }
+
   for (let index = 0; index < lines.length; index += 1) {
     const image = parseFromImage(lines[index]);
     if (!image) continue;
+    // Skip references to a previously defined stage alias.
+    if (definedStages.has(image.toLowerCase())) continue;
     if (!isPinnedNodeImage(image)) {
       offenses.push({ lineNumber: index + 1, image, line: lines[index].trim() });
     }
