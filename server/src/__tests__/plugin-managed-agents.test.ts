@@ -196,7 +196,7 @@ describeEmbeddedPostgres("plugin-managed agents", () => {
       ...pluginManifest.agents![0]!,
       adapterType: "claude_local",
       adapterPreference: ["claude_local", "codex_local"],
-      adapterConfig: { model: "sovereign-test-claude" },
+      adapterConfig: {},
     };
     const { companyId, services } = await seedCompanyAndPlugin({ manifest: pluginManifest });
     await db.insert(agents).values([
@@ -298,7 +298,7 @@ describeEmbeddedPostgres("plugin-managed agents", () => {
       pluginManifest.agents![0] = {
         ...pluginManifest.agents![0]!,
         adapterType: "claude_local",
-        adapterConfig: { model: "sovereign-test-claude" },
+        adapterConfig: {},
         instructions: {
           entryFile: "AGENTS.md",
           content: [
