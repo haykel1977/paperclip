@@ -136,7 +136,7 @@ describe("adapter model listing", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(first).toEqual(second);
     expect(first.some((model) => model.id === "gpt-5-pro")).toBe(true);
-    expect(first.some((model) => model.id === "codex-mini-latest")).toBe(true);
+    expect(first.some((model) => model.id === "sovereign-codex-mini-latest")).toBe(true);
   });
 
   it("refreshes cached codex models on demand", async () => {
@@ -212,7 +212,7 @@ describe("adapter model listing", () => {
     expect(first).toEqual(second);
     expect(first.some((model) => model.id === "auto")).toBe(true);
     expect(first.some((model) => model.id === "gpt-5.3-codex-high")).toBe(true);
-    expect(first.some((model) => model.id === "composer-1")).toBe(true);
+    expect(first.some((model) => model.id === "sovereign-composer-1")).toBe(true);
   });
 
 });
