@@ -36,7 +36,12 @@ export async function ghFetch(path, token, options = {}) {
     },
   });
   const text = await res.text();
-  if (!res.ok) throw new Error(`GitHub API ${options.method ?? 'GET'} ${path} → ${res.status}: ${text}`);
+  if (!res.ok) {
+    const err = new Error(`GitHub API ${options.method ?? 'GET'} ${path} → ${res.status}: ${text}`);
+    /** @type {number} */
+    err.statusCode = res.status;
+    throw err;
+  }
   return JSON.parse(text);
 }
 
