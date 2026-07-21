@@ -279,12 +279,7 @@ describeEmbeddedPostgres("companySkillService.list", () => {
     expect(rows.some((row) => row.companyId === companyId && row.slug === "evil")).toBe(false);
   });
 
-  // AUDIT-NOTE: pre-existing main regression. Service behaviour changed in
-  // commit 626fd2278 (catalog/workspace command authz hardening) after this test
-  // was added in 4412377be. importFromSource now resolves instead of rejecting
-  // for local-path skills with executable scripts under certain conditions.
-  // Requires separate investigation and service-level fix — out of scope for CI restoration.
-  it.skip("rejects executable local-path skills for agent-mediated imports before persistence", async () => {
+  it("rejects executable local-path skills for agent-mediated imports before persistence", async () => {
     const companyId = randomUUID();
     const skillDir = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-agent-script-skill-"));
     cleanupDirs.add(skillDir);
