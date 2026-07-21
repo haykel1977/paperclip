@@ -194,6 +194,14 @@ async function requestApp(
 }
 
 function makeAgent(adapterType: string) {
+  // Local adapters require an explicit sovereign model in adapterConfig.
+  // Provide a test-appropriate value that passes isSovereignAgentModelValue().
+  const adapterConfig: Record<string, unknown> =
+    adapterType === "claude_local"
+      ? { model: "sovereign-test-claude" }
+      : adapterType === "codex_local"
+        ? { model: "sovereign-test-codex" }
+        : {};
   return {
     id: "11111111-1111-4111-8111-111111111111",
     companyId: "company-1",
@@ -204,7 +212,7 @@ function makeAgent(adapterType: string) {
     reportsTo: null,
     capabilities: null,
     adapterType,
-    adapterConfig: {},
+    adapterConfig,
     runtimeConfig: {},
     defaultEnvironmentId: null,
     permissions: null,
