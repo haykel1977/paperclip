@@ -95,7 +95,11 @@ describe("MobileBottomNav", () => {
 
     renderNav();
 
-    const badge = Array.from(container.querySelectorAll("span")).find((element) => element.textContent === "7");
+    // Find the leaf span (no child elements) whose text is "7" — this is the
+    // badge pill itself, not the outer "relative" wrapper span.
+    const badge = Array.from(container.querySelectorAll("span")).find(
+      (element) => element.children.length === 0 && element.textContent === "7",
+    );
     expect(badge?.className).toContain("bg-red-600/90");
     expect(badge?.className).toContain("text-red-50");
   });
@@ -106,7 +110,9 @@ describe("MobileBottomNav", () => {
 
     renderNav();
 
-    const badge = Array.from(container.querySelectorAll("span")).find((element) => element.textContent === "3");
+    const badge = Array.from(container.querySelectorAll("span")).find(
+      (element) => element.children.length === 0 && element.textContent === "3",
+    );
     expect(badge?.className).toContain("bg-primary");
     expect(badge?.className).toContain("text-primary-foreground");
   });
@@ -117,7 +123,9 @@ describe("MobileBottomNav", () => {
 
     renderNav();
 
-    const badge = Array.from(container.querySelectorAll("span")).find((element) => element.textContent === "5");
+    const badge = Array.from(container.querySelectorAll("span")).find(
+      (element) => element.children.length === 0 && element.textContent === "5",
+    );
     expect(badge?.className).toContain("bg-red-600/90");
     expect(badge?.className).toContain("text-red-50");
   });

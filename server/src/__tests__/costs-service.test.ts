@@ -450,7 +450,7 @@ describeEmbeddedPostgres("cost and finance aggregate overflow handling", () => {
       role: "engineer",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: {},
+      adapterConfig: { model: "sovereign-test-codex" },
       runtimeConfig: {},
       permissions: {},
     });
@@ -528,7 +528,7 @@ describeEmbeddedPostgres("cost and finance aggregate overflow handling", () => {
       role: "engineer",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: {},
+      adapterConfig: { model: "sovereign-test-codex" },
       runtimeConfig: {},
       permissions: {},
     });
@@ -667,7 +667,7 @@ describeEmbeddedPostgres("cost and finance aggregate overflow handling", () => {
       role: "engineer",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: {},
+      adapterConfig: { model: "sovereign-test-codex" },
       runtimeConfig: {},
       permissions: {},
     });

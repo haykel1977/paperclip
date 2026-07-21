@@ -160,11 +160,15 @@ export async function validateSensitivePaths(token, repo, prNumber, baseRef, fet
   const resolvedBaseRef = await resolveBaseRef(fetchFromGitHub, token, repo, prNumber, baseRef);
   const stale = [];
   await Promise.all(SENSITIVE_PATHS.map(async (path) => {
+    const normalizedPath = path.replace(/\/+$/, '');
     try {
-      await fetchFromGitHub(buildContentsPath(repo, path, resolvedBaseRef), token);
+      await fetchFromGitHub(buildContentsPath(repo, normalizedPath, resolvedBaseRef), token);
     } catch (err) {
+      const statusCode = typeof err?.statusCode === 'number'
+        ? err.statusCode
+        : Number.parseInt(String(err?.message ?? '').match(/\b([45]\d\d)\b/)?.[1] ?? '', 10);
       // 404 means the file/directory no longer exists at this path
-      if (String(err.message).includes('404')) stale.push(path);
+      if (statusCode === 404) stale.push(path);
       // Other errors (network, rate limit) — re-throw so we don't silently miss them
       else throw err;
     }
@@ -205,7 +209,9 @@ export function buildAdvisoryPayload(prNumber, prTitle, flags) {
       `- \`${f.check}\`: ${f.file ?? ''}`,
       f.pattern ? ` (pattern: ${f.pattern})` : '',
       f.packages ? ` (packages: ${f.packages.join(', ')})` : '',
-      f.line ? `\n  \`${f.line}\`` : '',
+      // Note: f.line is intentionally omitted to avoid embedding raw source
+      // code (which may contain secrets) in the advisory body. Reviewers can
+      // find the relevant line via the PR diff.
     ].join('')),
     '',
     '> This advisory was created automatically by commitperclip. Review and dismiss if not a real concern.',
@@ -342,16 +348,43 @@ async function main() {
 
   if (allFlags.length > 0) {
     console.error(`[security] ${allFlags.length} flag(s) detected — creating draft advisory and pending check run`);
-    await Promise.all([
-      syncDraftAdvisory(ghFetch, GH_TOKEN, GH_REPO, prNumber, pr.title, allFlags),
-      postSecurityCheckRun(ghFetch, GH_TOKEN, GH_REPO, pr.head.sha, true),
-    ]);
+    // Sequential rather than Promise.all so a partial failure is easier to reason about.
+    try {
+      await syncDraftAdvisory(ghFetch, GH_TOKEN, GH_REPO, prNumber, pr.title, allFlags);
+    } catch (advisoryErr) {
+      if (advisoryErr.statusCode === 403) {
+        // Token lacks permission to file a security advisory. With flags present this
+        // is a hard failure: the durable signal cannot be written. Exit 1 so the
+        // workflow fails visibly and a maintainer can take action.
+        console.error('::error::[security] Flags detected but token lacks permission to create security advisory (HTTP 403). Manual review required.');
+        process.exit(1);
+      }
+      throw advisoryErr;
+    }
+    try {
+      await postSecurityCheckRun(ghFetch, GH_TOKEN, GH_REPO, pr.head.sha, true);
+    } catch (checkRunErr) {
+      // check-run creation failure is non-fatal when the advisory was already filed.
+      if (checkRunErr.statusCode !== 403) throw checkRunErr;
+      console.log('::warning::[security] Could not post check run (HTTP 403) — advisory was filed. Continuing.');
+    }
   } else {
     console.log('[security] all clear');
-    await postSecurityCheckRun(ghFetch, GH_TOKEN, GH_REPO, pr.head.sha, false);
+    try {
+      await postSecurityCheckRun(ghFetch, GH_TOKEN, GH_REPO, pr.head.sha, false);
+    } catch (checkRunErr) {
+      if (checkRunErr.statusCode === 403) {
+        // No findings and check-run creation failed due to token permissions.
+        // This is a pure infra limitation, not a security event — emit a warning only.
+        console.log('::warning::[security] Could not post success check run (HTTP 403) — no flags detected, infra limitation only.');
+      } else {
+        throw checkRunErr;
+      }
+    }
   }
 
-  // Always exit 0 — security flags are silent, never block the PR publicly
+  // Always exit 0 when no flags (or flags were advisory-filed) — security signals
+  // are advisory-only and must never silently block PRs.
   process.exit(0);
 }
 

@@ -227,6 +227,25 @@ test('validateSensitivePaths: checks paths against the resolved base ref instead
   assert.ok(!seenPaths.some(path => path.includes('ref=main')));
 });
 
+test('validateSensitivePaths: trims trailing slashes before GitHub contents lookups', async () => {
+  const seenPaths = [];
+
+  await validateSensitivePaths(
+    'token',
+    'paperclipai/paperclip',
+    6469,
+    'main',
+    async (path) => {
+      seenPaths.push(path);
+      return { ok: true };
+    },
+  );
+
+  assert.ok(
+    seenPaths.some(path => path.includes('/contents/packages/adapters/codex-local?ref=main')),
+  );
+});
+
 test('validateSensitivePaths: returns only 404 paths and rethrows non-404 errors', async () => {
   let seen404 = false;
   const stale = await validateSensitivePaths(

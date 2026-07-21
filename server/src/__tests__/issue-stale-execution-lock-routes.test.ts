@@ -85,7 +85,7 @@ describeEmbeddedPostgres("stale issue execution lock routes", () => {
       role: "engineer",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: {},
+      adapterConfig: { model: "sovereign-test-codex" },
       runtimeConfig: {},
       permissions: {},
     });

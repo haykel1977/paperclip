@@ -121,7 +121,7 @@ describeEmbeddedPostgres("issue scheduled retry routes", () => {
       role: "engineer",
       status: input.agentStatus ?? "active",
       adapterType: "codex_local",
-      adapterConfig: {},
+      adapterConfig: { model: "sovereign-test-codex" },
       runtimeConfig: {
         heartbeat: {
           wakeOnDemand: true,
@@ -390,7 +390,7 @@ describeEmbeddedPostgres("issue scheduled retry routes", () => {
       role: "qa",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: {},
+      adapterConfig: { model: "sovereign-test-codex" },
       runtimeConfig: {
         heartbeat: {
           wakeOnDemand: true,

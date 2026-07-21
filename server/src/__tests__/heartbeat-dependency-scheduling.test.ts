@@ -173,7 +173,7 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       role: "engineer",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: {},
+      adapterConfig: { model: "sovereign-test-codex" },
       runtimeConfig: {
         heartbeat: {
           wakeOnDemand: true,
@@ -435,7 +435,7 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       role: "engineer",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: {},
+      adapterConfig: { model: "sovereign-test-codex" },
       runtimeConfig: {
         heartbeat: {
           wakeOnDemand: true,
@@ -569,7 +569,7 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       role: "qa",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: {},
+      adapterConfig: { model: "sovereign-test-codex" },
       runtimeConfig: {
         heartbeat: {
           wakeOnDemand: true,
@@ -765,7 +765,7 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       role: "engineer",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: {},
+      adapterConfig: { model: "sovereign-test-codex" },
       runtimeConfig: {
         heartbeat: {
           wakeOnDemand: true,
@@ -894,7 +894,7 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       role: "engineer",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: {},
+      adapterConfig: { model: "sovereign-test-codex" },
       runtimeConfig: {
         heartbeat: {
           wakeOnDemand: true,

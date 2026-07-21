@@ -65,7 +65,7 @@ describeEmbeddedPostgres("heartbeat archived-company guard", () => {
       role: "engineer",
       status: "idle",
       adapterType: "codex_local",
-      adapterConfig: {},
+      adapterConfig: { model: "sovereign-test-codex" },
       runtimeConfig: {
         heartbeat: {
           enabled: true,
@@ -100,7 +100,7 @@ describeEmbeddedPostgres("heartbeat archived-company guard", () => {
         role: "cto",
         status: "terminated",
         adapterType: "codex_local",
-        adapterConfig: {},
+        adapterConfig: { model: "sovereign-test-codex" },
         runtimeConfig: {
           heartbeat: {
             enabled: true,
@@ -118,7 +118,7 @@ describeEmbeddedPostgres("heartbeat archived-company guard", () => {
         reportsTo: managerId,
         status: "idle",
         adapterType: "codex_local",
-        adapterConfig: {},
+        adapterConfig: { model: "sovereign-test-codex" },
         runtimeConfig: {
           heartbeat: {
             enabled: true,

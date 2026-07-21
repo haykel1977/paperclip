@@ -193,7 +193,7 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
       role: "engineer",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: {},
+      adapterConfig: { model: "sovereign-test-codex" },
       runtimeConfig: {},
       permissions: {},
     });

@@ -66,7 +66,7 @@ describeEmbeddedPostgres("heartbeat runtime state deduplication", () => {
       role: "engineer",
       status: "idle",
       adapterType: "codex_local",
-      adapterConfig: {},
+      adapterConfig: { model: "sovereign-test-codex" },
       runtimeConfig: {},
       permissions: {},
     });

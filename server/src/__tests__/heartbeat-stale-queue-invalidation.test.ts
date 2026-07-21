@@ -196,7 +196,7 @@ describeEmbeddedPostgres("heartbeat stale queued-run invalidation", () => {
       role: opts.agentRole ?? "engineer",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: {},
+      adapterConfig: { model: "sovereign-test-codex" },
       runtimeConfig: {
         heartbeat: {
           wakeOnDemand: true,
@@ -298,7 +298,7 @@ describeEmbeddedPostgres("heartbeat stale queued-run invalidation", () => {
       role: "engineer",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: {},
+      adapterConfig: { model: "sovereign-test-codex" },
       runtimeConfig: {
         heartbeat: {
           wakeOnDemand: true,
@@ -568,7 +568,7 @@ describeEmbeddedPostgres("heartbeat stale queued-run invalidation", () => {
       role: "qa",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: {},
+      adapterConfig: { model: "sovereign-test-codex" },
       runtimeConfig: { heartbeat: { wakeOnDemand: true, maxConcurrentRuns: 1 } },
       permissions: {},
     });
@@ -648,7 +648,7 @@ describeEmbeddedPostgres("heartbeat stale queued-run invalidation", () => {
       role: "qa",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: {},
+      adapterConfig: { model: "sovereign-test-codex" },
       runtimeConfig: { heartbeat: { wakeOnDemand: true, maxConcurrentRuns: 1 } },
       permissions: {},
     });

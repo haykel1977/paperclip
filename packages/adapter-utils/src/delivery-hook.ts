@@ -395,7 +395,7 @@ async function checkoutFreshRemoteCollisionBranch(input: {
  * Fetch repo label names, returns [] on failure (non-fatal).
  */
 async function fetchRepoLabels(input: {
-  repo:
+  repo: string;
   worktreeCwd: string;
   env: Record<string, string>;
   log: DeliveryHookLog;
