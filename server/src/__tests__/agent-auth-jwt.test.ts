@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createLocalAgentJwt, verifyLocalAgentJwt } from "../agent-auth-jwt.js";
+import {
+  createLocalAgentJwt,
+  isLocalAgentJwtBindingValid,
+  verifyLocalAgentJwt,
+} from "../agent-auth-jwt.js";
 
 describe("agent local JWT", () => {
   const secretEnv = "PAPERCLIP_AGENT_JWT_SECRET";
@@ -9,6 +13,7 @@ describe("agent local JWT", () => {
   const audienceEnv = "PAPERCLIP_AGENT_JWT_AUDIENCE";
 
   const originalEnv = {
+
     secret: process.env[secretEnv],
     betterAuthSecret: process.env[betterAuthSecretEnv],
     ttl: process.env[ttlEnv],
@@ -53,6 +58,7 @@ describe("agent local JWT", () => {
       iss: "paperclip",
       aud: "paperclip-api",
     });
+    expect(claims?.jti).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   it("returns null when secret is missing", () => {
@@ -60,6 +66,7 @@ describe("agent local JWT", () => {
     const token = createLocalAgentJwt("agent-1", "company-1", "claude_local", "run-1");
     expect(token).toBeNull();
     expect(verifyLocalAgentJwt("abc.def.ghi")).toBeNull();
+
   });
 
   it("falls back to BETTER_AUTH_SECRET when PAPERCLIP_AGENT_JWT_SECRET is absent", () => {
@@ -96,5 +103,41 @@ describe("agent local JWT", () => {
     process.env[issuerEnv] = "paperclip";
     process.env[audienceEnv] = "paperclip-api";
     expect(verifyLocalAgentJwt(token!)).toBeNull();
+  });
+
+  it("binds a token to its active run, agent, company, and adapter", () => {
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    const token = createLocalAgentJwt("agent-1", "company-1", "codex_local", "run-1");
+    const claims = verifyLocalAgentJwt(token!);
+    expect(claims).not.toBeNull();
+
+    const binding = {
+      agent: {
+        id: "agent-1",
+        companyId: "company-1",
+        adapterType: "codex_local",
+        status: "running",
+      },
+      run: {
+        id: "run-1",
+        companyId: "company-1",
+        agentId: "agent-1",
+        status: "running",
+      },
+    };
+
+    expect(isLocalAgentJwtBindingValid(claims!, binding)).toBe(true);
+    expect(isLocalAgentJwtBindingValid(claims!, {
+      ...binding,
+      runIdHeader: "another-run",
+    })).toBe(false);
+    expect(isLocalAgentJwtBindingValid(claims!, {
+      ...binding,
+      run: { ...binding.run, status: "succeeded" },
+    })).toBe(false);
+    expect(isLocalAgentJwtBindingValid(claims!, {
+      ...binding,
+      agent: { ...binding.agent, adapterType: "claude_local" },
+    })).toBe(false);
   });
 });

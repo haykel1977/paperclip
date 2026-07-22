@@ -130,12 +130,23 @@ function tokenHashesMatch(left: string, right: string) {
 }
 
 function requestBaseUrl(req: Request) {
-  const forwardedProto = req.header("x-forwarded-proto");
-  const proto = forwardedProto?.split(",")[0]?.trim() || req.protocol || "http";
-  const host =
-    req.header("x-forwarded-host")?.split(",")[0]?.trim() || req.header("host");
+  const configuredPublicUrl = (
+    process.env.PAPERCLIP_PUBLIC_URL
+    ?? process.env.PAPERCLIP_AUTH_PUBLIC_BASE_URL
+    ?? process.env.BETTER_AUTH_URL
+    ?? process.env.BETTER_AUTH_BASE_URL
+  )?.trim();
+  if (configuredPublicUrl) {
+    try {
+      return new URL(configuredPublicUrl).origin;
+    } catch {
+      // Startup configuration validation reports malformed public URLs.
+    }
+  }
+
+  const host = requestHost(req);
   if (!host) return "";
-  return `${proto}://${host}`;
+  return `${requestProtocol(req)}://${host}`;
 }
 
 function buildCliAuthApprovalPath(challengeId: string, token: string) {
