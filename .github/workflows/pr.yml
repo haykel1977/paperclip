@@ -109,6 +109,9 @@ jobs:
       - name: Test agent auto-merge gate
         run: node --test ./.github/scripts/tests/enable-agent-automerge.test.mjs
 
+      - name: Test paperclip-checker App gate
+        run: node --test ./.github/scripts/tests/paperclip-checker.test.mjs
+
       - name: Validate release package manifest
         run: node ./scripts/release-package-map.mjs check
 
