@@ -6,13 +6,20 @@
  * source of truth. Non-eligible PRs are skipped with exit 0.
  *
  * Env: GH_TOKEN, GH_REPO, PR_NUMBER, DEFAULT_BRANCH (optional, default: main),
- * REQUIRED_CHECKS (optional comma-separated list, default: verify,gitleaks)
+ * REQUIRED_CHECKS (optional comma-separated list, default: verify,gitleaks),
+ * EVENT_HEAD_SHA (optional; the event payload head SHA, compared against the
+ * freshly-read API SHA to detect a stale/advanced head → RED).
  */
 import { fileURLToPath } from 'node:url';
 import { ghFetch } from './get-bot-token.mjs';
 import { HARD_BLOCK_LABELS } from './check-pr-governance.mjs';
 import { fetchAllPullRequestFiles } from './fetch-pr-files.mjs';
-import { classifyPrRiskLane, LANES } from './classify-pr-risk-lane.mjs';
+import {
+  classifyPrRiskLane,
+  LANES,
+  DEPENDENCY_MANIFEST_LABEL,
+  isDependencyManifestOnly,
+} from './classify-pr-risk-lane.mjs';
 
 export const AUTOMERGE_LABEL = 'automerge';
 export const AGENT_PR_LABEL = 'agent-pr';
@@ -270,6 +277,132 @@ export async function disablePullRequestAutoMerge(fetchImpl, token, prNodeId) {
   return payload.data?.disablePullRequestAutoMerge?.pullRequest ?? null;
 }
 
+function labelNames(pr) {
+  return (pr?.labels ?? [])
+    .map(label => (typeof label === 'string' ? label : label?.name))
+    .filter(Boolean);
+}
+
+/**
+ * Reduce the head-SHA check-runs into required-evidence the classifier can
+ * judge. Only COMPLETED required checks are treated as evidence: a completed
+ * neutral/skipped/failed required check fails closed to RED, while a check that
+ * is still pending is left to branch protection (GitHub will not merge until it
+ * is green). This makes the neutral/skipped fail-closed logic LIVE in
+ * production without preventing native auto-merge from being enabled early.
+ */
+function checkRunRecency(run) {
+  // Order by the most meaningful timestamp available. The GitHub check-runs list
+  // order is NOT contractually newest-first, so we must sort explicitly — a
+  // stale `success` must never mask a newer `neutral`/`skipped`/`failure`.
+  const ts = run?.completed_at ?? run?.started_at ?? run?.created_at ?? null;
+  const parsed = ts ? Date.parse(ts) : NaN;
+  return Number.isFinite(parsed) ? parsed : -Infinity;
+}
+
+export function buildRequiredEvidence(checkRuns, requiredCheckNames) {
+  const required = new Set(requiredCheckNames);
+  const latestByName = new Map();
+  for (const run of Array.isArray(checkRuns) ? checkRuns : []) {
+    const name = String(run?.name ?? '').trim();
+    if (!required.has(name)) continue;
+    const current = latestByName.get(name);
+    // Keep the most recent run per name by explicit timestamp comparison rather
+    // than trusting response order. Ties keep the earlier-seen run.
+    if (!current || checkRunRecency(run) > checkRunRecency(current)) {
+      latestByName.set(name, run);
+    }
+  }
+  const evidence = [];
+  const requiredEvidenceNames = [];
+  for (const [name, run] of latestByName) {
+    if (String(run?.status ?? '') !== 'completed') continue; // pending → branch protection
+    requiredEvidenceNames.push(name);
+    evidence.push({ name, conclusion: run?.conclusion ?? 'missing' });
+  }
+  return { evidence, requiredEvidenceNames };
+}
+
+async function fetchCheckRuns(fetchFromGitHub, repo, sha, token) {
+  if (!/^[0-9a-f]{40}$/i.test(String(sha ?? ''))) {
+    throw new Error('Head SHA is missing or malformed; cannot fetch check-runs.');
+  }
+  const runs = [];
+  for (let page = 1; ; page += 1) {
+    const batch = await fetchFromGitHub(
+      `/repos/${repo}/commits/${sha}/check-runs?per_page=100&page=${page}`,
+      token,
+    );
+    const checkRuns = Array.isArray(batch?.check_runs) ? batch.check_runs : [];
+    runs.push(...checkRuns);
+    if (checkRuns.length < 100) return runs;
+  }
+}
+
+/**
+ * Pure decision: given the fetched PR, files, check-runs, and the event's head
+ * SHA, decide whether to enable/disable/skip native auto-merge. Shared by main()
+ * and the integration tests so the production wiring is actually exercised.
+ * On classificationError (e.g. a failed check-run/file fetch) the lane is forced
+ * to RED — fail closed.
+ */
+export function planAutomerge({
+  pr,
+  files = [],
+  checkRuns = [],
+  eventHeadSha = '',
+  branchProtection,
+  requiredChecks = DEFAULT_REQUIRED_CHECKS,
+  defaultBranch = 'main',
+  classificationError = false,
+}) {
+  const author = authorLogin(pr);
+  // Bounded, verifiable dependency exemption: an approved lockfile-refresh or
+  // Dependabot PR whose changes are EXCLUSIVELY dependency manifests may treat
+  // that one sacred surface as non-blocking. Any other touched surface (a
+  // workflow, an auth file, …) makes isDependencyManifestOnly false, so the
+  // exemption evaporates and the PR is RED as usual.
+  const dependencyAutomation =
+    (isLockfileAutomation(pr) || author === 'dependabot[bot]') && isDependencyManifestOnly(files);
+
+  let riskLane = LANES.RED;
+  let laneReasons = ['Risk-lane classification unavailable; failing closed to RED.'];
+  if (!classificationError) {
+    const { evidence, requiredEvidenceNames } = buildRequiredEvidence(checkRuns, requiredChecks);
+    try {
+      const classification = classifyPrRiskLane({
+        title: pr?.title ?? '',
+        labels: labelNames(pr),
+        files,
+        author,
+        headSha: pr?.head?.sha ?? '',
+        expectedHeadSha: eventHeadSha ?? '',
+        evidence,
+        requiredEvidence: requiredEvidenceNames,
+        exemptRedPathLabels: dependencyAutomation ? [DEPENDENCY_MANIFEST_LABEL] : [],
+      });
+      riskLane = classification.lane;
+      laneReasons = classification.reasons;
+    } catch (error) {
+      laneReasons = [`Risk-lane classification threw: ${error?.message ?? error}`];
+    }
+  }
+
+  const options = { defaultBranch, branchProtection, requiredChecks, riskLane };
+
+  const revocation = evaluateAutoMergeRevocation(pr, options);
+  if (revocation.revoke) {
+    return { action: 'disable', riskLane, laneReasons, reasons: revocation.reasons };
+  }
+
+  const eligibility = evaluateAutomergeEligibility(pr, options);
+  if (!eligibility.eligible) {
+    return { action: 'skip', riskLane, laneReasons, reasons: eligibility.failures };
+  }
+
+  return { action: 'enable', riskLane, laneReasons, reasons: [] };
+}
+
 async function main() {
   const { GH_TOKEN, GH_REPO, PR_NUMBER } = process.env;
   const defaultBranch = process.env.DEFAULT_BRANCH || 'main';
@@ -293,48 +426,56 @@ async function main() {
   const requiredChecks = parseRequiredChecks(process.env.REQUIRED_CHECKS);
   const branchProtection = await fetchBranchProtection(ghFetch, GH_REPO, branch, GH_TOKEN);
 
-  // Deterministically classify the PR risk lane from metadata + file list.
-  // Required check-run evidence is intentionally delegated to branch protection
-  // (GitHub will not merge until required checks are green), so the lane gate
-  // here enforces the deterministic dimensions: sacred paths, diff size, actor,
-  // and label consistency. Any classification error fails closed to RED.
-  let riskLane = LANES.RED;
+  // The event payload's head SHA (captured when the workflow was triggered) is
+  // an INDEPENDENT source from the freshly re-read pr.head.sha. If they differ,
+  // the PR advanced mid-run and the classification is stale → RED. We do NOT
+  // fall back to the API SHA: a missing/empty EVENT_HEAD_SHA would make the
+  // stale-SHA guard compare the API SHA against itself (always equal), silently
+  // disabling the entire mid-run-advance defense. Absent the independent source
+  // we fail closed to RED instead.
+  const eventHeadSha = String(process.env.EVENT_HEAD_SHA ?? '').trim();
+
+  // Fetch the file list and head-SHA check-runs. Any failure here fails closed:
+  // we never enable auto-merge on an unclassifiable PR.
+  let files = [];
+  let checkRuns = [];
+  let classificationError = false;
+  if (!eventHeadSha) {
+    classificationError = true;
+    console.log('::warning::[automerge] EVENT_HEAD_SHA missing/empty; the independent stale-SHA source is unavailable, failing closed to RED.');
+  }
   try {
-    const files = await fetchAllPullRequestFiles(ghFetch, GH_REPO, prNumber, GH_TOKEN);
-    riskLane = classifyPrRiskLane({
-      title: pr?.title ?? '',
-      labels: (pr?.labels ?? []).map(label => (typeof label === 'string' ? label : label?.name)).filter(Boolean),
-      files,
-      author: authorLogin(pr),
-      headSha: pr?.head?.sha ?? '',
-      expectedHeadSha: pr?.head?.sha ?? '',
-      requiredEvidence: [],
-    }).lane;
+    files = await fetchAllPullRequestFiles(ghFetch, GH_REPO, prNumber, GH_TOKEN);
+    checkRuns = await fetchCheckRuns(ghFetch, GH_REPO, pr?.head?.sha, GH_TOKEN);
   } catch (error) {
-    console.log(`::warning::[automerge] risk-lane classification failed, failing closed to RED: ${error.message}`);
+    classificationError = true;
+    console.log(`::warning::[automerge] classification inputs unavailable, failing closed to RED: ${error.message}`);
   }
 
-  const options = {
-    defaultBranch,
+  const plan = planAutomerge({
+    pr,
+    files,
+    checkRuns,
+    eventHeadSha,
     branchProtection,
     requiredChecks,
-    riskLane,
-  };
-  const revocation = evaluateAutoMergeRevocation(pr, options);
-  if (revocation.revoke) {
+    defaultBranch,
+    classificationError,
+  });
+
+  if (plan.action === 'disable') {
     await disablePullRequestAutoMerge(fetch, GH_TOKEN, pr.node_id);
-    console.log(JSON.stringify({ enabled: false, disabled: true, reasons: revocation.reasons }, null, 2));
+    console.log(JSON.stringify({ enabled: false, disabled: true, riskLane: plan.riskLane, reasons: plan.reasons }, null, 2));
     return;
   }
 
-  const result = evaluateAutomergeEligibility(pr, options);
-  if (!result.eligible) {
-    console.log(JSON.stringify({ enabled: false, skipped: true, reasons: result.failures }, null, 2));
+  if (plan.action === 'skip') {
+    console.log(JSON.stringify({ enabled: false, skipped: true, riskLane: plan.riskLane, reasons: plan.reasons }, null, 2));
     return;
   }
 
   await enablePullRequestAutoMerge(fetch, GH_TOKEN, pr.node_id, DEFAULT_MERGE_METHOD);
-  console.log(JSON.stringify({ enabled: true, mergeMethod: DEFAULT_MERGE_METHOD }, null, 2));
+  console.log(JSON.stringify({ enabled: true, riskLane: plan.riskLane, mergeMethod: DEFAULT_MERGE_METHOD }, null, 2));
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

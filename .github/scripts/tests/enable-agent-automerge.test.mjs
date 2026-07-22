@@ -7,6 +7,8 @@ import {
   evaluateBranchProtection,
   enablePullRequestAutoMerge,
   fetchBranchProtection,
+  buildRequiredEvidence,
+  planAutomerge,
 } from '../enable-agent-automerge.mjs';
 
 const protectedMain = {
@@ -29,6 +31,194 @@ function pr(overrides = {}) {
     ...overrides,
   };
 }
+
+// ── Production-wiring integration tests (planAutomerge) ──────────────────────
+// These exercise the real path: file list + head-SHA check-runs + event SHA are
+// fed through classifyPrRiskLane exactly as main() does, so the fixes below are
+// covered end-to-end (not just in the pure classifier unit tests).
+
+const HEAD_SHA = 'a'.repeat(40);
+const OTHER_SHA = 'b'.repeat(40);
+
+function planPr(overrides = {}) {
+  return pr({
+    title: 'fix(server): correct cursor anchor timestamp binding',
+    head: { ref: 'fix/agent-change', sha: HEAD_SHA, repo: { full_name: 'paperclipai/paperclip' } },
+    ...overrides,
+  });
+}
+
+const changedFile = (filename, o = {}) => ({ filename, status: 'modified', additions: 5, deletions: 0, changes: 5, ...o });
+const greenChecks = () => [
+  { name: 'verify', status: 'completed', conclusion: 'success' },
+  { name: 'gitleaks', status: 'completed', conclusion: 'success' },
+];
+
+function plan(overrides = {}) {
+  return planAutomerge({
+    pr: planPr(overrides.pr),
+    files: overrides.files ?? [changedFile('server/src/services/cursor.ts')],
+    checkRuns: overrides.checkRuns ?? greenChecks(),
+    eventHeadSha: 'eventHeadSha' in overrides ? overrides.eventHeadSha : HEAD_SHA,
+    branchProtection: overrides.branchProtection ?? protectedMain,
+    requiredChecks: overrides.requiredChecks,
+    defaultBranch: 'main',
+    classificationError: overrides.classificationError ?? false,
+  });
+}
+
+test('planAutomerge: GREEN happy path enables auto-merge', () => {
+  const result = plan();
+  assert.equal(result.riskLane, 'GREEN');
+  assert.equal(result.action, 'enable');
+});
+
+test('planAutomerge: deleting a sacred surface is RED and skipped (not enabled)', () => {
+  const result = plan({ files: [changedFile('.github/workflows/secret-scan.yml', { status: 'removed', additions: 0, deletions: 30, changes: 30 })] });
+  assert.equal(result.riskLane, 'RED');
+  assert.equal(result.action, 'skip');
+});
+
+test('planAutomerge: renaming a sacred file out of a matched path is RED and skipped', () => {
+  const result = plan({ files: [changedFile('docs/notes.md', { status: 'renamed', previous_filename: 'server/src/routes/authz.ts', additions: 1, changes: 1 })] });
+  assert.equal(result.riskLane, 'RED');
+  assert.equal(result.action, 'skip');
+});
+
+test('planAutomerge: Dependabot lockfile-only PR is exempted to GREEN and enabled', () => {
+  const result = plan({
+    pr: {
+      user: { login: 'dependabot[bot]' },
+      labels: [{ name: 'automerge' }],
+    },
+    files: [changedFile('pnpm-lock.yaml'), changedFile('package.json')],
+  });
+  assert.equal(result.riskLane, 'GREEN');
+  assert.equal(result.action, 'enable');
+});
+
+test('planAutomerge: lockfile-refresh automation PR is exempted to GREEN and enabled', () => {
+  const result = plan({
+    pr: {
+      user: { login: 'github-actions[bot]' },
+      head: { ref: 'chore/refresh-lockfile', sha: HEAD_SHA, repo: { full_name: 'paperclipai/paperclip' } },
+      labels: [],
+    },
+    files: [changedFile('pnpm-lock.yaml')],
+  });
+  assert.equal(result.riskLane, 'GREEN');
+  assert.equal(result.action, 'enable');
+});
+
+test('planAutomerge: Dependabot PR that ALSO touches a workflow is RED (exemption evaporates)', () => {
+  const result = plan({
+    pr: { user: { login: 'dependabot[bot]' }, labels: [{ name: 'automerge' }] },
+    files: [changedFile('pnpm-lock.yaml'), changedFile('.github/workflows/pr.yml')],
+  });
+  assert.equal(result.riskLane, 'RED');
+  assert.equal(result.action, 'skip');
+});
+
+test('planAutomerge: a completed neutral required check fails closed to RED', () => {
+  const result = plan({ checkRuns: [
+    { name: 'verify', status: 'completed', conclusion: 'neutral' },
+    { name: 'gitleaks', status: 'completed', conclusion: 'success' },
+  ] });
+  assert.equal(result.riskLane, 'RED');
+  assert.equal(result.action, 'skip');
+});
+
+test('planAutomerge: a completed skipped required check fails closed to RED', () => {
+  const result = plan({ checkRuns: [
+    { name: 'verify', status: 'completed', conclusion: 'skipped' },
+    { name: 'gitleaks', status: 'completed', conclusion: 'success' },
+  ] });
+  assert.equal(result.riskLane, 'RED');
+});
+
+test('planAutomerge: pending required checks do not block enabling (branch protection backstops)', () => {
+  const result = plan({ checkRuns: [
+    { name: 'verify', status: 'in_progress', conclusion: null },
+    { name: 'gitleaks', status: 'queued', conclusion: null },
+  ] });
+  assert.equal(result.riskLane, 'GREEN');
+  assert.equal(result.action, 'enable');
+});
+
+test('planAutomerge: stale head SHA (event SHA != API SHA) is RED and skipped', () => {
+  const result = plan({ eventHeadSha: OTHER_SHA });
+  assert.equal(result.riskLane, 'RED');
+  assert.equal(result.action, 'skip');
+});
+
+test('planAutomerge: classificationError forces RED and skip (fail closed)', () => {
+  const result = plan({ classificationError: true });
+  assert.equal(result.riskLane, 'RED');
+  assert.equal(result.action, 'skip');
+});
+
+test('planAutomerge: revokes already-enabled auto-merge when the live lane is RED', () => {
+  const result = plan({
+    pr: { auto_merge: { enabled_by: { login: 'paperclipai[bot]' } } },
+    files: [changedFile('.github/workflows/pr.yml')],
+  });
+  assert.equal(result.riskLane, 'RED');
+  assert.equal(result.action, 'disable');
+});
+
+test('buildRequiredEvidence: includes completed required checks and excludes pending ones', () => {
+  const { evidence, requiredEvidenceNames } = buildRequiredEvidence([
+    { name: 'verify', status: 'completed', conclusion: 'success' },
+    { name: 'gitleaks', status: 'in_progress', conclusion: null },
+    { name: 'unrelated', status: 'completed', conclusion: 'failure' },
+  ], ['verify', 'gitleaks']);
+  assert.deepEqual(requiredEvidenceNames, ['verify']);
+  assert.deepEqual(evidence, [{ name: 'verify', conclusion: 'success' }]);
+});
+
+test('buildRequiredEvidence: keeps the newest run per required check name', () => {
+  const { evidence } = buildRequiredEvidence([
+    { name: 'verify', status: 'completed', conclusion: 'failure' },
+    { name: 'verify', status: 'completed', conclusion: 'success' },
+  ], ['verify']);
+  assert.deepEqual(evidence, [{ name: 'verify', conclusion: 'failure' }]);
+});
+
+test('buildRequiredEvidence: an older success does NOT mask a newer neutral (explicit timestamp sort)', () => {
+  // Supplied oldest-first — the OPPOSITE of the "newest first" assumption the
+  // old code trusted. A stale `success` must not win over the newer `neutral`.
+  const { evidence } = buildRequiredEvidence([
+    { name: 'verify', status: 'completed', conclusion: 'success', completed_at: '2026-01-01T00:00:00Z' },
+    { name: 'verify', status: 'completed', conclusion: 'neutral', completed_at: '2026-01-02T00:00:00Z' },
+  ], ['verify']);
+  assert.deepEqual(evidence, [{ name: 'verify', conclusion: 'neutral' }]);
+});
+
+test('buildRequiredEvidence: an older success does NOT mask a newer failure (explicit timestamp sort)', () => {
+  const { evidence } = buildRequiredEvidence([
+    { name: 'verify', status: 'completed', conclusion: 'success', started_at: '2026-01-01T00:00:00Z' },
+    { name: 'verify', status: 'completed', conclusion: 'failure', started_at: '2026-01-03T00:00:00Z' },
+  ], ['verify']);
+  assert.deepEqual(evidence, [{ name: 'verify', conclusion: 'failure' }]);
+});
+
+test('buildRequiredEvidence: falls back through completed_at → started_at → created_at for recency', () => {
+  const { evidence } = buildRequiredEvidence([
+    { name: 'verify', status: 'completed', conclusion: 'neutral', created_at: '2026-01-05T00:00:00Z' },
+    { name: 'verify', status: 'completed', conclusion: 'success', created_at: '2026-01-04T00:00:00Z' },
+  ], ['verify']);
+  assert.deepEqual(evidence, [{ name: 'verify', conclusion: 'neutral' }]);
+});
+
+test('planAutomerge: an older success check-run cannot mask a newer neutral (RED, skipped)', () => {
+  const result = plan({ checkRuns: [
+    { name: 'verify', status: 'completed', conclusion: 'success', completed_at: '2026-01-01T00:00:00Z' },
+    { name: 'verify', status: 'completed', conclusion: 'neutral', completed_at: '2026-01-02T00:00:00Z' },
+    { name: 'gitleaks', status: 'completed', conclusion: 'success', completed_at: '2026-01-02T00:00:00Z' },
+  ] });
+  assert.equal(result.riskLane, 'RED');
+  assert.equal(result.action, 'skip');
+});
 
 test('evaluateAutomergeEligibility: allows opted-in same-repo agent PRs with protected required checks', () => {
   const result = evaluateAutomergeEligibility(pr(), { branchProtection: protectedMain });

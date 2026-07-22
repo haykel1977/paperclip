@@ -71,7 +71,9 @@ export const LANE_HINT_LABELS = Object.freeze({
 export const AUTOMERGE_LABEL = 'automerge';
 
 // RED path matchers. Each entry documents the sacred/high-blast-radius surface
-// it guards. Any active (non-removed) changed file matching any matcher is RED.
+// it guards. Any changed file matching any matcher is RED — including deletions
+// (removing a guardrail is itself high-blast-radius) and rename sources (the
+// pre-rename path must still be judged sacred).
 export const RED_PATH_MATCHERS = Object.freeze([
   // .github/** — workflows, actions, governance config, issue/PR templates.
   { label: 'CI/workflow or .github governance', re: /^\.github\// },
@@ -80,10 +82,22 @@ export const RED_PATH_MATCHERS = Object.freeze([
   // Governance / checker code (the gate must not silently rewrite itself).
   { label: 'governance/checker code', re: /(^|\/)scripts\/check-[^/]+\.mjs$/ },
   { label: 'governance/checker code', re: /(^|\/)scripts\/(release-package-map|run-quality-gates)[^/]*\.mjs$/ },
-  // Auth / authz surfaces.
-  { label: 'auth/authz', re: /(^|\/)(auth|authz|authn|authorization|authentication)[^/]*\.(ts|tsx|js|mjs|cjs)$/i },
-  { label: 'auth/authz', re: /(^|\/)(auth|authz)\// },
-  { label: 'auth/authz', re: /workspace-command-authz\.ts$/ },
+  // Auth / authz / authn surfaces. The repo names its authorization code with
+  // `permission(s)`, `access`, `principal`, `grant`, etc. — not just `auth` —
+  // so the matchers cover that real vocabulary. Tokens must sit on a
+  // separator boundary (`/ _ - . ` or start/end) so `accessibility`,
+  // `data-access`, `author`, and `grantham` do not false-positive.
+  { label: 'auth/authz', re: /(^|[/_.-])(auth|authz|authn|authorization|authentication|oauth|permissions?|rbac|principal|grants?)(?=[/_.-]|$)/i },
+  // camelCase / PascalCase forms (`authMiddleware`, `AuthGuard`,
+  // `permissionsService`, `AccessControl`, `oauthProvider`): the token sits at a
+  // segment/separator boundary and is followed by an UPPERCASE letter (a new
+  // camelCase word). Case-sensitive lookahead so `author`/`Accessibility`
+  // (lowercase next char) still do not match.
+  { label: 'auth/authz', re: /(^|[/_.-])([Aa]uthz|[Aa]uthn|[Aa]uthorization|[Aa]uthentication|[Oo]auth|[Aa]uth|[Pp]ermissions?|[Aa]ccess|[Rr]bac|[Pp]rincipal|[Gg]rants?)(?=[A-Z])/ },
+  // `access` is generic, so only match it at a path-segment start (after `/`).
+  { label: 'auth/authz', re: /(^|\/)access(?=[/_.-]|$)/i },
+  // A whole directory named auth/authz/authn.
+  { label: 'auth/authz', re: /(^|\/)(auth|authz|authn)\// },
   // Secrets / credential material.
   { label: 'secrets', re: /(^|\/)\.env(\.[^/]+)?$/ },
   { label: 'secrets', re: /(^|\/)\.gitleaks\.toml$/ },
@@ -100,16 +114,45 @@ export const RED_PATH_MATCHERS = Object.freeze([
   { label: 'infrastructure/release/production', re: /(^|\/)scripts\/release[^/]*\.(sh|mjs|js|ts)$/ },
   { label: 'infrastructure/release/production', re: /\.(tf|tfvars)$/i },
   { label: 'infrastructure/release/production', re: /(^|\/)(k8s|kubernetes|helm|terraform|deploy)\// },
-  // Dependency manifests / lockfiles.
+  // Dependency manifests / lockfiles — the EXEMPTABLE subset. Pure lockfiles
+  // and package.json are declarative: dependency automation legitimately edits
+  // only these, so they carry the label the bounded exemption may waive.
   { label: 'dependency manifest/lockfile', re: /(^|\/)package\.json$/ },
   { label: 'dependency manifest/lockfile', re: /(^|\/)pnpm-lock\.yaml$/ },
-  { label: 'dependency manifest/lockfile', re: /(^|\/)pnpm-workspace\.yaml$/ },
-  { label: 'dependency manifest/lockfile', re: /(^|\/)\.npmrc$/ },
   { label: 'dependency manifest/lockfile', re: /(^|\/)(package-lock\.json|yarn\.lock)$/ },
-  { label: 'dependency manifest/lockfile', re: /(^|\/)pnpmfile\.(c|m)?js$/ },
+  // Dependency install-hook / registry / workspace config — NEVER exemptable.
+  // pnpmfile.* executes arbitrary code at install time (RCE-class); .npmrc can
+  // repoint the registry (supply-chain); pnpm-workspace.yaml changes package
+  // topology. These are strictly higher-blast-radius than a lockfile bump, so
+  // they keep a distinct label the exemption cannot waive.
+  { label: 'dependency install-hook/registry config', re: /(^|\/)\.npmrc$/ },
+  { label: 'dependency install-hook/registry config', re: /(^|\/)pnpmfile\.(c|m)?js$/ },
+  { label: 'dependency install-hook/registry config', re: /(^|\/)pnpm-workspace\.yaml$/ },
 ]);
 
+// Label used by the exemptable dependency-manifest/lockfile RED matchers.
+// Callers may exempt exactly this surface (and nothing else) for a bounded,
+// verifiable dependency-automation carve-out — see isDependencyManifestOnly.
+// The install-hook/registry label above is deliberately NOT exemptable.
+export const DEPENDENCY_MANIFEST_LABEL = 'dependency manifest/lockfile';
+
 const SHA_RE = /^[0-9a-f]{40}$/i;
+
+/**
+ * True only when EVERY changed path (current filename AND any rename source)
+ * is a dependency manifest/lockfile. This is the precondition for the bounded
+ * dependency-automation exemption: if a PR also touches a workflow, auth file,
+ * migration, etc., this returns false and the exemption cannot apply.
+ */
+export function isDependencyManifestOnly(files) {
+  if (!Array.isArray(files) || files.length === 0) return false;
+  const isDepPath = path =>
+    RED_PATH_MATCHERS.some(m => m.label === DEPENDENCY_MANIFEST_LABEL && m.re.test(path));
+  return files.every(file => {
+    const paths = [file.filename, file.previous_filename].filter(Boolean).map(normalizePath);
+    return paths.length > 0 && paths.every(isDepPath);
+  });
+}
 
 function normalizeLabel(label) {
   return String(label ?? '').trim().toLowerCase();
@@ -126,20 +169,29 @@ function changedLineCount(file) {
   return changes || additions + deletions;
 }
 
-function activeFiles(files) {
-  return files.filter(file => file.status !== 'removed');
-}
-
-export function matchRedPaths(files) {
+export function matchRedPaths(files, exemptRedPathLabels = []) {
+  const exempt = new Set(exemptRedPathLabels);
   const hits = [];
-  for (const file of activeFiles(files)) {
-    const path = normalizePath(file.filename);
-    for (const matcher of RED_PATH_MATCHERS) {
-      if (matcher.re.test(path)) {
-        hits.push({ file: path, label: matcher.label });
-        break;
+  for (const file of files) {
+    // Evaluate every path the change touches: the current filename AND the
+    // rename source (previous_filename). Deletions are NOT excluded — deleting
+    // a sacred surface is the high-blast-radius change we must catch. Fail-open
+    // holes here would let a PR reach GREEN by *removing* a guardrail.
+    const candidatePaths = [file.filename, file.previous_filename]
+      .filter(Boolean)
+      .map(normalizePath);
+    let matched = null;
+    for (const path of candidatePaths) {
+      for (const matcher of RED_PATH_MATCHERS) {
+        if (exempt.has(matcher.label)) continue;
+        if (matcher.re.test(path)) {
+          matched = { file: path, label: matcher.label };
+          break;
+        }
       }
+      if (matched) break;
     }
+    if (matched) hits.push(matched);
   }
   return hits;
 }
@@ -183,6 +235,7 @@ export function classifyPrRiskLane({
   expectedHeadSha = '',
   evidence = [],
   requiredEvidence = DEFAULT_REQUIRED_EVIDENCE,
+  exemptRedPathLabels = [],
 } = {}) {
   const redReasons = [];
   const orangeReasons = [];
@@ -263,7 +316,7 @@ export function classifyPrRiskLane({
   }
 
   // ── RED path surfaces ────────────────────────────────────────────────────
-  const redPathHits = matchRedPaths(files);
+  const redPathHits = matchRedPaths(files, exemptRedPathLabels);
   if (redPathHits.length > 0) {
     const grouped = [...new Set(redPathHits.map(hit => hit.label))];
     redReasons.push(
@@ -322,6 +375,67 @@ function parseEventLabels(pr) {
   return (pr?.labels ?? []).map(label => typeof label === 'string' ? label : label?.name).filter(Boolean);
 }
 
+// Resolve the NEW path from a numstat path column, which for renames uses git's
+// brace-substitution form and must be reconstructed with its unchanged
+// prefix/suffix (the naive `.replace(/.*=> /, '')` dropped the directory
+// prefix, letting `server/src/{routes => svc}/authz.ts` and
+// `.github/workflows/{a => b}.yml` evade the matchers).
+//   `pre/{old => new}/post` → `pre/new/post`
+//   `old/path => new/path`  → `new/path`
+export function resolveNumstatNewPath(raw) {
+  if (!raw.includes('=>')) return raw;
+  const brace = raw.match(/^(.*)\{(.*?) => (.*?)\}(.*)$/);
+  if (brace) {
+    const [, prefix, , newMid, suffix] = brace;
+    return `${prefix}${newMid}${suffix}`.replace(/\/{2,}/g, '/');
+  }
+  const plain = raw.match(/^(.*?) => (.*)$/);
+  return plain ? plain[2] : raw;
+}
+
+// Parse `git diff --name-status --find-renames` output. This is the AUTHORITY
+// for the resolved new path, status, and rename source — name-status emits the
+// old/new paths as separate tab-separated columns (never brace form), so it is
+// unambiguous.
+export function parseNameStatusOutput(output) {
+  const files = [];
+  for (const line of String(output).split('\n')) {
+    if (!line.trim()) continue;
+    const columns = line.split('\t');
+    const code = columns[0] ?? '';
+    const isRename = code.startsWith('R');
+    const isCopy = code.startsWith('C');
+    const filename = columns[columns.length - 1];
+    const previousFilename = (isRename || isCopy) && columns.length >= 3 ? columns[1] : undefined;
+    let status = 'modified';
+    if (code.startsWith('D')) status = 'removed';
+    else if (code.startsWith('A')) status = 'added';
+    else if (isRename) status = 'renamed';
+    else if (isCopy) status = 'copied';
+    files.push({ filename, status, ...(previousFilename ? { previous_filename: previousFilename } : {}) });
+  }
+  return files;
+}
+
+// Parse `git diff --numstat --find-renames` into a map keyed by the resolved
+// NEW path → line counts. Binary files (`-\t-\tpath`) resolve to 0/0.
+export function parseNumstatOutput(output) {
+  const counts = new Map();
+  for (const line of String(output).split('\n')) {
+    if (!line.trim()) continue;
+    const columns = line.split('\t');
+    if (columns.length < 3) continue;
+    const additions = Number.parseInt(columns[0], 10);
+    const deletions = Number.parseInt(columns[1], 10);
+    const newPath = resolveNumstatNewPath(columns[columns.length - 1]);
+    counts.set(newPath, {
+      additions: Number.isFinite(additions) ? additions : 0,
+      deletions: Number.isFinite(deletions) ? deletions : 0,
+    });
+  }
+  return counts;
+}
+
 function parseGitNumstat(baseSha, headSha) {
   if (!SHA_RE.test(baseSha) || !SHA_RE.test(headSha)) {
     throw new Error('BASE_SHA and HEAD_SHA must be 40-character git SHAs.');
@@ -331,36 +445,18 @@ function parseGitNumstat(baseSha, headSha) {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  const statusByPath = new Map();
-  for (const line of statusOutput.split('\n')) {
-    if (!line.trim()) continue;
-    const columns = line.split('\t');
-    const code = columns[0] ?? '';
-    const filename = columns[columns.length - 1];
-    statusByPath.set(filename, code.startsWith('D') ? 'removed' : 'modified');
-  }
-
-  const output = execFileSync('git', ['diff', '--numstat', '--find-renames', range], {
+  const numstatOutput = execFileSync('git', ['diff', '--numstat', '--find-renames', range], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  const files = [];
-  for (const line of output.split('\n')) {
-    if (!line.trim()) continue;
-    const columns = line.split('\t');
-    if (columns.length < 3) continue;
-    const additions = Number.parseInt(columns[0], 10);
-    const deletions = Number.parseInt(columns[1], 10);
-    const filename = columns[columns.length - 1];
-    const safeAdditions = Number.isFinite(additions) ? additions : 0;
-    const safeDeletions = Number.isFinite(deletions) ? deletions : 0;
-    files.push({
-      filename,
-      additions: safeAdditions,
-      deletions: safeDeletions,
-      changes: safeAdditions + safeDeletions,
-      status: statusByPath.get(filename) ?? 'modified',
-    });
+
+  const files = parseNameStatusOutput(statusOutput);
+  const counts = parseNumstatOutput(numstatOutput);
+  for (const file of files) {
+    const c = counts.get(file.filename) ?? { additions: 0, deletions: 0 };
+    file.additions = c.additions;
+    file.deletions = c.deletions;
+    file.changes = c.additions + c.deletions;
   }
   return files;
 }
