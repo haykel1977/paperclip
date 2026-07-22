@@ -15,10 +15,10 @@ function createApp(
   actorType: "board" | "agent",
   boardSource: "session" | "local_implicit" | "board_key" | "cloud_tenant" = "session",
 ) {
-
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
+
     req.actor = actorType === "board"
       ? { type: "board", userId: "board", source: boardSource }
       : { type: "agent", agentId: "agent-1" };
@@ -125,11 +125,11 @@ describe("boardMutationGuard", () => {
   it("blocks board mutations when x-forwarded-host does not match origin", async () => {
     process.env[trustProxyEnv] = "true";
     const middleware = boardMutationGuard();
-
     const req = {
       method: "POST",
       actor: { type: "board", userId: "board", source: "session" },
       header: (name: string) => {
+
         if (name === "host") return "127.0.0.1";
         if (name === "x-forwarded-host") return "10.90.10.20:3443";
         if (name === "origin") return "https://evil.example.com";

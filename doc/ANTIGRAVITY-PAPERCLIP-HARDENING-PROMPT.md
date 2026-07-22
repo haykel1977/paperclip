@@ -20,10 +20,11 @@ Tu interviens sur `haykel1977/paperclip` après un audit complet de sécurité, 
 
 ## État de départ à vérifier
 
-- `main` doit contenir au minimum `6622b02a630fd1de81d22ae451d0f40a5d4debf7` (PR #52, gouvernance fail-closed).
-- La PR #40 Better Auth a été rebasée au SHA `eeb63bb5439903caa2cb3b42bd2919db4b5d0db4`. Vérifier son état actuel ; ne la fusionner que si elle est à jour, approuvée et si tous les checks requis sont verts.
-- Le runtime `quantum-dev.kantum.dev` utilisait encore l’image `main-b32ac930` au moment du rapport.
+- `main` contient `c0ac0c30bccba51f0794eb7c15075b79eae0a941`, fusion de la PR #40 Better Auth après la PR #52 de gouvernance fail-closed.
+- La PR #40 a été fusionnée après réussite de `verify`, Build, Typecheck, tests généraux, quatre shards, e2e, canary dry-run et gitleaks. Le check consultatif `review` restait en échec et doit être diagnostiqué séparément.
+- Le runtime `quantum-dev.kantum.dev` utilisait encore l’image `main-b32ac930` au moment du rapport et doit maintenant être redéployé sur une image immuable construite depuis `c0ac0c30` ou un successeur explicitement validé.
 - Une branche Dyad séparée ajoute normalement :
+
   - `registry-url: https://registry.npmjs.org` aux jobs `publish_canary` et `publish_stable` ;
   - validation des JWT agents contre le run actif, l’agent, la compagnie et l’adapter ;
   - refus d’un `X-Paperclip-Run-Id` contradictoire ;
@@ -59,14 +60,12 @@ Rendre canary et stable publiables de façon reproductible et sans secret longue
 - Le tag Git canary correspond exactement aux artefacts npm.
 - Aucun secret n’apparaît dans les logs.
 
-## Lot 2 — Finaliser Better Auth et déployer (P1)
+## Lot 2 — Déployer Better Auth 1.6.13 (P1)
 
-1. Vérifier la PR #40 et ses checks sur son SHA courant.
-2. Obtenir l’approbation humaine requise, fusionner sans contourner les protections.
-3. Attendre le build Docker du SHA fusionné et utiliser un tag immuable, jamais seulement `latest`.
-4. Déployer sur `quantum-dev.kantum.dev` en conservant l’ancienne image comme rollback.
-5. Vérifier : health, bootstrap ready, login, session, logout, mutation avec Origin valide, rejet Origin invalide, et absence d’erreurs serveur.
-6. En cas d’échec, restaurer immédiatement `main-b32ac930` et documenter la cause.
+1. Confirmer que le build Docker de `c0ac0c30` est vert et utiliser son tag immuable, jamais seulement `latest`.
+2. Déployer sur `quantum-dev.kantum.dev` en conservant l’ancienne image comme rollback.
+3. Vérifier : health, bootstrap ready, login, session, logout, mutation avec Origin valide, rejet Origin invalide, et absence d’erreurs serveur.
+4. En cas d’échec, restaurer immédiatement `main-b32ac930` et documenter la cause.
 
 ## Lot 3 — Souveraineté vérifiable des modèles (P0, décision humaine requise)
 

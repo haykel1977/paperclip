@@ -8,12 +8,12 @@ import {
 describe("agent local JWT", () => {
   const secretEnv = "PAPERCLIP_AGENT_JWT_SECRET";
   const betterAuthSecretEnv = "BETTER_AUTH_SECRET";
-
   const ttlEnv = "PAPERCLIP_AGENT_JWT_TTL_SECONDS";
   const issuerEnv = "PAPERCLIP_AGENT_JWT_ISSUER";
   const audienceEnv = "PAPERCLIP_AGENT_JWT_AUDIENCE";
 
   const originalEnv = {
+
     secret: process.env[secretEnv],
     betterAuthSecret: process.env[betterAuthSecretEnv],
     ttl: process.env[ttlEnv],
@@ -62,11 +62,11 @@ describe("agent local JWT", () => {
   });
 
   it("returns null when secret is missing", () => {
-
     process.env[secretEnv] = "";
     const token = createLocalAgentJwt("agent-1", "company-1", "claude_local", "run-1");
     expect(token).toBeNull();
     expect(verifyLocalAgentJwt("abc.def.ghi")).toBeNull();
+
   });
 
   it("falls back to BETTER_AUTH_SECRET when PAPERCLIP_AGENT_JWT_SECRET is absent", () => {

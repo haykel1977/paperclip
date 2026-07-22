@@ -13,11 +13,11 @@ afterEach(() => {
 });
 
 function createApp(opts: { enabled: boolean; allowedHostnames?: string[]; bindHost?: string }) {
-
   const app = express();
   app.use(
     privateHostnameGuard({
       enabled: opts.enabled,
+
       allowedHostnames: opts.allowedHostnames ?? [],
       bindHost: opts.bindHost ?? "0.0.0.0",
     }),
