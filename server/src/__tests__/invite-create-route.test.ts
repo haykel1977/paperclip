@@ -1,13 +1,11 @@
 import express from "express";
 import request from "supertest";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const logActivityMock = vi.fn();
-const originalTrustProxyHeaders = process.env.PAPERCLIP_TRUST_PROXY_HEADERS;
 
 function registerModuleMocks() {
   vi.doMock("../services/index.js", () => ({
-
     accessService: () => ({
       isInstanceAdmin: vi.fn(),
       canUser: vi.fn(),
@@ -119,29 +117,6 @@ describe("POST /companies/:companyId/invites", () => {
     logActivityMock.mockReset();
   });
 
-<<<<<<< HEAD
-  afterEach(() => {
-    if (originalTrustProxyHeaders === undefined) {
-      delete process.env.PAPERCLIP_TRUST_PROXY_HEADERS;
-    } else {
-      process.env.PAPERCLIP_TRUST_PROXY_HEADERS = originalTrustProxyHeaders;
-    }
-  });
-
-  it("returns an absolute invite URL using the request base URL from a trusted proxy", async () => {
-    process.env.PAPERCLIP_TRUST_PROXY_HEADERS = "true";
-    const app = await createApp();
-
-    const res = await request(app)
-      .post("/api/companies/company-1/invites")
-      .set("host", "paperclip.example")
-      .set("x-forwarded-proto", "https")
-
-      .send({
-        allowedJoinTypes: "human",
-        humanRole: "viewer",
-      });
-=======
   it("returns an absolute invite URL using the request base URL", async () => {
     const origTrust = process.env.PAPERCLIP_TRUST_PROXY_HEADERS;
     process.env.PAPERCLIP_TRUST_PROXY_HEADERS = "true";
@@ -156,7 +131,6 @@ describe("POST /companies/:companyId/invites", () => {
           allowedJoinTypes: "human",
           humanRole: "viewer",
         });
->>>>>>> e8a4c894760512744f65e49f9dbd8f9b36043f41
 
       expect(res.status).toBe(201);
       expect(res.body.companyName).toBe("Acme Robotics");

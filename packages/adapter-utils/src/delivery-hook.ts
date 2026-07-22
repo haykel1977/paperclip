@@ -316,6 +316,145 @@ async function findExistingPr(input: {
   return null;
 }
 
+export function buildIssueDeliveryKey(repo: string, issueIdentifier: string | null, issueId: string | null): string {
+  return `${repo}:${issueIdentifier ?? issueId ?? "unknown"}`;
+}
+
+type ExistingIssuePr = {
+  url: string;
+  state: "OPEN" | "MERGED";
+  mergeCommitOid: string | null;
+};
+
+type ExistingIssuePrLookup =
+  | { ok: true; pr: ExistingIssuePr | null }
+  | { ok: false; reason: string };
+
+function hasExactIssueReference(input: {
+  body: string;
+  title: string;
+  idempotencyKey: string;
+  issueIdentifier: string | null;
+  issueId: string | null;
+}) {
+  const bodyLines = input.body.split(/\r?\n/).map((line) => line.trim().toLowerCase());
+  if (bodyLines.includes(`- idempotency key: ${input.idempotencyKey}`.toLowerCase())) return true;
+  if (input.issueId && input.body.includes(`(${input.issueId})`)) return true;
+  if (!input.issueIdentifier) return false;
+  const escaped = input.issueIdentifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const exactIdentifier = new RegExp(`(^|[^A-Za-z0-9-])${escaped}([^A-Za-z0-9-]|$)`, "i");
+  return exactIdentifier.test(input.title) || exactIdentifier.test(input.body);
+}
+
+async function findExistingPrForIssue(input: {
+  repo: string;
+  issueIdentifier: string | null;
+  issueId: string | null;
+  worktreeCwd: string;
+  env: Record<string, string>;
+  runProc: DeliveryHookRunProcess;
+}): Promise<ExistingIssuePrLookup> {
+  const searchTerm = input.issueIdentifier ?? input.issueId;
+  if (!searchTerm) return { ok: true, pr: null };
+
+  const result = await input.runProc(
+    "gh",
+    [
+      "pr",
+      "list",
+      "--repo",
+      input.repo,
+      "--state",
+      "all",
+      "--search",
+      searchTerm,
+      "--limit",
+      "100",
+      "--json",
+      "url,state,mergedAt,mergeCommit,title,body",
+    ],
+    input.worktreeCwd,
+    input.env,
+  );
+  if (result.exitCode !== 0) {
+    return { ok: false, reason: firstNonEmptyLine(result.stderr) || "GitHub PR lookup failed" };
+  }
+  if (!result.stdout.trim()) return { ok: true, pr: null };
+
+  let rows: Array<{
+    url?: unknown;
+    state?: unknown;
+    mergedAt?: unknown;
+    mergeCommit?: { oid?: unknown } | null;
+    title?: unknown;
+    body?: unknown;
+  }>;
+  try {
+    const parsed = JSON.parse(result.stdout) as unknown;
+    if (!Array.isArray(parsed)) return { ok: false, reason: "GitHub PR lookup returned a non-array payload" };
+    rows = parsed;
+  } catch {
+    return { ok: false, reason: "GitHub PR lookup returned invalid JSON" };
+  }
+
+  const idempotencyKey = buildIssueDeliveryKey(input.repo, input.issueIdentifier, input.issueId);
+  const matches = rows.flatMap((row): ExistingIssuePr[] => {
+    const url = typeof row.url === "string" ? row.url.trim() : "";
+    const title = typeof row.title === "string" ? row.title : "";
+    const body = typeof row.body === "string" ? row.body : "";
+    const merged = typeof row.mergedAt === "string" && row.mergedAt.length > 0;
+    const open = row.state === "OPEN";
+    if (!url || (!open && !merged)) return [];
+    if (!hasExactIssueReference({
+      body,
+      title,
+      idempotencyKey,
+      issueIdentifier: input.issueIdentifier,
+      issueId: input.issueId,
+    })) return [];
+    return [{
+      url,
+      state: merged ? "MERGED" : "OPEN",
+      mergeCommitOid:
+        merged && row.mergeCommit && typeof row.mergeCommit.oid === "string"
+          ? row.mergeCommit.oid
+          : null,
+    }];
+  });
+
+  return {
+    ok: true,
+    pr: matches.find((candidate) => candidate.state === "OPEN")
+      ?? matches.find((candidate) => candidate.state === "MERGED")
+      ?? null,
+  };
+}
+
+async function verifyMergedPrOnBase(input: {
+  repo: string;
+  baseBranch: string;
+  pr: ExistingIssuePr;
+  worktreeCwd: string;
+  env: Record<string, string>;
+  runProc: DeliveryHookRunProcess;
+}): Promise<boolean> {
+  if (input.pr.state !== "MERGED" || !input.pr.mergeCommitOid) return false;
+  const compare = await input.runProc(
+    "gh",
+    [
+      "api",
+      `repos/${input.repo}/compare/${input.pr.mergeCommitOid}...${encodeURIComponent(input.baseBranch)}`,
+      "--jq",
+      ".status",
+    ],
+    input.worktreeCwd,
+    input.env,
+  );
+  if (compare.exitCode !== 0) return false;
+  const status = compare.stdout.trim().toLowerCase();
+  return status === "ahead" || status === "identical";
+}
+
 async function remoteBranchExists(input: {
   branch: string;
   worktreeCwd: string;
@@ -541,6 +680,7 @@ function buildQuantumPrBody(input: {
   issueIdentifier: string | null;
   issueId: string | null;
   runId: string;
+  repo: string;
   adapterType?: string | null;
   agentId?: string | null;
   model?: string | null;
@@ -555,6 +695,7 @@ function buildQuantumPrBody(input: {
   signingPlan: DeliveryCommitSigningPlan;
 }): string {
   const issue = formatPrValue(input.issueIdentifier);
+  const idempotencyKey = buildIssueDeliveryKey(input.repo, input.issueIdentifier, input.issueId);
   const changedFiles = formatChangedFiles(input.statusStdout);
   const changedFileRows = changedFiles.length > 0 ? changedFiles.map((file) => `- \`${file}\``) : ["- No changed path reported"];
   const gateRows = input.qualityGateCommands.map(
@@ -578,6 +719,8 @@ function buildQuantumPrBody(input: {
     "",
     "## Delivery Metadata",
     `- Paperclip issue: ${issue} (${formatPrValue(input.issueId)})`,
+    `- Repository: ${input.repo}`,
+    `- Idempotency key: ${idempotencyKey}`,
     `- Run: ${input.runId}`,
     `- Adapter: ${formatPrValue(input.adapterType)}`,
     `- Agent: ${formatPrValue(input.agentId)}`,
@@ -701,6 +844,44 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     await log("stdout", `[delivery ${ts()}] result=pr_exists pr_url=${existingPrUrl}\n`);
     return { delivered: true, prUrl: existingPrUrl, reason: "pr_exists" };
   }
+
+  const issuePrLookup = await findExistingPrForIssue({
+    repo: input.repo,
+    issueIdentifier: input.issueIdentifier,
+    issueId: input.issueId,
+    worktreeCwd,
+    env: deliveryCommandEnv,
+    runProc,
+  });
+  if (!issuePrLookup.ok) {
+    await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="issue_pr_lookup_failed" detail="${issuePrLookup.reason}"\n`);
+    return { delivered: false, prUrl: null, reason: "delivery_blocked: issue PR lookup failed" };
+  }
+  if (issuePrLookup.pr?.state === "OPEN") {
+    await log("stdout", `[delivery ${ts()}] result=pr_exists issue_key=${buildIssueDeliveryKey(input.repo, input.issueIdentifier, input.issueId)} pr_url=${issuePrLookup.pr.url}\n`);
+    return { delivered: true, prUrl: issuePrLookup.pr.url, reason: "pr_exists" };
+  }
+  if (issuePrLookup.pr?.state === "MERGED") {
+    const mergeIsOnBase = await verifyMergedPrOnBase({
+      repo: input.repo,
+      baseBranch: input.baseBranch,
+      pr: issuePrLookup.pr,
+      worktreeCwd,
+      env: deliveryCommandEnv,
+      runProc,
+    });
+    if (!mergeIsOnBase) {
+      await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="merged_issue_result_not_on_base" pr_url=${issuePrLookup.pr.url}\n`);
+      return {
+        delivered: false,
+        prUrl: issuePrLookup.pr.url,
+        reason: "delivery_blocked: merged issue result not on base",
+      };
+    }
+    await log("stdout", `[delivery ${ts()}] result=issue_already_merged issue_key=${buildIssueDeliveryKey(input.repo, input.issueIdentifier, input.issueId)} pr_url=${issuePrLookup.pr.url}\n`);
+    return { delivered: false, prUrl: issuePrLookup.pr.url, reason: "issue_already_merged" };
+  }
+
   if (await remoteBranchExists({ branch, worktreeCwd, env: deliveryCommandEnv, runProc })) {
     const collisionBranch = await resolveRemoteCollisionBranch({
       branch,
