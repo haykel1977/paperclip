@@ -1,11 +1,13 @@
 import express from "express";
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const logActivityMock = vi.fn();
+const originalTrustProxyHeaders = process.env.PAPERCLIP_TRUST_PROXY_HEADERS;
 
 function registerModuleMocks() {
   vi.doMock("../services/index.js", () => ({
+
     accessService: () => ({
       isInstanceAdmin: vi.fn(),
       canUser: vi.fn(),
@@ -117,13 +119,23 @@ describe("POST /companies/:companyId/invites", () => {
     logActivityMock.mockReset();
   });
 
-  it("returns an absolute invite URL using the request base URL", async () => {
+  afterEach(() => {
+    if (originalTrustProxyHeaders === undefined) {
+      delete process.env.PAPERCLIP_TRUST_PROXY_HEADERS;
+    } else {
+      process.env.PAPERCLIP_TRUST_PROXY_HEADERS = originalTrustProxyHeaders;
+    }
+  });
+
+  it("returns an absolute invite URL using the request base URL from a trusted proxy", async () => {
+    process.env.PAPERCLIP_TRUST_PROXY_HEADERS = "true";
     const app = await createApp();
 
     const res = await request(app)
       .post("/api/companies/company-1/invites")
       .set("host", "paperclip.example")
       .set("x-forwarded-proto", "https")
+
       .send({
         allowedJoinTypes: "human",
         humanRole: "viewer",
