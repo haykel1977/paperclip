@@ -56,12 +56,14 @@ import {
   badRequest
 } from "../errors.js";
 import { logger } from "../middleware/logger.js";
+import { requestHost, requestProtocol } from "../middleware/proxy-headers.js";
 import { validate } from "../middleware/validate.js";
 import { collectReachableInterfaceHosts } from "../runtime-api.js";
 import {
   accessService,
   agentService,
   boardAuthService,
+
   deduplicateAgentName,
   logActivity,
   notifyHireApproved
