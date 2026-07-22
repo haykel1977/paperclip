@@ -223,6 +223,13 @@ function collectDeploymentEnvRows(config: PaperclipConfig | null, configPath: st
       note: "Canonical public URL for auth/callback/invite origin wiring",
     },
     {
+      key: "PAPERCLIP_TRUST_PROXY_HEADERS",
+      value: process.env.PAPERCLIP_TRUST_PROXY_HEADERS ?? "false",
+      source: process.env.PAPERCLIP_TRUST_PROXY_HEADERS ? "env" : "default",
+      required: false,
+      note: "Trust X-Forwarded-Host/Proto only when every request passes through a controlled reverse proxy",
+    },
+    {
       key: "BETTER_AUTH_TRUSTED_ORIGINS",
       value: process.env.BETTER_AUTH_TRUSTED_ORIGINS ?? trustedOriginsDefault,
       source: process.env.BETTER_AUTH_TRUSTED_ORIGINS
@@ -236,6 +243,7 @@ function collectDeploymentEnvRows(config: PaperclipConfig | null, configPath: st
     {
       key: "PAPERCLIP_AGENT_JWT_TTL_SECONDS",
       value: process.env.PAPERCLIP_AGENT_JWT_TTL_SECONDS ?? DEFAULT_AGENT_JWT_TTL_SECONDS,
+
       source: process.env.PAPERCLIP_AGENT_JWT_TTL_SECONDS ? "env" : "default",
       required: false,
       note: "JWT lifetime in seconds",

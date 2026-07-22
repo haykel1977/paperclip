@@ -1,11 +1,19 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
 import { privateHostnameGuard } from "../middleware/private-hostname-guard.js";
 
 const unknownHostname = "blocked-host.invalid";
+const trustProxyEnv = "PAPERCLIP_TRUST_PROXY_HEADERS";
+const originalTrustProxy = process.env[trustProxyEnv];
+
+afterEach(() => {
+  if (originalTrustProxy === undefined) delete process.env[trustProxyEnv];
+  else process.env[trustProxyEnv] = originalTrustProxy;
+});
 
 function createApp(opts: { enabled: boolean; allowedHostnames?: string[]; bindHost?: string }) {
+
   const app = express();
   app.use(
     privateHostnameGuard({
@@ -39,6 +47,25 @@ describe("privateHostnameGuard", () => {
   it("allows explicitly configured hostnames", async () => {
     const app = createApp({ enabled: true, allowedHostnames: ["dotta-macbook-pro"] });
     const res = await request(app).get("/api/health").set("Host", "dotta-macbook-pro:3100");
+    expect(res.status).toBe(200);
+  });
+
+  it("does not let an untrusted x-forwarded-host bypass the Host allowlist", async () => {
+    const app = createApp({ enabled: true, allowedHostnames: ["allowed.example.com"] });
+    const res = await request(app)
+      .get("/api/health")
+      .set("Host", `${unknownHostname}:3100`)
+      .set("X-Forwarded-Host", "allowed.example.com");
+    expect(res.status).toBe(403);
+  });
+
+  it("uses x-forwarded-host when proxy headers are explicitly trusted", async () => {
+    process.env[trustProxyEnv] = "true";
+    const app = createApp({ enabled: true, allowedHostnames: ["allowed.example.com"] });
+    const res = await request(app)
+      .get("/api/health")
+      .set("Host", `${unknownHostname}:3100`)
+      .set("X-Forwarded-Host", "allowed.example.com");
     expect(res.status).toBe(200);
   });
 
