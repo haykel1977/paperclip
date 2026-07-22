@@ -1,0 +1,8 @@
+{
+  "$comment": "Machine-readable policy for the paperclip-checker App gate. Loaded from the TRUSTED base branch only. Each required check is bound to its expected producing app so a same-named check-run/status from any other app cannot satisfy the gate. github-actions is app id 15368 (slug 'github-actions'); both required checks are produced by GitHub Actions jobs (verify from workflow 'PR', gitleaks from workflow 'Secret Scan'). See doc/PAPERCLIP-CHECKER.md.",
+  "appSlug": "paperclip-checker[bot]",
+  "requiredChecks": [
+    { "name": "verify", "type": "check_run", "appSlug": "github-actions", "appId": 15368 },
+    { "name": "gitleaks", "type": "check_run", "appSlug": "github-actions", "appId": 15368 }
+  ]
+}

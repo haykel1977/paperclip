@@ -2,11 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   readCheckerConfig,
+  loadCheckerPolicy,
   summarizeRequiredChecks,
   evaluateChecker,
-  findAppReview,
   findApprovedAppReview,
+  resolvePrNumberForSha,
+  sanitizeError,
   DEFAULT_APP_SLUG,
+  DEFAULT_REQUIRED_CHECK_POLICY,
 } from '../paperclip-checker.mjs';
 import {
   generateAppJwt,
@@ -18,12 +21,15 @@ import {
 const HEAD = 'a'.repeat(40);
 const OTHER = 'b'.repeat(40);
 const APP = DEFAULT_APP_SLUG; // 'paperclip-checker[bot]'
+const GH_ACTIONS = { slug: 'github-actions', id: 15368 };
+const POLICY = DEFAULT_REQUIRED_CHECK_POLICY;
 
 const activeConfig = () => ({ active: true, reasons: [], appId: '999', privateKey: 'x' });
 
+// Check-runs from the EXPECTED producer (github-actions, id 15368).
 const greenChecks = () => [
-  { name: 'verify', status: 'completed', conclusion: 'success' },
-  { name: 'gitleaks', status: 'completed', conclusion: 'success' },
+  { name: 'verify', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
+  { name: 'gitleaks', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
 ];
 
 function greenPr(overrides = {}) {
@@ -47,6 +53,7 @@ function evalGreen(overrides = {}) {
     files: overrides.files ?? [{ filename: 'server/src/services/cursor.ts', additions: 5, deletions: 0, changes: 5 }],
     checkRuns: overrides.checkRuns ?? greenChecks(),
     statuses: overrides.statuses ?? [],
+    requiredChecks: overrides.requiredChecks ?? POLICY,
     appSlug: overrides.appSlug ?? APP,
     headCommitAuthorLogin: overrides.headCommitAuthorLogin ?? 'paperclipai[bot]',
     lastPusherLogin: overrides.lastPusherLogin ?? 'paperclipai[bot]',
@@ -91,54 +98,138 @@ test('readCheckerConfig: non-numeric app id and non-PEM key → inactive', () =>
   assert.equal(c.active, false);
 });
 
-// ── summarizeRequiredChecks: only success passes ────────────────────────────
+// ── loadCheckerPolicy: producer binding source of truth ─────────────────────
 
-test('summarizeRequiredChecks: all success → passing', () => {
-  const r = summarizeRequiredChecks(greenChecks(), [], ['verify', 'gitleaks']);
-  assert.equal(r.passing, true);
+test('loadCheckerPolicy: env JSON policy wins and is producer-bound', () => {
+  const env = {
+    REQUIRED_CHECKS_POLICY: JSON.stringify({
+      appSlug: 'custom[bot]',
+      requiredChecks: [{ name: 'verify', type: 'check_run', appSlug: 'github-actions', appId: 15368 }],
+    }),
+  };
+  const p = loadCheckerPolicy(env, () => { throw new Error('should not read file'); });
+  assert.equal(p.appSlug, 'custom[bot]');
+  assert.equal(p.requiredChecks.length, 1);
+  assert.equal(p.requiredChecks[0].appId, 15368);
+  assert.equal(p.requiredChecks[0].type, 'check_run');
+});
+
+test('loadCheckerPolicy: reads committed config file when no env policy', () => {
+  const fake = JSON.stringify({
+    appSlug: 'paperclip-checker[bot]',
+    requiredChecks: [{ name: 'gitleaks', type: 'check_run', appSlug: 'github-actions', appId: 15368 }],
+  });
+  const p = loadCheckerPolicy({ CHECKER_CONFIG_PATH: '/whatever.json' }, () => fake);
+  assert.equal(p.requiredChecks[0].name, 'gitleaks');
+  assert.equal(p.requiredChecks[0].appId, 15368);
+});
+
+test('loadCheckerPolicy: falls back to built-in default when file unreadable', () => {
+  const p = loadCheckerPolicy({}, () => { throw new Error('ENOENT'); });
+  assert.equal(p.appSlug, DEFAULT_APP_SLUG);
+  assert.deepEqual(p.requiredChecks.map(c => c.name), ['verify', 'gitleaks']);
+});
+
+// ── summarizeRequiredChecks: only success from the EXPECTED producer passes ──
+
+test('summarizeRequiredChecks: all success from expected producer → passing', () => {
+  const r = summarizeRequiredChecks(greenChecks(), [], POLICY);
+  assert.equal(r.state, 'passing');
+  assert.deepEqual(r.failures, []);
 });
 
 for (const conclusion of ['neutral', 'skipped', 'failure', 'cancelled', 'timed_out', 'action_required']) {
-  test(`summarizeRequiredChecks: ${conclusion} is not a pass`, () => {
+  test(`summarizeRequiredChecks: ${conclusion} is not a pass (failed)`, () => {
     const r = summarizeRequiredChecks(
-      [{ name: 'verify', status: 'completed', conclusion }, { name: 'gitleaks', status: 'completed', conclusion: 'success' }],
+      [
+        { name: 'verify', status: 'completed', conclusion, app: { ...GH_ACTIONS } },
+        { name: 'gitleaks', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
+      ],
       [],
-      ['verify', 'gitleaks'],
+      POLICY,
     );
-    assert.equal(r.passing, false);
+    assert.equal(r.state, 'failed');
     assert.match(r.failures.join(' '), new RegExp(conclusion));
   });
 }
 
-test('summarizeRequiredChecks: missing required check fails closed', () => {
-  const r = summarizeRequiredChecks([{ name: 'verify', status: 'completed', conclusion: 'success' }], [], ['verify', 'gitleaks']);
-  assert.equal(r.passing, false);
-  assert.match(r.failures.join(' '), /gitleaks` is missing/);
+test('summarizeRequiredChecks: missing required check → pending (not failed)', () => {
+  const r = summarizeRequiredChecks(
+    [{ name: 'verify', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } }],
+    [],
+    POLICY,
+  );
+  assert.equal(r.state, 'pending');
+  assert.deepEqual(r.pendingNames, ['gitleaks']);
 });
 
-test('summarizeRequiredChecks: pending/in-progress check fails closed', () => {
+test('summarizeRequiredChecks: in-progress check → pending', () => {
   const r = summarizeRequiredChecks(
-    [{ name: 'verify', status: 'in_progress', conclusion: null }, { name: 'gitleaks', status: 'completed', conclusion: 'success' }],
-    [], ['verify', 'gitleaks'],
+    [
+      { name: 'verify', status: 'in_progress', conclusion: null, app: { ...GH_ACTIONS } },
+      { name: 'gitleaks', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
+    ],
+    [], POLICY,
   );
-  assert.equal(r.passing, false);
+  assert.equal(r.state, 'pending');
+  assert.deepEqual(r.pendingNames, ['verify']);
 });
 
 test('summarizeRequiredChecks: newest run wins over stale success', () => {
   const r = summarizeRequiredChecks(
     [
-      { name: 'verify', status: 'completed', conclusion: 'success', completed_at: '2024-01-01T00:00:00Z' },
-      { name: 'verify', status: 'completed', conclusion: 'failure', completed_at: '2024-02-01T00:00:00Z' },
-      { name: 'gitleaks', status: 'completed', conclusion: 'success' },
+      { name: 'verify', status: 'completed', conclusion: 'success', completed_at: '2024-01-01T00:00:00Z', app: { ...GH_ACTIONS } },
+      { name: 'verify', status: 'completed', conclusion: 'failure', completed_at: '2024-02-01T00:00:00Z', app: { ...GH_ACTIONS } },
+      { name: 'gitleaks', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
     ],
-    [], ['verify', 'gitleaks'],
+    [], POLICY,
   );
-  assert.equal(r.passing, false);
+  assert.equal(r.state, 'failed');
 });
 
-test('summarizeRequiredChecks: commit status success satisfies requirement', () => {
-  const r = summarizeRequiredChecks([], [{ context: 'verify', state: 'success' }, { context: 'gitleaks', state: 'success' }], ['verify', 'gitleaks']);
-  assert.equal(r.passing, true);
+// ── summarizeRequiredChecks: producer binding (spoof defense) ───────────────
+
+test('summarizeRequiredChecks: same-name check-run from WRONG app → failed (spoof blocked)', () => {
+  const r = summarizeRequiredChecks(
+    [
+      { name: 'verify', status: 'completed', conclusion: 'success', app: { slug: 'evil-app', id: 99999 } },
+      { name: 'gitleaks', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
+    ],
+    [], POLICY,
+  );
+  assert.equal(r.state, 'failed');
+  assert.match(r.failures.join(' '), /unexpected app/i);
+});
+
+test('summarizeRequiredChecks: no producer app info → not matched (spoof blocked)', () => {
+  const r = summarizeRequiredChecks(
+    [
+      { name: 'verify', status: 'completed', conclusion: 'success' },
+      { name: 'gitleaks', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
+    ],
+    [], POLICY,
+  );
+  assert.equal(r.state, 'failed');
+  assert.match(r.failures.join(' '), /unexpected app/i);
+});
+
+test('summarizeRequiredChecks: commit status for a check_run-typed requirement does NOT satisfy it', () => {
+  // No silent check-run↔status fallback: the policy expects a check_run, so a
+  // same-named commit status is ignored and the requirement stays pending.
+  const r = summarizeRequiredChecks(
+    [],
+    [{ context: 'verify', state: 'success' }, { context: 'gitleaks', state: 'success' }],
+    POLICY,
+  );
+  assert.equal(r.state, 'pending');
+});
+
+test('summarizeRequiredChecks: status-typed requirement is satisfied only by expected creator', () => {
+  const statusPolicy = [{ name: 'legacy-ci', type: 'status', appSlug: 'github-actions' }];
+  const ok = summarizeRequiredChecks([], [{ context: 'legacy-ci', state: 'success', creator: { login: 'github-actions[bot]' } }], statusPolicy);
+  assert.equal(ok.state, 'passing');
+  const spoof = summarizeRequiredChecks([], [{ context: 'legacy-ci', state: 'success', creator: { login: 'evil' } }], statusPolicy);
+  assert.equal(spoof.state, 'failed');
 });
 
 // ── evaluateChecker: activation gate (blocked, never a pass) ────────────────
@@ -192,13 +283,41 @@ test('evaluateChecker: malformed head SHA → rejected', () => {
 // ── evaluateChecker: check conclusions gate approval ────────────────────────
 
 test('evaluateChecker: neutral required check → rejected', () => {
-  const r = evalGreen({ checkRuns: [{ name: 'verify', status: 'completed', conclusion: 'neutral' }, { name: 'gitleaks', status: 'completed', conclusion: 'success' }] });
+  const r = evalGreen({ checkRuns: [
+    { name: 'verify', status: 'completed', conclusion: 'neutral', app: { ...GH_ACTIONS } },
+    { name: 'gitleaks', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
+  ] });
   assert.equal(r.decision, 'rejected');
 });
 
-test('evaluateChecker: missing required check → rejected', () => {
-  const r = evalGreen({ checkRuns: [{ name: 'verify', status: 'completed', conclusion: 'success' }] });
+test('evaluateChecker: missing required check → pending (not approved, not rejected)', () => {
+  const r = evalGreen({ checkRuns: [{ name: 'verify', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } }] });
+  assert.equal(r.decision, 'pending');
+  assert.match(r.reasons.join(' '), /gitleaks/);
+});
+
+test('evaluateChecker: spoofed same-name wrong-app check → rejected (blocked, never pending)', () => {
+  const r = evalGreen({ checkRuns: [
+    { name: 'verify', status: 'completed', conclusion: 'success', app: { slug: 'evil-app', id: 99999 } },
+    { name: 'gitleaks', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
+  ] });
   assert.equal(r.decision, 'rejected');
+  assert.match(r.reasons.join(' '), /unexpected app/i);
+});
+
+// ── evaluateChecker: pending → approval after last check turns green ─────────
+
+test('evaluateChecker: pending initially, then approved once last check completes green', () => {
+  // First evaluation: gitleaks still in-progress → pending (no approval).
+  const first = evalGreen({ checkRuns: [
+    { name: 'verify', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
+    { name: 'gitleaks', status: 'in_progress', conclusion: null, app: { ...GH_ACTIONS } },
+  ] });
+  assert.equal(first.decision, 'pending');
+
+  // Re-evaluation after the CI workflow_run completes: both green → approved.
+  const second = evalGreen({ eventAction: 'workflow_run', checkRuns: greenChecks() });
+  assert.equal(second.decision, 'approved', second.reasons.join('; '));
 });
 
 // ── evaluateChecker: lane gates (RED/ORANGE/labels/draft/fork) ──────────────
@@ -260,19 +379,64 @@ test('evaluateChecker: no prior approval → dismissStale false', () => {
 
 // ── review discovery helpers ────────────────────────────────────────────────
 
-test('findAppReview: picks latest App review by id', () => {
+test('findApprovedAppReview: picks latest approved App review by id', () => {
   const reviews = [
     { id: 1, state: 'COMMENTED', user: { login: APP } },
     { id: 5, state: 'APPROVED', user: { login: APP } },
     { id: 3, state: 'APPROVED', user: { login: 'someone-else' } },
   ];
-  assert.equal(findAppReview(reviews, APP).id, 5);
   assert.equal(findApprovedAppReview(reviews, APP).id, 5);
 });
 
 test('findApprovedAppReview: ignores non-approved App reviews', () => {
   const reviews = [{ id: 2, state: 'CHANGES_REQUESTED', user: { login: APP } }];
   assert.equal(findApprovedAppReview(reviews, APP), null);
+});
+
+// ── resolvePrNumberForSha: workflow_run PR resolution by head SHA ────────────
+
+test('resolvePrNumberForSha: returns open same-repo PR whose head matches sha', async () => {
+  const gh = async (path) => {
+    assert.equal(path, `/repos/paperclipai/paperclip/commits/${HEAD}/pulls`);
+    return [{ number: 42, state: 'open', head: { sha: HEAD, repo: { full_name: 'paperclipai/paperclip' } }, base: { repo: { full_name: 'paperclipai/paperclip' } } }];
+  };
+  const n = await resolvePrNumberForSha(gh, 'tok', 'paperclipai/paperclip', HEAD);
+  assert.equal(n, 42);
+});
+
+test('resolvePrNumberForSha: ignores fork PRs and closed PRs and SHA mismatches', async () => {
+  const gh = async () => [
+    { number: 1, state: 'closed', head: { sha: HEAD, repo: { full_name: 'paperclipai/paperclip' } }, base: { repo: { full_name: 'paperclipai/paperclip' } } },
+    { number: 2, state: 'open', head: { sha: HEAD, repo: { full_name: 'attacker/paperclip' } }, base: { repo: { full_name: 'paperclipai/paperclip' } } },
+    { number: 3, state: 'open', head: { sha: OTHER, repo: { full_name: 'paperclipai/paperclip' } }, base: { repo: { full_name: 'paperclipai/paperclip' } } },
+  ];
+  const n = await resolvePrNumberForSha(gh, 'tok', 'paperclipai/paperclip', HEAD);
+  assert.equal(n, null);
+});
+
+test('resolvePrNumberForSha: malformed sha → null (no network)', async () => {
+  const n = await resolvePrNumberForSha(() => { throw new Error('should not call'); }, 'tok', 'paperclipai/paperclip', 'nope');
+  assert.equal(n, null);
+});
+
+// ── sanitizeError: never leak raw API bodies ────────────────────────────────
+
+test('sanitizeError: surfaces only HTTP status, not body', () => {
+  const err = new Error('GET /repos/x → 403: {"message":"secret token detail"}');
+  err.statusCode = 403;
+  const msg = sanitizeError(err);
+  assert.match(msg, /HTTP 403/);
+  assert.doesNotMatch(msg, /secret token detail/);
+});
+
+test('sanitizeError: redacts response-body marker even without statusCode', () => {
+  const msg = sanitizeError(new Error('GET /x → 500: {"leak":"do not show"}'));
+  assert.match(msg, /redacted/);
+  assert.doesNotMatch(msg, /do not show/);
+});
+
+test('sanitizeError: passes through a plain controlled message', () => {
+  assert.equal(sanitizeError(new Error('PR head SHA is missing or malformed.')), 'PR head SHA is missing or malformed.');
 });
 
 // ── token module: JWT + least-privilege minting (mocked ghFetch) ────────────
@@ -310,10 +474,17 @@ test('mintInstallationToken: down-scopes to least-privilege permissions + single
   assert.equal(captured.path, '/app/installations/777/access_tokens');
   assert.deepEqual(captured.body.permissions, { ...LEAST_PRIVILEGE_PERMISSIONS });
   assert.deepEqual(captured.body.repositories, ['paperclip']);
-  // No write scope beyond pull_requests.
-  assert.equal(captured.body.permissions.pull_requests, 'write');
-  const writeScopes = Object.entries(captured.body.permissions).filter(([, v]) => v === 'write').map(([k]) => k);
+});
+
+test('LEAST_PRIVILEGE_PERMISSIONS: only pull_requests:write, metadata:read; no unused read scopes', () => {
+  assert.deepEqual({ ...LEAST_PRIVILEGE_PERMISSIONS }, { metadata: 'read', pull_requests: 'write' });
+  const writeScopes = Object.entries(LEAST_PRIVILEGE_PERMISSIONS).filter(([, v]) => v === 'write').map(([k]) => k);
   assert.deepEqual(writeScopes, ['pull_requests']);
+  // The reads-via-default-token design means the App token needs no
+  // contents/issues/actions/checks/statuses scopes at all.
+  for (const scope of ['contents', 'issues', 'actions', 'checks', 'statuses']) {
+    assert.equal(LEAST_PRIVILEGE_PERMISSIONS[scope], undefined, `${scope} must not be granted`);
+  }
 });
 
 test('mintInstallationToken: empty token fails closed', async () => {
@@ -323,7 +494,7 @@ test('mintInstallationToken: empty token fails closed', async () => {
 // ── Mocked end-to-end wiring (the real integration path used by main) ───────
 // Builds a fake ghFetch that serves the exact endpoints gatherInputs() calls,
 // then drives evaluateChecker with those inputs — proving the fetch → classify
-// → decide pipeline holds together for GREEN approval and self-author rejection.
+// → decide pipeline holds together across approval / rejection / race scenarios.
 
 function fakeGitHub({ pr, files, checkRuns, statuses, reviews, headCommit }) {
   return async (path) => {
@@ -357,6 +528,7 @@ async function drive(fixture, { eventAction = 'opened', eventHeadSha = HEAD } = 
     files: filesRes,
     checkRuns: cr.check_runs,
     statuses: st.statuses,
+    requiredChecks: POLICY,
     appSlug: APP,
     headCommitAuthorLogin: headCommit.author?.login ?? '',
     lastPusherLogin: headCommit.committer?.login ?? headCommit.author?.login ?? '',
@@ -389,7 +561,7 @@ test('integration(mocked): App-authored commit is rejected end-to-end', async ()
   assert.match(result.reasons.join(' '), /head-commit author|last pusher/);
 });
 
-test('integration(mocked): new push after evidence (stale event SHA) rejected', async () => {
+test('integration(mocked): new push after evidence (stale event SHA / race) rejected', async () => {
   const result = await drive({
     pr: greenPr(),
     files: [{ filename: 'server/src/services/cursor.ts', additions: 4, deletions: 1, changes: 5 }],
@@ -400,4 +572,47 @@ test('integration(mocked): new push after evidence (stale event SHA) rejected', 
   }, { eventAction: 'synchronize', eventHeadSha: OTHER });
   assert.equal(result.decision, 'rejected');
   assert.match(result.reasons.join(' '), /Stale head SHA/);
+});
+
+test('integration(mocked): workflow_run completion — pending then approved after last check green', async () => {
+  // Pass 1: gitleaks still running → pending (no approval).
+  const pending = await drive({
+    pr: greenPr(),
+    files: [{ filename: 'server/src/services/cursor.ts', additions: 4, deletions: 1, changes: 5 }],
+    checkRuns: [
+      { name: 'verify', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
+      { name: 'gitleaks', status: 'in_progress', conclusion: null, app: { ...GH_ACTIONS } },
+    ],
+    statuses: [],
+    reviews: [],
+    headCommit: { author: { login: 'paperclipai[bot]' }, committer: { login: 'paperclipai[bot]' } },
+  }, { eventAction: 'workflow_run' });
+  assert.equal(pending.decision, 'pending');
+
+  // Pass 2: the Secret Scan workflow_run completes, gitleaks now green → approved.
+  const approved = await drive({
+    pr: greenPr(),
+    files: [{ filename: 'server/src/services/cursor.ts', additions: 4, deletions: 1, changes: 5 }],
+    checkRuns: greenChecks(),
+    statuses: [],
+    reviews: [],
+    headCommit: { author: { login: 'paperclipai[bot]' }, committer: { login: 'paperclipai[bot]' } },
+  }, { eventAction: 'workflow_run' });
+  assert.equal(approved.decision, 'approved', approved.reasons.join('; '));
+});
+
+test('integration(mocked): spoofed same-name check from wrong app is rejected end-to-end', async () => {
+  const result = await drive({
+    pr: greenPr(),
+    files: [{ filename: 'server/src/services/cursor.ts', additions: 4, deletions: 1, changes: 5 }],
+    checkRuns: [
+      { name: 'verify', status: 'completed', conclusion: 'success', app: { slug: 'evil-app', id: 99999 } },
+      { name: 'gitleaks', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
+    ],
+    statuses: [],
+    reviews: [],
+    headCommit: { author: { login: 'paperclipai[bot]' }, committer: { login: 'paperclipai[bot]' } },
+  });
+  assert.equal(result.decision, 'rejected');
+  assert.match(result.reasons.join(' '), /unexpected app/i);
 });

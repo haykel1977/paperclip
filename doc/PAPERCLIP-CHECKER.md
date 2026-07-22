@@ -11,27 +11,55 @@ maintainer action performed only after a live witness PR (see
 
 An independent, least-privilege GitHub App whose sole privileged action is to
 submit or dismiss **its own** PR review. It runs from the trusted base branch
-under `pull_request_target` and **never checks out or executes PR head code**.
-It evaluates only:
+and **never checks out or executes PR head code**. It evaluates only:
 
 - PR metadata (title, draft state, base/head repo, author),
 - changed files and labels,
 - the current head SHA (compared against the trigger-time SHA for freshness),
-- required check-runs / commit statuses on the head SHA,
+- required check-runs / commit statuses on the head SHA, **bound to the app that
+  is expected to produce each check** (see [Producer binding](#producer-binding)),
 - the existing base-branch risk-lane classifier
   (`.github/scripts/classify-pr-risk-lane.mjs`).
+
+**All reads use the workflow's default `GITHUB_TOKEN`.** The privileged App
+installation token is minted **only** when the checker is about to approve or
+dismiss — its single capability is writing its own review.
+
+### Triggers (base-branch code only)
+
+- `pull_request_target` — reacts to PR lifecycle and label changes.
+- `workflow_run` (`completed`) of the base-branch CI workflows that produce the
+  required checks (`PR` → `verify`, `Secret Scan` → `gitleaks`). This is what
+  lets a **pending** gate become an **approval** once the last required check
+  reaches a terminal state. `workflow_run` always runs the base-branch workflow
+  file with base-branch code and never checks out PR head; because it carries no
+  PR context, the script resolves the open, same-repo PR from the run's head SHA
+  (`resolvePrNumberForSha`) and ignores fork/closed/mismatched-SHA PRs.
 
 It is intentionally a **separate identity** from commitperclip so its approval
 is attributable and can satisfy a branch-protection "last push was not by the
 approver" rule.
 
+### Producer binding
+
+Each required check is pinned to its expected producing app via the
+machine-readable, base-branch-only policy file
+`.github/paperclip-checker.config.json` (default: `verify` and `gitleaks`, both
+produced by GitHub Actions, app id `15368`). A same-named check-run **or** commit
+status from any *other* app does **not** satisfy the gate — it is treated as a
+**failure (blocked)**, never silently ignored. There is **no** silent
+check-run↔status fallback: a requirement typed `check_run` is satisfied only by a
+check-run from the expected app; a `status`-typed requirement only by a status
+from the expected creator.
+
 ## Components
 
 | Path | Role |
 | --- | --- |
-| `.github/workflows/paperclip-checker.yml` | `pull_request_target` workflow, base-branch only, gated by the activation variable. |
+| `.github/workflows/paperclip-checker.yml` | `pull_request_target` + `workflow_run` workflow, base-branch only, gated by the activation variable. |
 | `.github/scripts/paperclip-checker.mjs` | Fail-closed decision logic + integration (fetch → classify → decide → approve/dismiss). |
-| `.github/scripts/paperclip-app-token.mjs` | Mints a short-lived, down-scoped installation token. |
+| `.github/scripts/paperclip-app-token.mjs` | Mints a short-lived, down-scoped installation token (write-only capability). |
+| `.github/paperclip-checker.config.json` | Machine-readable producer-binding policy (required checks → expected app id/slug). |
 | `.github/scripts/tests/paperclip-checker.test.mjs` | Unit + mocked integration tests. |
 
 ## Required configuration
@@ -61,40 +89,61 @@ success/neutral, never an approval.
 
 ## Expected App permissions (least privilege)
 
-Grant the App exactly these when creating it. The minted installation token
-additionally **down-scopes** to this set, so an over-granted App still cannot
-exceed it (`LEAST_PRIVILEGE_PERMISSIONS` in `paperclip-app-token.mjs`):
+Because **every read is performed with the workflow's default `GITHUB_TOKEN`**,
+the App itself needs no read scopes beyond the mandatory baseline. Grant it
+exactly these when creating it. The minted installation token additionally
+**down-scopes** to this set, so an over-granted App still cannot exceed it
+(`LEAST_PRIVILEGE_PERMISSIONS` in `paperclip-app-token.mjs`):
 
 | Scope | Access | Why |
 | --- | --- | --- |
-| Metadata | read | baseline required by GitHub |
-| Pull requests | **read/write** | submit/dismiss the App's own review (the only write) |
-| Checks | read | read head-SHA check-run conclusions |
-| Commit statuses | read | read head-SHA status contexts |
-| Actions | read | inspect workflow-run evidence |
-| Contents | read | read changed file paths/metadata (never checkout/execute head) |
-| Issues | read | read PR labels |
+| Metadata | read | baseline required by GitHub for any token |
+| Pull requests | **read/write** | submit/dismiss the App's own review — the **only** capability the App exercises |
 
-**No** code/content write, **no** check write, **no** workflow write, **no**
-administration — the App can never push code, create check-runs, edit
-workflows, or change repo settings.
+`pull_requests` is the **only** write scope and the **only** scope the App
+actually uses. There is deliberately **no** `contents`, `issues`, `actions`,
+`checks`, or `statuses` grant: those reads (changed files, labels, check-runs,
+statuses, commit) all go through the default `GITHUB_TOKEN`, so granting them to
+the App would be unused privilege. **No** code/content write, **no** check
+write, **no** workflow write, **no** administration — the App can never push
+code, create check-runs, edit workflows, or change repo settings.
+
+The App token is also minted **as late as possible** — only after the decision
+is `approved` (or a stale approval must be dismissed). Fork/draft/identity/lane
+rejections are reached during read-only evaluation and never mint a token.
+
+## Diagnostics (no raw API bodies)
+
+All error output is passed through `sanitizeError`, which surfaces only the HTTP
+status code (`GitHub API error (HTTP 403).`) or a redaction marker. Raw GitHub
+response bodies are never echoed to CI logs, and the private key / minted token
+are never logged.
 
 ## Decision model
 
 - **approved** — ONLY when: the PR is GREEN per the classifier, not draft, not a
   fork, the trigger-time head SHA equals the freshly-read head SHA (evidence is
   fresh for the exact commit), every configured blocking check
-  (`verify`, `gitleaks`) concluded `success`, and the App is **not** the PR
-  author, last pusher, or head-commit author.
+  (`verify`, `gitleaks`) concluded `success` **from its expected producing app**,
+  and the App is **not** the PR author, last pusher, or head-commit author. A
+  final head-SHA re-read immediately before the approval POST re-confirms
+  freshness (anti-TOCTOU); a mid-run head advance fails closed.
+- **pending** — no disqualifier, but a required check has not yet reached a
+  terminal state (missing or still running from the expected producer). **No
+  approval.** Exits `0` as a clean no-op so the completing CI `workflow_run` can
+  re-invoke the checker when the last required check turns green. Pending is not
+  a pass.
 - **rejected** — any non-GREEN lane (RED/ORANGE), a stale/mismatched/malformed
-  head SHA, any required check that is `neutral`/`skipped`/`missing`/`failure`/
-  `cancelled`/`timed_out`/pending, a hard-block or contradictory label, a draft
-  or fork PR, or an identity collision with the App.
+  head SHA, any required check that concluded `neutral`/`skipped`/`failure`/
+  `cancelled`/`timed_out`, a same-named check produced by an **unexpected app**
+  (spoof), a hard-block or contradictory label, a draft or fork PR, or an
+  identity collision with the App.
 - **blocked** — activation disabled or App ID/key missing/invalid, or token
-  minting failed.
+  minting/dismissal failed.
 
-Only `approved` exits `0`. `rejected` and `blocked` exit non-zero so a
-misconfigured or ambiguous run can never be mistaken for an approval.
+`approved` and `pending` exit `0` (pending performs no approval); `rejected` and
+`blocked` exit non-zero. A misconfigured or ambiguous run can never be mistaken
+for an approval, and a not-yet-complete run waits rather than failing the PR.
 
 ## Stale-approval handling
 

@@ -13,9 +13,13 @@
  * doc/PAPERCLIP-CHECKER.md).
  *
  * Least privilege: the installation-token request DOWN-SCOPES permissions to
- * exactly what the checker needs, so even if the installed App is granted more,
- * the minted token cannot exceed this set. The checker needs Pull requests
- * write ONLY to submit/dismiss its own review; everything else is read-only.
+ * exactly what the checker WRITES, so even if the installed App is granted
+ * more, the minted token cannot exceed this set. All READS (PR, files, labels,
+ * check-runs, statuses, commit) are performed with the workflow's default
+ * GITHUB_TOKEN, so this App token needs no read scopes beyond the mandatory
+ * `metadata:read`. Its only privileged capability is submitting/dismissing its
+ * own PR review (`pull_requests:write`). This token is minted ONLY when the
+ * checker is about to approve or dismiss — never for read-only evaluation.
  *
  * Exports: generateAppJwt, mintInstallationToken, LEAST_PRIVILEGE_PERMISSIONS,
  * resolveCheckerInstallationId.
@@ -26,17 +30,15 @@ import { fileURLToPath } from 'node:url';
 const REPO_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
 
 // The complete permission set the checker token is allowed to hold. Anything
-// not listed is implicitly denied by GitHub. No code/check/workflow/admin
-// WRITE is present: the checker never pushes code, never creates/edits
-// check-runs, never edits workflows, and never touches repo administration.
+// not listed is implicitly denied by GitHub. `metadata:read` is mandatory for
+// any token; `pull_requests:write` is the ONLY write scope and the ONLY
+// capability the App actually exercises (submit/dismiss its own review). No
+// code/content/check/status/workflow/admin/issues scope is present: the checker
+// never pushes code, never creates/edits check-runs, never edits workflows, and
+// never touches repo administration. Reads use the default GITHUB_TOKEN.
 export const LEAST_PRIVILEGE_PERMISSIONS = Object.freeze({
   metadata: 'read',
-  pull_requests: 'write', // ONLY write scope — needed to submit/dismiss its own review
-  checks: 'read',
-  statuses: 'read',
-  actions: 'read',
-  contents: 'read',
-  issues: 'read',
+  pull_requests: 'write',
 });
 
 export function generateAppJwt(appId, privateKey, now = Math.floor(Date.now() / 1000)) {

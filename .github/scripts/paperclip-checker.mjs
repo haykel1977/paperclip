@@ -3,43 +3,57 @@
  * paperclip-checker.mjs
  * Repository side of the FUTURE independent "paperclip-checker" GitHub App.
  *
- * It runs under pull_request_target from the trusted BASE branch and never
- * checks out or executes PR head code. It only reads PR metadata, changed
- * files, labels, the current head SHA, required check-runs/statuses, and the
- * existing risk-lane classifier (classify-pr-risk-lane.mjs) evaluated on base.
- * Its single privileged action is submitting or dismissing its own PR review.
+ * Trust model. The workflow runs from the trusted BASE branch under two safe
+ * triggers and NEVER checks out or executes PR head code:
+ *   - pull_request_target (PR lifecycle) — reacts to metadata/label changes.
+ *   - workflow_run (completed) of the base-branch CI workflows that PRODUCE the
+ *     required checks — this is what lets the gate re-evaluate once checks reach
+ *     a terminal state. workflow_run always runs the base-branch workflow file
+ *     with base-branch code; the PR is resolved from the head SHA, so no PR
+ *     context is lost and no head code runs.
  *
- * Fail-closed by construction:
- *   - blocked  → activation disabled or App config (ID/key) missing/invalid.
- *   - rejected → any non-GREEN lane, stale/mismatched head SHA, a required
- *                check that is not SUCCESS, a hard-block/contradictory label,
- *                a draft or fork PR, or an identity collision (the App is the
- *                PR author, the last pusher, or the head-commit author).
- *   - approved → ONLY a GREEN PR with a fresh exact head SHA and every
- *                configured blocking check SUCCESS, authored/pushed by someone
- *                other than the App.
+ * It reads only PR metadata, changed files, labels, the current head SHA,
+ * required check-runs/commit statuses, and the base-branch risk-lane classifier.
+ * ALL reads use the workflow's default GITHUB_TOKEN. The least-privilege App
+ * installation token is minted ONLY when the checker is about to approve or
+ * dismiss — its single privileged action is submitting/dismissing its own
+ * review.
  *
- * Neutral/skipped/missing/failure/cancelled/timed_out are never a pass. There
- * is deliberately no success/neutral escape hatch: the CLI exits 0 ONLY on
- * `approved`; every other decision exits non-zero so a misconfigured or
- * ambiguous run can never look like an approval.
+ * Decisions:
+ *   - blocked  → activation disabled or App config (ID/key) missing/invalid, or
+ *                token minting failed. Exit 1. Never a pass.
+ *   - rejected → a disqualifier: non-GREEN lane, stale/malformed head SHA, a
+ *                required check that completed non-success OR was produced by an
+ *                UNEXPECTED app, a hard-block/contradictory label, a draft or
+ *                fork PR, or an identity collision (App is the PR author, last
+ *                pusher, or head-commit author). Exit 1.
+ *   - pending  → no disqualifier, but a required check has not reached a
+ *                terminal state yet. NO approval; exit 0 so the completed CI
+ *                workflow_run can re-invoke us cleanly when the last check
+ *                turns green. Pending is not a pass and never approves.
+ *   - approved → GREEN, fresh exact head SHA, every required check SUCCESS from
+ *                its EXPECTED producer, distinct approver identity. Exit 0.
  *
- * This module is disabled until a maintainer creates the App and installs
- * secrets — see doc/PAPERCLIP-CHECKER.md.
+ * Fresh-evidence / anti-TOCTOU: the trigger-time head SHA is compared against a
+ * freshly re-read API head SHA, and re-read once more immediately before the
+ * approval POST; any divergence fails closed. Disabled until a maintainer
+ * creates the App and installs secrets — see doc/PAPERCLIP-CHECKER.md.
  */
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { classifyPrRiskLane, LANES } from './classify-pr-risk-lane.mjs';
 
-// App identity of the future checker. Configurable so the login can be pinned
-// once the App slug is registered; the trailing `[bot]` is GitHub's convention
-// for App review authors.
 export const DEFAULT_APP_SLUG = 'paperclip-checker[bot]';
 
-export const DEFAULT_REQUIRED_CHECKS = Object.freeze(['verify', 'gitleaks']);
+// Default producer-bound policy. Each required check is pinned to the app that
+// is expected to produce it; a same-named check-run/status from any other app
+// CANNOT satisfy the gate (it is treated as a failure, not silently ignored).
+// Overridable by the committed .github/paperclip-checker.config.json on base.
+export const DEFAULT_REQUIRED_CHECK_POLICY = Object.freeze([
+  Object.freeze({ name: 'verify', type: 'check_run', appSlug: 'github-actions', appId: 15368 }),
+  Object.freeze({ name: 'gitleaks', type: 'check_run', appSlug: 'github-actions', appId: 15368 }),
+]);
 
-// PR-event actions that INVALIDATE a prior approval: the head advanced, the PR
-// re-opened, its draft state changed, or its labels changed. On any of these an
-// existing App approval must be dismissed/superseded before a new decision.
 export const STALE_INDUCING_ACTIONS = Object.freeze(
   new Set(['synchronize', 'reopened', 'ready_for_review', 'converted_to_draft', 'labeled', 'unlabeled']),
 );
@@ -47,13 +61,29 @@ export const STALE_INDUCING_ACTIONS = Object.freeze(
 const SHA_RE = /^[0-9a-f]{40}$/i;
 
 function normalizeLogin(value) {
-  return String(value ?? '').trim().toLowerCase();
+  // App slugs appear with or without the trailing `[bot]` across APIs; compare
+  // on the bare slug so `github-actions` and `github-actions[bot]` unify.
+  return String(value ?? '').trim().toLowerCase().replace(/\[bot\]$/, '');
 }
 
 function labelNames(pr) {
   return (pr?.labels ?? [])
     .map(label => (typeof label === 'string' ? label : label?.name))
     .filter(Boolean);
+}
+
+/**
+ * Redact API bodies from diagnostics. ghFetch attaches `statusCode`; we surface
+ * only the HTTP status, never the raw response text (which can be verbose and
+ * echo request context). Our own controlled messages (no `→ <status>:` body
+ * marker) are passed through single-line.
+ */
+export function sanitizeError(error) {
+  const status = Number(error?.statusCode);
+  if (Number.isFinite(status) && status > 0) return `GitHub API error (HTTP ${status}).`;
+  const message = String(error?.message ?? error ?? 'Unexpected error.').split('\n')[0];
+  if (/→\s*\d+\s*:/.test(message)) return 'GitHub API error (response body redacted).';
+  return message || 'Unexpected error.';
 }
 
 /**
@@ -82,71 +112,127 @@ export function readCheckerConfig(env = {}) {
 }
 
 /**
- * Reduce head-SHA check-runs + commit statuses to a pass/fail verdict for the
- * required set. ONLY an explicit `success` conclusion (check-run) or `success`
- * state (status) passes. Missing, pending/in-progress, neutral, skipped,
- * failure, cancelled, timed_out, action_required, stale → fail closed.
+ * Load the producer-bound required-check policy. Preference order:
+ *   1. REQUIRED_CHECKS_POLICY env (JSON) — used by tests.
+ *   2. the committed base-branch config file (machine-readable, reviewable).
+ *   3. DEFAULT_REQUIRED_CHECK_POLICY.
+ * Returns { requiredChecks, appSlug }.
  */
-export function summarizeRequiredChecks(checkRuns, statuses, requiredChecks = DEFAULT_REQUIRED_CHECKS) {
-  // Latest check-run per name, ordered by explicit timestamp (list order is not
-  // contractually newest-first, so a stale success must not mask a newer fail).
-  const recency = run => {
-    const ts = run?.completed_at ?? run?.started_at ?? run?.created_at ?? null;
-    const parsed = ts ? Date.parse(ts) : NaN;
-    return Number.isFinite(parsed) ? parsed : -Infinity;
+export function loadCheckerPolicy(env = {}, readFile = readFileSync) {
+  const coerce = raw => {
+    const checks = Array.isArray(raw?.requiredChecks) ? raw.requiredChecks : [];
+    const requiredChecks = checks
+      .filter(c => c && typeof c.name === 'string' && c.name.trim())
+      .map(c => ({
+        name: String(c.name).trim(),
+        type: c.type === 'status' ? 'status' : 'check_run',
+        appSlug: c.appSlug ? String(c.appSlug) : undefined,
+        appId: Number.isFinite(Number(c.appId)) && c.appId != null ? Number(c.appId) : undefined,
+      }));
+    return { requiredChecks, appSlug: raw?.appSlug ? String(raw.appSlug) : undefined };
   };
-  const latestRun = new Map();
-  for (const run of Array.isArray(checkRuns) ? checkRuns : []) {
-    const name = String(run?.name ?? '').trim();
-    if (!name) continue;
-    const current = latestRun.get(name);
-    if (!current || recency(run) > recency(current)) latestRun.set(name, run);
-  }
 
-  // Commit statuses: the combined API already collapses to the latest per
-  // context, but guard anyway.
-  const statusState = new Map();
-  for (const status of Array.isArray(statuses) ? statuses : []) {
-    const context = String(status?.context ?? '').trim();
-    if (!context) continue;
-    statusState.set(context, String(status?.state ?? '').trim().toLowerCase());
+  if (env.REQUIRED_CHECKS_POLICY) {
+    const parsed = coerce(JSON.parse(env.REQUIRED_CHECKS_POLICY));
+    if (parsed.requiredChecks.length) return { requiredChecks: parsed.requiredChecks, appSlug: parsed.appSlug ?? DEFAULT_APP_SLUG };
   }
+  const path = env.CHECKER_CONFIG_PATH || '.github/paperclip-checker.config.json';
+  try {
+    const parsed = coerce(JSON.parse(readFile(path, 'utf8')));
+    if (parsed.requiredChecks.length) return { requiredChecks: parsed.requiredChecks, appSlug: parsed.appSlug ?? DEFAULT_APP_SLUG };
+  } catch {
+    // fall through to the built-in default
+  }
+  return { requiredChecks: DEFAULT_REQUIRED_CHECK_POLICY.map(c => ({ ...c })), appSlug: DEFAULT_APP_SLUG };
+}
 
-  const failures = [];
-  const evidence = [];
-  for (const name of requiredChecks) {
-    const run = latestRun.get(name);
-    if (run) {
-      const status = String(run.status ?? '').trim().toLowerCase();
-      const conclusion = String(run.conclusion ?? 'missing').trim().toLowerCase() || 'missing';
-      evidence.push({ name, conclusion });
-      if (status !== 'completed') {
-        failures.push(`Required check \`${name}\` is not completed (status=${status || 'unknown'}).`);
-      } else if (conclusion !== 'success') {
-        failures.push(`Required check \`${name}\` concluded \`${conclusion}\`, not \`success\`.`);
-      }
-      continue;
-    }
-    if (statusState.has(name)) {
-      const state = statusState.get(name);
-      evidence.push({ name, conclusion: state });
-      if (state !== 'success') {
-        failures.push(`Required status \`${name}\` is \`${state || 'pending'}\`, not \`success\`.`);
-      }
-      continue;
-    }
-    evidence.push({ name, conclusion: 'missing' });
-    failures.push(`Required check/status \`${name}\` is missing.`);
-  }
-  return { passing: failures.length === 0, failures, evidence };
+function appMatches(runApp, cfg) {
+  // A run satisfies a policy entry only if its producing app matches by id
+  // (authoritative) or, when no id is configured, by slug. Missing app info
+  // never matches — fail closed.
+  if (!runApp) return false;
+  if (cfg.appId != null) return Number(runApp.id) === Number(cfg.appId);
+  if (cfg.appSlug) return normalizeLogin(runApp.slug) === normalizeLogin(cfg.appSlug);
+  return false;
+}
+
+function recency(run) {
+  const ts = run?.completed_at ?? run?.started_at ?? run?.updated_at ?? run?.created_at ?? null;
+  const parsed = ts ? Date.parse(ts) : NaN;
+  return Number.isFinite(parsed) ? parsed : -Infinity;
 }
 
 /**
- * Pure decision core. No I/O. Given the fully-fetched inputs it returns exactly
- * one decision plus whether a prior App approval must be dismissed.
+ * Producer-bound evidence evaluation. For each required check the ONLY evidence
+ * considered is from the EXPECTED producer and the EXPECTED type; there is no
+ * silent check-run↔status fallback.
  *
- * @returns {{ decision: 'blocked'|'rejected'|'approved', reasons: string[],
- *   riskLane: string|null, dismissStale: boolean }}
+ * Per-check outcome:
+ *   - success       → latest matching run/status is completed + success.
+ *   - failed        → latest matching completed run/status is non-success, OR a
+ *                     same-named run/status exists but ONLY from an unexpected
+ *                     app (spoof attempt → block).
+ *   - pending       → no matching evidence yet, or matching run not completed.
+ *
+ * Aggregate state: `failed` if any check failed; else `pending` if any pending;
+ * else `passing`.
+ */
+export function summarizeRequiredChecks(checkRuns, statuses, requiredChecks = DEFAULT_REQUIRED_CHECK_POLICY) {
+  const runs = Array.isArray(checkRuns) ? checkRuns : [];
+  const sts = Array.isArray(statuses) ? statuses : [];
+  const failures = [];
+  const pendingNames = [];
+  const evidence = [];
+
+  for (const cfg of requiredChecks) {
+    if (cfg.type === 'status') {
+      const named = sts.filter(s => String(s?.context ?? '').trim() === cfg.name);
+      const matching = named.filter(s => !cfg.appSlug || normalizeLogin(s?.creator?.login) === normalizeLogin(cfg.appSlug));
+      if (named.length > 0 && matching.length === 0) {
+        failures.push(`Required status \`${cfg.name}\` exists only from an unexpected creator; expected \`${cfg.appSlug}\`. Blocking.`);
+        evidence.push({ name: cfg.name, conclusion: 'unexpected_producer' });
+        continue;
+      }
+      if (matching.length === 0) { pendingNames.push(cfg.name); evidence.push({ name: cfg.name, conclusion: 'missing' }); continue; }
+      const latest = matching.reduce((a, b) => (recency(b) >= recency(a) ? b : a));
+      const state = String(latest?.state ?? '').trim().toLowerCase();
+      evidence.push({ name: cfg.name, conclusion: state || 'missing' });
+      if (state === 'success') continue;
+      if (state === 'pending' || state === '') pendingNames.push(cfg.name);
+      else failures.push(`Required status \`${cfg.name}\` is \`${state}\`, not \`success\`.`);
+      continue;
+    }
+
+    // check_run
+    const named = runs.filter(r => String(r?.name ?? '').trim() === cfg.name);
+    const matching = named.filter(r => appMatches(r?.app, cfg));
+    if (named.length > 0 && matching.length === 0) {
+      const seen = [...new Set(named.map(r => r?.app?.slug ?? r?.app?.id ?? 'unknown'))].join(', ');
+      failures.push(`Required check \`${cfg.name}\` exists only from unexpected app(s) [${seen}]; expected \`${cfg.appSlug ?? cfg.appId}\`. Blocking.`);
+      evidence.push({ name: cfg.name, conclusion: 'unexpected_producer' });
+      continue;
+    }
+    if (matching.length === 0) { pendingNames.push(cfg.name); evidence.push({ name: cfg.name, conclusion: 'missing' }); continue; }
+    const latest = matching.reduce((a, b) => (recency(b) >= recency(a) ? b : a));
+    const status = String(latest?.status ?? '').trim().toLowerCase();
+    const conclusion = String(latest?.conclusion ?? '').trim().toLowerCase();
+    if (status !== 'completed') { pendingNames.push(cfg.name); evidence.push({ name: cfg.name, conclusion: `pending:${status || 'unknown'}` }); continue; }
+    evidence.push({ name: cfg.name, conclusion: conclusion || 'missing' });
+    if (conclusion !== 'success') {
+      failures.push(`Required check \`${cfg.name}\` concluded \`${conclusion || 'missing'}\`, not \`success\`.`);
+    }
+  }
+
+  let state = 'passing';
+  if (failures.length > 0) state = 'failed';
+  else if (pendingNames.length > 0) state = 'pending';
+  return { state, failures, pendingNames, evidence };
+}
+
+/**
+ * Pure decision core. No I/O.
+ * @returns {{ decision:'blocked'|'rejected'|'pending'|'approved', reasons:string[],
+ *   riskLane:string|null, dismissStale:boolean }}
  */
 export function evaluateChecker({
   config,
@@ -156,13 +242,12 @@ export function evaluateChecker({
   files = [],
   checkRuns = [],
   statuses = [],
-  requiredChecks = DEFAULT_REQUIRED_CHECKS,
+  requiredChecks = DEFAULT_REQUIRED_CHECK_POLICY,
   appSlug = DEFAULT_APP_SLUG,
   headCommitAuthorLogin = '',
   lastPusherLogin = '',
   existingAppReview = null,
 } = {}) {
-  // ── Activation gate (blocked, never a pass) ──────────────────────────────
   if (!config?.active) {
     return {
       decision: 'blocked',
@@ -175,10 +260,6 @@ export function evaluateChecker({
   const app = normalizeLogin(appSlug);
   const currentHead = String(pr?.head?.sha ?? '').trim();
 
-  // A prior App approval is stale when it was submitted against a different
-  // commit than the current head, OR when the event itself invalidates it
-  // (new push, reopen, ready-for-review, label change). Report it so main()
-  // can dismiss/supersede before any re-approval.
   const priorApprovalSha = String(existingAppReview?.commit_id ?? '').trim();
   const dismissStale = Boolean(
     existingAppReview &&
@@ -188,7 +269,6 @@ export function evaluateChecker({
 
   const reasons = [];
 
-  // ── Draft / fork are never approved ──────────────────────────────────────
   if (pr?.draft) reasons.push('Draft PR is never approved.');
   const headRepo = pr?.head?.repo?.full_name;
   const baseRepo = pr?.base?.repo?.full_name;
@@ -196,9 +276,6 @@ export function evaluateChecker({
     reasons.push('Fork PR (head repo differs from base repo) is never approved.');
   }
 
-  // ── Identity separation of duties ────────────────────────────────────────
-  // The App must never rubber-stamp its own work. Reject if it is the PR
-  // author, the last pusher, or the author of the head commit.
   if (app && normalizeLogin(pr?.user?.login) === app) {
     reasons.push('App identity equals the PR author; approval withheld (self-approval).');
   }
@@ -209,7 +286,6 @@ export function evaluateChecker({
     reasons.push('App identity equals the head-commit author; approval withheld (would approve its own commit).');
   }
 
-  // ── Fresh, exact head SHA ────────────────────────────────────────────────
   const expected = String(eventHeadSha ?? '').trim();
   if (!SHA_RE.test(expected) || !SHA_RE.test(currentHead)) {
     reasons.push('Head SHA is missing or malformed; cannot prove evidence freshness.');
@@ -217,35 +293,40 @@ export function evaluateChecker({
     reasons.push(`Stale head SHA: evidence gathered for \`${expected}\` but current head is \`${currentHead}\`.`);
   }
 
-  // ── Required checks all SUCCESS ──────────────────────────────────────────
-  const checkSummary = summarizeRequiredChecks(checkRuns, statuses, requiredChecks);
-  if (!checkSummary.passing) reasons.push(...checkSummary.failures);
-
-  // ── Risk lane (delegated to the shared classifier) ───────────────────────
-  // The classifier independently enforces labels, red paths, diff size, actor,
-  // stale SHA and evidence. We pass the same evidence so a neutral/skipped
-  // required check forces RED there too. Only GREEN is approvable.
+  // Risk lane judges SHAPE only (title/labels/paths/size/actor); evidence is
+  // evaluated separately below so we can distinguish "pending" from "failed".
   const classification = classifyPrRiskLane({
     title: pr?.title ?? '',
     labels: labelNames(pr),
     files,
-    author: normalizeLogin(pr?.user?.login) ? String(pr.user.login) : '',
+    author: pr?.user?.login ? String(pr.user.login) : '',
     headSha: currentHead,
     expectedHeadSha: expected,
-    evidence: checkSummary.evidence,
-    requiredEvidence: requiredChecks,
+    evidence: [],
+    requiredEvidence: [],
   });
   if (classification.lane !== LANES.GREEN) {
     reasons.push(`Risk lane is ${classification.lane}; only GREEN is eligible for App approval.`);
     reasons.push(...classification.reasons.map(reason => `lane: ${reason}`));
   }
 
+  const checkSummary = summarizeRequiredChecks(checkRuns, statuses, requiredChecks);
+  if (checkSummary.state === 'failed') reasons.push(...checkSummary.failures);
+
   if (reasons.length > 0) {
     return { decision: 'rejected', reasons, riskLane: classification.lane, dismissStale };
   }
+  if (checkSummary.state === 'pending') {
+    return {
+      decision: 'pending',
+      reasons: [`Awaiting terminal state of required check(s): ${checkSummary.pendingNames.map(n => `\`${n}\``).join(', ')}.`],
+      riskLane: classification.lane,
+      dismissStale,
+    };
+  }
   return {
     decision: 'approved',
-    reasons: ['GREEN PR, fresh exact head SHA, all required checks SUCCESS, distinct approver identity.'],
+    reasons: ['GREEN PR, fresh exact head SHA, all required checks SUCCESS from expected producers, distinct approver identity.'],
     riskLane: classification.lane,
     dismissStale,
   };
@@ -264,20 +345,6 @@ async function fetchAllPages(ghFetch, path, token) {
   }
 }
 
-/**
- * Find the App's own most-recent review (any state). Used both to detect a
- * stale approval to dismiss and to avoid re-approving the same SHA twice.
- */
-export function findAppReview(reviews, appSlug = DEFAULT_APP_SLUG) {
-  const app = normalizeLogin(appSlug);
-  let latest = null;
-  for (const review of Array.isArray(reviews) ? reviews : []) {
-    if (normalizeLogin(review?.user?.login) !== app) continue;
-    if (!latest || Number(review?.id ?? 0) > Number(latest?.id ?? 0)) latest = review;
-  }
-  return latest;
-}
-
 export function findApprovedAppReview(reviews, appSlug = DEFAULT_APP_SLUG) {
   const app = normalizeLogin(appSlug);
   let latest = null;
@@ -287,6 +354,23 @@ export function findApprovedAppReview(reviews, appSlug = DEFAULT_APP_SLUG) {
     if (!latest || Number(review?.id ?? 0) > Number(latest?.id ?? 0)) latest = review;
   }
   return latest;
+}
+
+/**
+ * Resolve the OPEN, same-repo PR whose head is exactly `sha`. Used by the
+ * workflow_run trigger (which lacks PR context). Returns the PR number or null.
+ * Fork PRs (head repo != base repo) are ignored here and rejected downstream.
+ */
+export async function resolvePrNumberForSha(ghFetch, token, repo, sha) {
+  if (!SHA_RE.test(String(sha ?? ''))) return null;
+  const prs = await ghFetch(`/repos/${repo}/commits/${sha}/pulls`, token);
+  for (const pr of Array.isArray(prs) ? prs : []) {
+    if (pr?.state !== 'open') continue;
+    if (String(pr?.head?.sha ?? '').toLowerCase() !== String(sha).toLowerCase()) continue;
+    if (pr?.head?.repo?.full_name && pr?.base?.repo?.full_name && pr.head.repo.full_name !== pr.base.repo.full_name) continue;
+    return pr.number;
+  }
+  return null;
 }
 
 async function gatherInputs(ghFetch, token, repo, prNumber) {
@@ -309,8 +393,6 @@ async function gatherInputs(ghFetch, token, repo, prNumber) {
     statuses: Array.isArray(statusesRaw?.statuses) ? statusesRaw.statuses : [],
     reviews,
     headCommitAuthorLogin: headCommit?.author?.login ?? '',
-    // GitHub does not expose "last pusher" directly on the PR; the head commit's
-    // committer is the closest attributable identity for the last push.
     lastPusherLogin: headCommit?.committer?.login ?? headCommit?.author?.login ?? '',
   };
 }
@@ -322,7 +404,7 @@ async function submitApproval(ghFetch, token, repo, prNumber, headSha) {
     body: JSON.stringify({
       commit_id: headSha,
       event: 'APPROVE',
-      body: 'paperclip-checker: GREEN lane, fresh head SHA, all required checks SUCCESS.',
+      body: 'paperclip-checker: GREEN lane, fresh head SHA, all required checks SUCCESS from expected producers.',
     }),
   });
 }
@@ -335,50 +417,84 @@ async function dismissReview(ghFetch, token, repo, prNumber, reviewId) {
   });
 }
 
+async function mintAppToken(ghFetch, config, repo) {
+  const { generateAppJwt, resolveCheckerInstallationId, mintInstallationToken } =
+    await import('./paperclip-app-token.mjs');
+  const jwt = generateAppJwt(config.appId, config.privateKey);
+  const installationId = await resolveCheckerInstallationId(ghFetch, jwt, repo);
+  const { token } = await mintInstallationToken(ghFetch, jwt, installationId, { repositoryName: repo.split('/')[1] });
+  return token;
+}
+
+function emit(decision, extra = {}) {
+  console.log(JSON.stringify({ decision, ...extra }, null, 2));
+}
+
 async function main() {
   const config = readCheckerConfig(process.env);
 
-  // Fail closed on config BEFORE any token minting or network call.
+  // Fail closed on config BEFORE any token mint or network call.
   if (!config.active) {
-    console.log(JSON.stringify({ decision: 'blocked', reasons: config.reasons }, null, 2));
+    emit('blocked', { reasons: config.reasons });
     console.error('paperclip-checker is BLOCKED (fail-closed). No approval performed.');
     process.exit(1);
   }
 
   const repo = process.env.GH_REPO ?? process.env.GITHUB_REPOSITORY;
-  const prNumber = Number.parseInt(process.env.PR_NUMBER ?? '', 10);
-  const eventAction = String(process.env.EVENT_ACTION ?? '').trim();
-  const eventHeadSha = String(process.env.EVENT_HEAD_SHA ?? '').trim();
-  const appSlug = process.env.PAPERCLIP_CHECKER_APP_SLUG || DEFAULT_APP_SLUG;
-  const requiredChecks = (process.env.REQUIRED_CHECKS || DEFAULT_REQUIRED_CHECKS.join(','))
-    .split(',').map(s => s.trim()).filter(Boolean);
+  const eventName = String(process.env.EVENT_NAME ?? '').trim();
+  const appSlugEnv = process.env.PAPERCLIP_CHECKER_APP_SLUG || '';
+  const readToken = process.env.GH_READ_TOKEN;
 
   if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(String(repo ?? ''))) {
     console.error('ERROR: GH_REPO must be owner/repo.');
     process.exit(1);
   }
-  if (!Number.isInteger(prNumber) || prNumber <= 0) {
-    console.error('ERROR: PR_NUMBER must be a positive integer.');
+  if (!readToken) {
+    console.error('ERROR: GH_READ_TOKEN (default GITHUB_TOKEN) is required for read access.');
     process.exit(1);
   }
 
   const { ghFetch } = await import('./get-bot-token.mjs');
-  const { generateAppJwt, resolveCheckerInstallationId, mintInstallationToken } =
-    await import('./paperclip-app-token.mjs');
+  const policy = loadCheckerPolicy(process.env);
+  const appSlug = appSlugEnv || policy.appSlug || DEFAULT_APP_SLUG;
 
-  // Mint the least-privilege installation token. Any failure fails closed.
-  let token;
-  try {
-    const jwt = generateAppJwt(config.appId, config.privateKey);
-    const installationId = await resolveCheckerInstallationId(ghFetch, jwt, repo);
-    ({ token } = await mintInstallationToken(ghFetch, jwt, installationId, { repositoryName: repo.split('/')[1] }));
-  } catch (error) {
-    console.log(JSON.stringify({ decision: 'blocked', reasons: [`Token minting failed: ${error.message}`] }, null, 2));
-    console.error('paperclip-checker is BLOCKED (token minting failed). No approval performed.');
-    process.exit(1);
+  // ── Resolve PR + trigger-time head SHA from whichever event fired ────────
+  let prNumber;
+  let eventHeadSha;
+  let eventAction;
+  if (eventName === 'workflow_run') {
+    eventHeadSha = String(process.env.WORKFLOW_RUN_HEAD_SHA ?? '').trim();
+    eventAction = 'workflow_run';
+    try {
+      prNumber = await resolvePrNumberForSha(ghFetch, readToken, repo, eventHeadSha);
+    } catch (error) {
+      console.error(`paperclip-checker could not resolve a PR for the completed run: ${sanitizeError(error)}`);
+      process.exit(1);
+    }
+    if (!prNumber) {
+      // No open same-repo PR at this SHA (e.g. push build, fork, or already
+      // advanced). Nothing to act on — clean no-op, not an approval.
+      emit('noop', { reasons: [`No open same-repo PR found for head ${eventHeadSha}.`] });
+      process.exit(0);
+    }
+  } else {
+    prNumber = Number.parseInt(process.env.PR_NUMBER ?? '', 10);
+    eventHeadSha = String(process.env.EVENT_HEAD_SHA ?? '').trim();
+    eventAction = String(process.env.EVENT_ACTION ?? '').trim();
+    if (!Number.isInteger(prNumber) || prNumber <= 0) {
+      console.error('ERROR: PR_NUMBER must be a positive integer.');
+      process.exit(1);
+    }
   }
 
-  const inputs = await gatherInputs(ghFetch, token, repo, prNumber);
+  // ── All reads use the default GITHUB_TOKEN (no App token yet) ─────────────
+  let inputs;
+  try {
+    inputs = await gatherInputs(ghFetch, readToken, repo, prNumber);
+  } catch (error) {
+    console.error(`paperclip-checker read phase failed (fail-closed): ${sanitizeError(error)}`);
+    process.exit(1);
+  }
   const existingAppReview = findApprovedAppReview(inputs.reviews, appSlug);
 
   const result = evaluateChecker({
@@ -389,38 +505,69 @@ async function main() {
     files: inputs.files,
     checkRuns: inputs.checkRuns,
     statuses: inputs.statuses,
-    requiredChecks,
+    requiredChecks: policy.requiredChecks,
     appSlug,
     headCommitAuthorLogin: inputs.headCommitAuthorLogin,
     lastPusherLogin: inputs.lastPusherLogin,
     existingAppReview,
   });
 
-  // Dismiss/supersede a stale prior approval where the API permits. If dismissal
-  // fails, fail closed (do not approve): branch protection's dismiss_stale +
-  // last-push-approval rules are the documented backstop (doc/PAPERCLIP-CHECKER.md).
+  // Dismiss/supersede a stale prior approval. The App token is minted here
+  // (write needed). If dismissal fails, fail closed and rely on the documented
+  // branch-protection backstop (dismiss_stale + last-push approval).
   if (result.dismissStale && existingAppReview) {
     try {
-      await dismissReview(ghFetch, token, repo, prNumber, existingAppReview.id);
+      const appToken = await mintAppToken(ghFetch, config, repo);
+      await dismissReview(ghFetch, appToken, repo, prNumber, existingAppReview.id);
       console.log(`Dismissed stale App approval #${existingAppReview.id}.`);
     } catch (error) {
-      console.log(JSON.stringify({ decision: 'blocked', reasons: [`Failed to dismiss stale approval: ${error.message}`] }, null, 2));
+      emit('blocked', { reasons: [`Failed to dismiss stale approval: ${sanitizeError(error)}`] });
       console.error('paperclip-checker could not dismiss a stale approval; failing closed. Configure branch-protection dismiss_stale + last-push approval (see doc/PAPERCLIP-CHECKER.md).');
       process.exit(1);
     }
   }
 
   if (result.decision === 'approved') {
-    await submitApproval(ghFetch, token, repo, prNumber, inputs.pr.head.sha);
-    console.log(JSON.stringify({ decision: 'approved', riskLane: result.riskLane, reasons: result.reasons }, null, 2));
+    // Anti-TOCTOU: re-read the head SHA immediately before approving. If it
+    // advanced since evidence was gathered, fail closed rather than approve a
+    // now-stale commit.
+    let fresh;
+    try {
+      fresh = await ghFetch(`/repos/${repo}/pulls/${prNumber}`, readToken);
+    } catch (error) {
+      console.error(`paperclip-checker freshness re-read failed (fail-closed): ${sanitizeError(error)}`);
+      process.exit(1);
+    }
+    const freshSha = String(fresh?.head?.sha ?? '').trim();
+    if (!SHA_RE.test(freshSha) || freshSha.toLowerCase() !== String(eventHeadSha).toLowerCase()) {
+      emit('rejected', { riskLane: result.riskLane, reasons: [`Head advanced during evaluation (now ${freshSha || 'unknown'}); refusing to approve a stale commit.`] });
+      console.error('paperclip-checker detected a mid-run head advance; failing closed.');
+      process.exit(1);
+    }
+    try {
+      const appToken = await mintAppToken(ghFetch, config, repo);
+      await submitApproval(ghFetch, appToken, repo, prNumber, eventHeadSha);
+    } catch (error) {
+      emit('blocked', { reasons: [`Approval token/submit failed: ${sanitizeError(error)}`] });
+      console.error('paperclip-checker could not submit approval; failing closed.');
+      process.exit(1);
+    }
+    emit('approved', { riskLane: result.riskLane, reasons: result.reasons });
     process.exit(0);
   }
 
-  console.log(JSON.stringify({ decision: result.decision, riskLane: result.riskLane, reasons: result.reasons }, null, 2));
+  if (result.decision === 'pending') {
+    // Not a pass: no approval. Exit 0 so the completing CI workflow_run can
+    // re-invoke us cleanly when the last required check turns green.
+    emit('pending', { riskLane: result.riskLane, reasons: result.reasons });
+    process.exit(0);
+  }
+
+  emit(result.decision, { riskLane: result.riskLane, reasons: result.reasons });
   console.error(`paperclip-checker did not approve (decision=${result.decision}). Fail-closed.`);
   process.exit(1);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  main().catch(error => { console.error(error.message); process.exit(1); });
+  main().catch(error => { console.error(sanitizeError(error)); process.exit(1); });
 }
