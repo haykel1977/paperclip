@@ -2,9 +2,53 @@ import { describe, expect, it } from "vitest";
 import {
   buildPaperclipTaskMarkdown,
   mergeCoalescedContextSnapshot,
+  shouldEnforceIssueAutomationWakeCooldown,
   summarizeHeartbeatRunContextSnapshot,
   summarizeHeartbeatRunListResultJson,
 } from "../services/heartbeat.js";
+
+describe("shouldEnforceIssueAutomationWakeCooldown", () => {
+  it("throttles repeated timer and automation wakes for an issue", () => {
+    expect(shouldEnforceIssueAutomationWakeCooldown({
+      source: "timer",
+      contextSnapshot: { issueId: "issue-1", wakeReason: "heartbeat_timer" },
+      wakeCommentId: null,
+    })).toBe(true);
+    expect(shouldEnforceIssueAutomationWakeCooldown({
+      source: "automation",
+      contextSnapshot: { issueId: "issue-1", wakeReason: "routine_triggered" },
+      wakeCommentId: null,
+    })).toBe(true);
+  });
+
+  it("does not delay human interactions, assignments, dependency releases, or bounded retries", () => {
+    expect(shouldEnforceIssueAutomationWakeCooldown({
+      source: "on_demand",
+      contextSnapshot: { issueId: "issue-1", wakeReason: "manual" },
+      wakeCommentId: null,
+    })).toBe(false);
+    expect(shouldEnforceIssueAutomationWakeCooldown({
+      source: "automation",
+      contextSnapshot: { issueId: "issue-1", wakeReason: "issue_comment_mentioned" },
+      wakeCommentId: "comment-1",
+    })).toBe(false);
+    expect(shouldEnforceIssueAutomationWakeCooldown({
+      source: "automation",
+      contextSnapshot: { issueId: "issue-1", wakeReason: "issue_assigned" },
+      wakeCommentId: null,
+    })).toBe(false);
+    expect(shouldEnforceIssueAutomationWakeCooldown({
+      source: "automation",
+      contextSnapshot: { issueId: "issue-1", wakeReason: "issue_blockers_resolved" },
+      wakeCommentId: null,
+    })).toBe(false);
+    expect(shouldEnforceIssueAutomationWakeCooldown({
+      source: "automation",
+      contextSnapshot: { issueId: "issue-1", wakeReason: "transient_failure_retry" },
+      wakeCommentId: null,
+    })).toBe(false);
+  });
+});
 
 describe("buildPaperclipTaskMarkdown", () => {
   it("adds planning directives for assignment and comment task context", () => {

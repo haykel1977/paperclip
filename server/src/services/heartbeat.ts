@@ -251,6 +251,17 @@ const BOUNDED_TRANSIENT_HEARTBEAT_RETRY_JITTER_RATIO = 0.25;
 const BOUNDED_TRANSIENT_HEARTBEAT_RETRY_REASON = "transient_failure";
 const BOUNDED_TRANSIENT_HEARTBEAT_RETRY_WAKE_REASON = "transient_failure_retry";
 const BOUNDED_TRANSIENT_HEARTBEAT_RETRY_MAX_ATTEMPTS = BOUNDED_TRANSIENT_HEARTBEAT_RETRY_DELAYS_MS.length;
+export const ISSUE_AUTOMATION_WAKE_COOLDOWN_MS = 60 * 60 * 1000;
+const ISSUE_AUTOMATION_WAKE_COOLDOWN_EXEMPT_REASONS = new Set([
+  "issue_assigned",
+  "issue_blockers_resolved",
+  "issue_comment_mentioned",
+  "execution_review_requested",
+  "execution_approval_requested",
+  "execution_changes_requested",
+  BOUNDED_TRANSIENT_HEARTBEAT_RETRY_WAKE_REASON,
+  "max_turns_continuation_retry",
+]);
 const WORKSPACE_VALIDATION_FAILURE_CODE = "workspace_validation_failed";
 const WORKSPACE_VALIDATION_RECOVERY_CAUSE = "workspace_validation_failed";
 // Keep this in sync with local adapters that require a git workspace before launch.
@@ -2220,6 +2231,19 @@ function shouldQueueFollowupForRunningIssueWake(input: {
   if (input.wakeCommentId) return true;
   const wakeReason = readNonEmptyString(input.contextSnapshot?.wakeReason);
   return Boolean(wakeReason && RUNNING_ISSUE_WAKE_REASONS_REQUIRING_FOLLOWUP.has(wakeReason));
+}
+
+export function shouldEnforceIssueAutomationWakeCooldown(input: {
+  source: string;
+  contextSnapshot: Record<string, unknown> | null | undefined;
+  wakeCommentId: string | null;
+}) {
+  if (input.source !== "automation" && input.source !== "timer") return false;
+  if (input.wakeCommentId) return false;
+  const wakeReason = readNonEmptyString(input.contextSnapshot?.wakeReason);
+  if (!wakeReason) return true;
+  if (wakeReason.startsWith("recovery_") || wakeReason.startsWith("source_scoped_recovery")) return false;
+  return !ISSUE_AUTOMATION_WAKE_COOLDOWN_EXEMPT_REASONS.has(wakeReason);
 }
 
 function isCheckoutConflictError(error: unknown): boolean {
@@ -10335,6 +10359,59 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
                 })
                 .where(eq(issues.id, issue.id));
             }
+          }
+        }
+
+        if (
+          !activeExecutionRun &&
+          shouldEnforceIssueAutomationWakeCooldown({
+            source,
+            contextSnapshot: enrichedContextSnapshot,
+            wakeCommentId,
+          })
+        ) {
+          const now = new Date();
+          const cooldownCutoff = new Date(now.getTime() - ISSUE_AUTOMATION_WAKE_COOLDOWN_MS);
+          const recentTerminalRun = await tx
+            .select({ id: heartbeatRuns.id, status: heartbeatRuns.status, finishedAt: heartbeatRuns.finishedAt })
+            .from(heartbeatRuns)
+            .where(
+              and(
+                eq(heartbeatRuns.companyId, issue.companyId),
+                inArray(heartbeatRuns.status, [...HEARTBEAT_RUN_TERMINAL_STATUSES]),
+                gt(heartbeatRuns.finishedAt, cooldownCutoff),
+                sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issue.id}`,
+              ),
+            )
+            .orderBy(desc(heartbeatRuns.finishedAt))
+            .limit(1)
+            .then((rows) => rows[0] ?? null);
+
+          if (recentTerminalRun?.finishedAt) {
+            const cooldownUntil = new Date(
+              new Date(recentTerminalRun.finishedAt).getTime() + ISSUE_AUTOMATION_WAKE_COOLDOWN_MS,
+            );
+            await tx.insert(agentWakeupRequests).values({
+              companyId: agent.companyId,
+              agentId,
+              source,
+              triggerDetail,
+              reason: "issue_wake_cooldown",
+              payload: {
+                ...(payload ?? {}),
+                issueId,
+                requestedReason: reason,
+                previousRunId: recentTerminalRun.id,
+                previousRunStatus: recentTerminalRun.status,
+                cooldownUntil: cooldownUntil.toISOString(),
+              },
+              status: "skipped",
+              requestedByActorType: opts.requestedByActorType ?? null,
+              requestedByActorId: opts.requestedByActorId ?? null,
+              idempotencyKey: opts.idempotencyKey ?? null,
+              finishedAt: now,
+            });
+            return { kind: "skipped" as const };
           }
         }
 

@@ -230,6 +230,13 @@ function collectDeploymentEnvRows(config: PaperclipConfig | null, configPath: st
       note: "Trust X-Forwarded-Host/Proto only when every request passes through a controlled reverse proxy",
     },
     {
+      key: "PAPERCLIP_GITHUB_WEBHOOK_SECRET",
+      value: process.env.PAPERCLIP_GITHUB_WEBHOOK_SECRET ? "[configured]" : "[not configured]",
+      source: process.env.PAPERCLIP_GITHUB_WEBHOOK_SECRET ? "env" : "missing",
+      required: false,
+      note: "HMAC secret for GitHub pull_request merge synchronization; the secret value is never displayed",
+    },
+    {
       key: "BETTER_AUTH_TRUSTED_ORIGINS",
       value: process.env.BETTER_AUTH_TRUSTED_ORIGINS ?? trustedOriginsDefault,
       source: process.env.BETTER_AUTH_TRUSTED_ORIGINS

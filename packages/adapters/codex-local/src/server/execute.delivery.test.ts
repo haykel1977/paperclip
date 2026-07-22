@@ -98,6 +98,26 @@ describe("executeDeliveryHook", () => {
     expect(runProc).toHaveBeenCalledTimes(1);
   });
 
+  it("blocks delivery when a tracked file still contains conflict markers", async () => {
+    const worktreeCwd = mkWorktree();
+    const calls: string[][] = [];
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M server/test.ts\n", stderr: "" };
+      if (key === "git grep -n") {
+        return { exitCode: 0, stdout: "server/test.ts:12:<<<<<<< HEAD\n", stderr: "" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
+
+    expect(result.reason).toBe("conflict");
+    expect(calls.some((call) => call[0] === "git" && call[1] === "commit")).toBe(false);
+    expect(calls.some((call) => call[0] === "git" && call[1] === "push")).toBe(false);
+  });
+
   it("gate rouge -> delivery_blocked et aucun push", async () => {
     const worktreeCwd = mkWorktree();
     const calls: string[][] = [];

@@ -669,8 +669,22 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     return { delivered: false, prUrl: null, reason: "no_diff" };
   }
   if (/^(UU|AA|DD) /m.test(status.stdout)) {
-    await log("stderr", `[delivery ${ts()}] result=conflict reason="merge conflict markers — abort, no force"\n`);
+    await log("stderr", `[delivery ${ts()}] result=conflict reason="unresolved git index conflict — abort, no force"\n`);
     return { delivered: false, prUrl: null, reason: "conflict" };
+  }
+  const conflictMarkerScan = await runProc(
+    "git",
+    ["grep", "-n", "-E", "^(<<<<<<< |=======|>>>>>>> )", "--", "."],
+    worktreeCwd,
+    env,
+  );
+  if (conflictMarkerScan.exitCode === 0 && conflictMarkerScan.stdout.trim()) {
+    await log("stderr", `[delivery ${ts()}] result=conflict reason="tracked conflict marker — abort, no force"\n`);
+    return { delivered: false, prUrl: null, reason: "conflict" };
+  }
+  if (conflictMarkerScan.exitCode > 1) {
+    await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="conflict marker scan failed" detail="${firstNonEmptyLine(conflictMarkerScan.stderr)}"\n`);
+    return { delivered: false, prUrl: null, reason: "delivery_blocked: conflict marker scan failed" };
   }
 
   // ── 2. bot token check (autonomous lane only) ────────────────────────────
