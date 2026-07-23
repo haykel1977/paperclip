@@ -19,11 +19,13 @@ import { agentsApi } from "../api/agents";
 import { approvalsApi } from "../api/approvals";
 import { dashboardApi } from "../api/dashboard";
 import { heartbeatsApi } from "../api/heartbeats";
+import { issuesApi } from "../api/issues";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useCompany } from "../context/CompanyContext";
 import {
   computeAutomationReadiness,
   type AutomationCheckState,
+
   type AutopilotInterventionKind,
 } from "../lib/automation-readiness";
 import { queryKeys } from "../lib/queryKeys";
@@ -67,6 +69,14 @@ export function Automation() {
     enabled: !!selectedCompanyId,
   });
 
+  const { data: blockedTriageSummary, isLoading: blockedSummaryLoading } = useQuery({
+    queryKey: selectedCompanyId
+      ? queryKeys.issues.blockedTriageSummary(selectedCompanyId)
+      : ["issues", "automation", "blocked-summary", "none"],
+    queryFn: () => issuesApi.blockedTriageSummary(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+
   const { data: agents, isLoading: agentsLoading } = useQuery({
     queryKey: selectedCompanyId ? queryKeys.agents.list(selectedCompanyId) : ["agents", "automation", "none"],
     queryFn: () => agentsApi.list(selectedCompanyId!),
@@ -86,14 +96,21 @@ export function Automation() {
     refetchInterval: 10_000,
   });
 
-  const loading = summaryLoading || agentsLoading || approvalsLoading || liveRunsLoading;
+  const loading = summaryLoading || blockedSummaryLoading || agentsLoading || approvalsLoading || liveRunsLoading;
 
   const automation = useMemo(() => computeAutomationReadiness({
     summary,
     agentCount: agents?.length ?? 0,
     pendingApprovalCount: pendingApprovals?.length,
     liveRunCount: liveRuns?.length ?? 0,
-  }), [agents?.length, liveRuns?.length, pendingApprovals?.length, summary]);
+    blockedOperatorAttentionCount: blockedTriageSummary?.operatorAttentionCount,
+  }), [
+    agents?.length,
+    blockedTriageSummary?.operatorAttentionCount,
+    liveRuns?.length,
+    pendingApprovals?.length,
+    summary,
+  ]);
 
   if (!selectedCompanyId) {
     return companies.length === 0 ? (

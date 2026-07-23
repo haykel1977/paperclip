@@ -58,6 +58,7 @@ export function computeAutomationReadiness(input: {
   agentCount?: number;
   pendingApprovalCount?: number;
   liveRunCount?: number;
+  blockedOperatorAttentionCount?: number;
 }): AutomationReadiness {
   const summary = input.summary;
   const agentCount = input.agentCount ?? 0;
@@ -67,6 +68,7 @@ export function computeAutomationReadiness(input: {
   const liveRunCount = input.liveRunCount ?? 0;
   const openTaskCount = (summary?.tasks?.open ?? 0) + (summary?.tasks?.inProgress ?? 0);
   const blockedTaskCount = summary?.tasks?.blocked ?? 0;
+  const blockedOperatorAttentionCount = input.blockedOperatorAttentionCount ?? blockedTaskCount;
   const pendingApprovalCount = input.pendingApprovalCount ?? summary?.pendingApprovals ?? 0;
   const budgetApprovalCount = summary?.budgets?.pendingApprovals ?? 0;
   const activeBudgetIncidents = summary?.budgets?.activeIncidents ?? 0;
@@ -76,7 +78,7 @@ export function computeAutomationReadiness(input: {
     budgetApprovalCount +
     activeBudgetIncidents +
     erroredAgents +
-    blockedTaskCount +
+    blockedOperatorAttentionCount +
     setupRequiredCount;
 
   const checks: AutomationCheck[] = [
@@ -137,8 +139,8 @@ export function computeAutomationReadiness(input: {
       },
       {
         kind: "blocked_tasks",
-        label: "Blocked tasks",
-        count: blockedTaskCount,
+        label: "Blocked tasks needing operator",
+        count: blockedOperatorAttentionCount,
         href: "/issues",
       },
       {
@@ -153,6 +155,7 @@ export function computeAutomationReadiness(input: {
         count: setupRequiredCount,
         href: "/agents/new",
       },
+
     ] as AutopilotInterventionItem[]
   ).filter((item) => item.count > 0);
 

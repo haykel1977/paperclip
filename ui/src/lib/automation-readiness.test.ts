@@ -94,7 +94,7 @@ describe("computeAutomationReadiness", () => {
       },
       {
         kind: "blocked_tasks",
-        label: "Blocked tasks",
+        label: "Blocked tasks needing operator",
         count: 3,
         href: "/issues",
       },
@@ -103,6 +103,26 @@ describe("computeAutomationReadiness", () => {
         label: "Agent errors",
         count: 2,
         href: "/agents/error",
+      },
+    ]);
+  });
+
+  it("excludes blocked work already owned by an agent workflow from the human queue", () => {
+
+    const readiness = computeAutomationReadiness({
+      summary: makeSummary({ tasks: { blocked: 320 } }),
+      agentCount: 3,
+      blockedOperatorAttentionCount: 275,
+    });
+
+    expect(readiness.blockedTaskCount).toBe(320);
+    expect(readiness.totalHumanQueue).toBe(275);
+    expect(readiness.interventionItems).toEqual([
+      {
+        kind: "blocked_tasks",
+        label: "Blocked tasks needing operator",
+        count: 275,
+        href: "/issues",
       },
     ]);
   });

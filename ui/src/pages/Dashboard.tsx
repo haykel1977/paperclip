@@ -72,6 +72,12 @@ export function Dashboard() {
     enabled: !!selectedCompanyId,
   });
 
+  const { data: blockedTriageSummary } = useQuery({
+    queryKey: queryKeys.issues.blockedTriageSummary(selectedCompanyId!),
+    queryFn: () => issuesApi.blockedTriageSummary(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+
   const { data: projects } = useQuery({
     queryKey: queryKeys.projects.list(selectedCompanyId!),
     queryFn: () => projectsApi.list(selectedCompanyId!),
@@ -199,7 +205,11 @@ export function Dashboard() {
       : 0
   );
   const automationReadiness = data
-    ? computeAutomationReadiness({ summary: data, agentCount: dashboardAgentCount })
+    ? computeAutomationReadiness({
+        summary: data,
+        agentCount: dashboardAgentCount,
+        blockedOperatorAttentionCount: blockedTriageSummary?.operatorAttentionCount,
+      })
     : null;
   const automationHumanQueue = automationReadiness?.totalHumanQueue ?? 0;
 
@@ -208,6 +218,7 @@ export function Dashboard() {
       {error && <p className="text-sm text-destructive">{error.message}</p>}
 
       {hasNoAgents && (
+
         <div className="flex items-center justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 dark:border-amber-500/25 dark:bg-amber-950/60">
           <div className="flex items-center gap-2.5">
             <Bot className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />

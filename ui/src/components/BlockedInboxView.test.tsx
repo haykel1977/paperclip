@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mockIssuesApi = vi.hoisted(() => ({
   list: vi.fn(),
   count: vi.fn(),
+  blockedTriageSummary: vi.fn(),
 }));
 
 vi.mock("../api/issues", () => ({
@@ -144,6 +145,14 @@ describe("BlockedInboxView", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     mockIssuesApi.list.mockReset();
+    mockIssuesApi.blockedTriageSummary.mockReset();
+    mockIssuesApi.blockedTriageSummary.mockResolvedValue({
+      total: 0,
+      operatorAttentionCount: 0,
+      agentWorkflowCount: 0,
+      categories: [],
+      generatedAt: "2026-05-09T00:00:00.000Z",
+    });
   });
 
   afterEach(() => {
@@ -163,12 +172,43 @@ describe("BlockedInboxView", () => {
     act(() => root.unmount());
   });
 
+  it("shows the full triage summary separately from the visible rows", async () => {
+    mockIssuesApi.list.mockResolvedValue([
+      makeIssue("issue-1", "PAP-1", "Visible blocked work", attention()),
+    ]);
+    mockIssuesApi.blockedTriageSummary.mockResolvedValue({
+      total: 320,
+      operatorAttentionCount: 275,
+      agentWorkflowCount: 45,
+      categories: [{
+        reason: "blocked_chain_stalled",
+        count: 180,
+        medianStoppedHours: 48,
+        handling: "triage",
+        actionLabel: "Inspect blocker chain",
+      }],
+      generatedAt: "2026-05-09T00:00:00.000Z",
+    });
+
+    const { root } = renderWithClient(<BlockedInboxView {...blockedViewProps} />, container);
+    await waitFor(() => container.querySelector('[data-testid="blocked-triage-overview"]') !== null);
+
+    const overview = container.querySelector('[data-testid="blocked-triage-overview"]');
+    expect(overview?.textContent).toContain("320 total");
+    expect(overview?.textContent).toContain("275 operator");
+    expect(overview?.textContent).toContain("45 agent workflow");
+    expect(overview?.textContent).toContain("2d");
+    expect(overview?.textContent).toContain("Inspect blocker chain");
+    act(() => root.unmount());
+  });
+
   it("defaults to no grouping and orders rows by most recent stopped item first", async () => {
     const issues: Issue[] = [
       makeIssue(
         "issue-low",
         "PAP-1",
         "External wait row",
+
         attention({ reason: "external_owner_action", severity: "low" }),
       ),
       makeIssue(

@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
-import type { Issue } from "@paperclipai/shared";
+import type { Issue, IssueBlockedTriageHandling, IssueBlockedTriageSummary } from "@paperclipai/shared";
 import { issuesApi } from "../api/issues";
 import { queryKeys } from "../lib/queryKeys";
 import { cn } from "../lib/utils";
@@ -17,6 +17,7 @@ import {
   type BlockedInboxSort,
 } from "../lib/blockedInbox";
 import { BlockedReasonChip } from "./BlockedReasonChip";
+
 import { IssueGroupHeader } from "./IssueGroupHeader";
 import { IssueRow } from "./IssueRow";
 import { Identity } from "./Identity";
@@ -77,6 +78,11 @@ export function BlockedInboxView({
       }),
   });
 
+  const { data: triageSummary } = useQuery({
+    queryKey: queryKeys.issues.blockedTriageSummary(companyId),
+    queryFn: () => issuesApi.blockedTriageSummary(companyId),
+  });
+
   const allRows = useMemo(() => buildBlockedInboxRows(issues), [issues]);
   const filteredRows = useMemo(
     () => allRows.filter((row) => blockedRowMatchesSearch(row, searchQuery)),
@@ -92,6 +98,7 @@ export function BlockedInboxView({
         liveIssueIds,
         workspaceFilterContext,
       ).map((issue) => issue.id),
+
     );
     return filteredRows.filter((row) => visibleIssueIds.has(row.issue.id));
   }, [currentUserId, filteredRows, issueFilters, liveIssueIds, workspaceFilterContext]);
@@ -200,6 +207,7 @@ export function BlockedInboxView({
 
   return (
     <div data-testid="blocked-inbox" className="space-y-3">
+      {triageSummary ? <BlockedTriageOverview summary={triageSummary} /> : null}
       <div className="overflow-hidden rounded-xl">
         {groupBy === "none" ? (
           sortedRows.map((row) => (
@@ -218,6 +226,7 @@ export function BlockedInboxView({
           groups.map((group) => {
             const isCollapsed = collapsedVariants.has(group.variant);
             return (
+
               <div key={group.variant} data-testid={`blocked-inbox-group-${group.variant}`}>
                 <div className="px-3 sm:px-4">
                   <IssueGroupHeader
@@ -249,6 +258,86 @@ export function BlockedInboxView({
         )}
       </div>
     </div>
+  );
+}
+
+const HANDLING_LABELS: Record<IssueBlockedTriageHandling, string> = {
+  human: "Human decision",
+  agent: "Agent workflow",
+  triage: "Operator triage",
+};
+
+function formatMedianStoppedHours(hours: number | null): string {
+  if (hours === null) return "—";
+  if (hours < 1) return "<1h";
+  if (hours < 24) return `${Math.round(hours)}h`;
+  if (hours < 168) return `${Math.round(hours / 24)}d`;
+  return `${Math.round(hours / 168)}w`;
+}
+
+function BlockedTriageOverview({ summary }: { summary: IssueBlockedTriageSummary }) {
+  return (
+    <section
+      className="overflow-hidden rounded-xl border border-border bg-card"
+      aria-labelledby="blocked-triage-title"
+      data-testid="blocked-triage-overview"
+    >
+      <div className="flex flex-col gap-2 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 id="blocked-triage-title" className="text-sm font-semibold">Blocked-work triage</h2>
+          <p className="text-xs text-muted-foreground">
+            Full queue grouped by root cause, not just the first {BLOCKED_LIST_LIMIT} visible rows.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs">
+          <span className="rounded-full bg-amber-500/10 px-2.5 py-1 font-medium text-amber-700 dark:text-amber-300">
+            {summary.operatorAttentionCount} operator
+          </span>
+          <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 font-medium text-emerald-700 dark:text-emerald-300">
+            {summary.agentWorkflowCount} agent workflow
+          </span>
+          <span className="rounded-full bg-muted px-2.5 py-1 font-medium text-muted-foreground">
+            {summary.total} total
+          </span>
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[640px] text-left text-xs">
+          <thead className="bg-muted/40 text-muted-foreground">
+            <tr>
+              <th scope="col" className="px-4 py-2 font-medium">Cause</th>
+              <th scope="col" className="px-3 py-2 text-right font-medium">Count</th>
+              <th scope="col" className="px-3 py-2 text-right font-medium">Median age</th>
+              <th scope="col" className="px-4 py-2 font-medium">Treatment path</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/70">
+            {summary.categories.map((category) => (
+              <tr key={category.reason}>
+                <td className="px-4 py-2.5 font-medium text-foreground">{blockedReasonLabel(category.reason)}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums">{category.count}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums text-muted-foreground">
+                  {formatMedianStoppedHours(category.medianStoppedHours)}
+                </td>
+                <td className="px-4 py-2.5">
+                  <span className={cn(
+                    "mr-2 inline-flex rounded-full px-2 py-0.5 font-medium",
+                    category.handling === "agent"
+                      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                      : category.handling === "human"
+                        ? "bg-blue-500/10 text-blue-700 dark:text-blue-300"
+                        : "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+                  )}>
+                    {HANDLING_LABELS[category.handling]}
+                  </span>
+                  <span className="text-muted-foreground">{category.actionLabel}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
