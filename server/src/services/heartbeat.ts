@@ -235,11 +235,44 @@ const EXECUTION_PATH_HEARTBEAT_RUN_STATUSES = ["queued", "running", "scheduled_r
 const CANCELLABLE_HEARTBEAT_RUN_STATUSES = ["queued", "running", "scheduled_retry"] as const;
 const HEARTBEAT_RUN_TERMINAL_STATUSES = ["succeeded", "failed", "cancelled", "timed_out"] as const;
 const UNSUCCESSFUL_HEARTBEAT_RUN_TERMINAL_STATUSES = ["failed", "cancelled", "timed_out"] as const;
+export const ISSUE_AUTOMATION_WAKE_COOLDOWN_MS = 60 * 60 * 1000;
+const ISSUE_AUTOMATION_WAKE_COOLDOWN_EXEMPT_REASONS = new Set([
+  "transient_failure_retry",
+  "max_turns_continuation_retry",
+  "issue_assignment_recovery",
+  "issue_continuation_needed",
+  "run_liveness_continuation",
+]);
+
+export function shouldEnforceIssueAutomationWakeCooldown(input: {
+  source: string;
+  contextSnapshot: Record<string, unknown> | null | undefined;
+  wakeCommentId: string | null;
+  requestedByActorType?: string | null;
+}) {
+  if (input.source !== "automation" && input.source !== "timer") return false;
+  if (input.requestedByActorType === "user" || input.wakeCommentId) return false;
+  const wakeReason = readNonEmptyString(input.contextSnapshot?.wakeReason);
+  if (!wakeReason) return true;
+  if (wakeReason.startsWith("recovery_") || wakeReason.startsWith("source_scoped_recovery")) return false;
+  return !ISSUE_AUTOMATION_WAKE_COOLDOWN_EXEMPT_REASONS.has(wakeReason);
+}
+
+function isWithinIssueAutomationWakeCooldown(
+  terminalAt: Date | string | null | undefined,
+  now = new Date(),
+) {
+  if (!terminalAt) return false;
+  const terminalTime = terminalAt instanceof Date ? terminalAt.getTime() : new Date(terminalAt).getTime();
+  return Number.isFinite(terminalTime) && now.getTime() - terminalTime < ISSUE_AUTOMATION_WAKE_COOLDOWN_MS;
+}
+
 export {
   ACTIVE_RUN_OUTPUT_CONTINUE_REARM_MS,
   ACTIVE_RUN_OUTPUT_CRITICAL_THRESHOLD_MS,
   ACTIVE_RUN_OUTPUT_SUSPICION_THRESHOLD_MS,
 } from "./recovery/service.js";
+
 export const ACTIVE_RUN_OUTPUT_PROGRESS_FLUSH_INTERVAL_MS = 60 * 1000;
 export const BOUNDED_TRANSIENT_HEARTBEAT_RETRY_DELAYS_MS = [
   2 * 60 * 1000,
@@ -9706,6 +9739,25 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           payload: promotedPayload,
         });
 
+        if (shouldEnforceIssueAutomationWakeCooldown({
+          source: promotedSource,
+          contextSnapshot: promotedContextSnapshot,
+          wakeCommentId: deferredCommentIds.at(-1) ?? null,
+          requestedByActorType: deferred.requestedByActorType,
+        }) && isWithinIssueAutomationWakeCooldown(run.finishedAt ?? run.updatedAt)) {
+          await tx
+            .update(agentWakeupRequests)
+            .set({
+              status: "skipped",
+              reason: "issue_automation_cooldown",
+              finishedAt: new Date(),
+              error: "Deferred automation wake suppressed by the post-terminal issue cooldown",
+              updatedAt: new Date(),
+            })
+            .where(eq(agentWakeupRequests.id, deferred.id));
+          continue;
+        }
+
         const sessionBefore =
           readNonEmptyString(promotedContextSnapshot.resumeSessionDisplayId) ??
           await resolveSessionBeforeForWakeup(deferredAgent, promotedTaskKey);
@@ -9714,6 +9766,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         );
         const now = new Date();
         const newRun = await tx
+
           .insert(heartbeatRuns)
           .values({
             companyId: deferredAgent.companyId,
@@ -10335,6 +10388,45 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
                 })
                 .where(eq(issues.id, issue.id));
             }
+          }
+        }
+
+        if (!activeExecutionRun && shouldEnforceIssueAutomationWakeCooldown({
+          source,
+          contextSnapshot: enrichedContextSnapshot,
+          wakeCommentId,
+          requestedByActorType: opts.requestedByActorType,
+        })) {
+          const latestTerminalRun = await tx
+            .select({
+              finishedAt: heartbeatRuns.finishedAt,
+              updatedAt: heartbeatRuns.updatedAt,
+            })
+            .from(heartbeatRuns)
+            .where(and(
+              eq(heartbeatRuns.companyId, issue.companyId),
+              inArray(heartbeatRuns.status, [...HEARTBEAT_RUN_TERMINAL_STATUSES]),
+              sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issue.id}`,
+            ))
+            .orderBy(desc(sql`coalesce(${heartbeatRuns.finishedAt}, ${heartbeatRuns.updatedAt}, ${heartbeatRuns.createdAt})`))
+            .limit(1)
+            .then((rows) => rows[0] ?? null);
+          const terminalAt = latestTerminalRun?.finishedAt ?? latestTerminalRun?.updatedAt;
+          if (isWithinIssueAutomationWakeCooldown(terminalAt)) {
+            await tx.insert(agentWakeupRequests).values({
+              companyId: agent.companyId,
+              agentId,
+              source,
+              triggerDetail,
+              reason: "issue_automation_cooldown",
+              payload,
+              status: "skipped",
+              requestedByActorType: opts.requestedByActorType ?? null,
+              requestedByActorId: opts.requestedByActorId ?? null,
+              idempotencyKey: opts.idempotencyKey ?? null,
+              finishedAt: new Date(),
+            });
+            return { kind: "skipped" as const };
           }
         }
 
