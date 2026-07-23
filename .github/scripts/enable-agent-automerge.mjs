@@ -206,7 +206,7 @@ export async function enablePullRequestAutoMerge(fetchImpl, token, prNodeId, mer
   const res = await fetchImpl('https://api.github.com/graphql', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${token}`,
+      Authorization: 'Bearer ' + token,
       Accept: 'application/vnd.github+json',
       'Content-Type': 'application/json',
       'X-GitHub-Api-Version': '2022-11-28',
@@ -244,7 +244,7 @@ export async function disablePullRequestAutoMerge(fetchImpl, token, prNodeId) {
   const res = await fetchImpl('https://api.github.com/graphql', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${token}`,
+      Authorization: 'Bearer ' + token,
       Accept: 'application/vnd.github+json',
       'Content-Type': 'application/json',
       'X-GitHub-Api-Version': '2022-11-28',

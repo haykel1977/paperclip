@@ -29,7 +29,7 @@ export async function ghFetch(path, token, options = {}) {
   const res = await fetch(`https://api.github.com${path}`, {
     ...options,
     headers: {
-      Authorization: `Bearer ${token}`,
+      Authorization: 'Bearer ' + token,
       Accept: 'application/vnd.github+json',
       'X-GitHub-Api-Version': '2022-11-28',
       ...options.headers,
