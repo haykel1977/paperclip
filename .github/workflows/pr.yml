@@ -112,6 +112,12 @@ jobs:
       - name: Test paperclip-checker App gate
         run: node --test ./.github/scripts/tests/paperclip-checker.test.mjs
 
+      - name: Test autonomy-witness workflow policy
+        run: node --test ./.github/scripts/tests/autonomy-witness-workflow.test.mjs
+
+      - name: Test autonomy-witness runtime behavior
+        run: node --test ./.github/scripts/tests/autonomy-witness-behavior.test.mjs
+
       - name: Validate release package manifest
         run: node ./scripts/release-package-map.mjs check
 

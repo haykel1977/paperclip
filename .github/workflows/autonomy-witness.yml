@@ -1,0 +1,61 @@
+name: Autonomy Witness
+
+# Permanent, tightly-bounded operational witness infrastructure.
+#
+# Purpose: prove that the allowlisted autonomous identity `github-actions[bot]`
+# can open a green, docs-only pull request through branch-protected checks —
+# without any human or non-allowlisted identity in the loop. This is the genuine
+# counterpart to a human-authored witness (which correctly fails the autonomy
+# allowlist).
+#
+# The bounded logic lives in .github/scripts/autonomy-witness.sh; this workflow
+# only checks out the default branch and runs it with trusted run metadata.
+#
+# Hard bounds — enforced by:
+#   - .github/scripts/tests/autonomy-witness-workflow.test.mjs   (static policy)
+#   - .github/scripts/tests/autonomy-witness-behavior.test.mjs   (runtime behavior)
+#   - Manual dispatch only, and NO inputs (no arbitrary path/content/shell).
+#   - Writes exactly one generated docs file under doc/autonomy-witness/<run_id>.md.
+#   - Fixed branch prefix `autonomy-witness/`.
+#   - Minimal permissions: contents:write + pull-requests:write only.
+#   - Uses only the built-in GITHUB_TOKEN — no secrets, PAT, or App key.
+#   - Only first-party actions, pinned by commit SHA — no third-party/mutable actions.
+#   - Never merges, never approves, never changes settings.
+#   - Idempotent / re-run safe: resumes the existing run-id branch; one PR per run id.
+#
+# Cleanup: each witness PR is disposable. After witnessing green checks, close the
+# PR and delete its `autonomy-witness/<run_id>` branch; the run-id docs file may be
+# removed at any time. Nothing here is load-bearing beyond the witness itself.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: autonomy-witness-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  witness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout default branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Open docs-only witness PR as github-actions[bot]
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          HEAD_SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: bash .github/scripts/autonomy-witness.sh
