@@ -297,9 +297,9 @@ test('fail closed: a freshly CREATED PR authored by github-actions[bot] is rejec
   try {
     const r = runWitness(repo, { prList: [], prAuthor: 'github-actions[bot]' });
     assert.notEqual(r.status, 0, 'must fail closed on the event-suppressed identity');
-    assert.match(r.stderr, /authored by github-actions\[bot\]/,
+    assert.match(r.stderr, /authored by 'github-actions\[bot\]'/,
       'error must name the forbidden, event-suppressed identity');
-    assert.match(r.stderr, /minted App installation token/, 'error must point to the correct fix');
+    assert.match(r.stderr, /minted commitperclip App installation token/, 'error must point to the correct fix');
   } finally {
     rmSync(repo.root, { recursive: true, force: true });
   }
@@ -318,7 +318,37 @@ test('fail closed: a REUSED PR authored by github-actions[bot] is rejected', { s
     });
     assert.notEqual(r.status, 0, 'a reused check-less PR must also fail closed');
     assert.match(r.stdout, /Reusing existing witness PR #202/, 'it did reuse the existing PR…');
-    assert.match(r.stderr, /authored by github-actions\[bot\]/, '…then refused it on the author guard');
+    assert.match(r.stderr, /authored by 'github-actions\[bot\]'/, '…then refused it on the author guard');
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('fail closed: any non-allowlisted author is rejected (positive allowlist, not denylist)', { skip }, () => {
+  // The guard is a positive allowlist: the author MUST be commitperclip[bot].
+  // Any other identity — e.g. a misconfigured App or a wrong installation, not
+  // just the github-actions[bot] signature — must be refused. This proves the
+  // guard catches more than the single event-suppression case.
+  const repo = makeRepo();
+  try {
+    const r = runWitness(repo, { prList: [], prAuthor: 'some-other-app[bot]' });
+    assert.notEqual(r.status, 0, 'a non-allowlisted author must fail closed');
+    assert.match(r.stderr, /authored by 'some-other-app\[bot\]'/, 'error names the actual (wrong) author');
+    assert.match(r.stderr, /not the allowlisted App identity 'commitperclip\[bot\]'/,
+      'error names the expected allowlisted identity');
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('happy path: a commitperclip[bot]-authored PR passes the allowlist guard', { skip }, () => {
+  // The expected App identity must NOT be rejected — the allowlist admits it.
+  const repo = makeRepo();
+  try {
+    const r = runWitness(repo, { prList: [], prAuthor: 'commitperclip[bot]' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /authored by commitperclip\[bot\]/, 'the allowlisted author is accepted');
+    assert.doesNotMatch(r.stderr, /not the allowlisted App identity/, 'must not trip the guard');
   } finally {
     rmSync(repo.root, { recursive: true, force: true });
   }

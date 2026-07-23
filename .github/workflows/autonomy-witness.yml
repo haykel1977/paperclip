@@ -25,16 +25,23 @@ name: Autonomy Witness
 #     job's own token) — push events are not required, so no App contents scope
 #     is needed.
 #   - The PR is opened/looked-up with the commitperclip App installation token,
-#     which only needs pull-requests:write (already used in production by
-#     commitperclip-review.yml). The witness AUTHOR (commitperclip[bot]) is a
-#     DIFFERENT identity from the gating identities (paperclip-checker/app app id
-#     4372695, and the runner key github-actions app id 15368), so nothing here
-#     approves or gates its own PR.
+#     which carries pull-requests:write via the App installation (already used in
+#     production by commitperclip-review.yml). The workflow's own GITHUB_TOKEN is
+#     therefore NOT granted pull-requests:write — every `gh` call uses the App
+#     token, so contents:write (for the branch push) is all the ambient token
+#     needs. The witness AUTHOR (commitperclip[bot]) is a DIFFERENT identity from
+#     the gating identities (paperclip-checker/app app id 4372695, and the runner
+#     key github-actions app id 15368), so nothing here approves or gates its own
+#     PR.
 #   - Fail closed: the token mint step is given COMMITPERCLIP_KEY but NOT
 #     GITHUB_TOKEN, so get-bot-token.mjs cannot silently fall back to the
 #     event-suppressing GITHUB_TOKEN — a missing/broken App key aborts the run.
-#     The script additionally refuses any PR that ends up authored by
-#     github-actions[bot], so a check-less witness can never masquerade as green.
+#     (GitHub does not auto-populate process.env.GITHUB_TOKEN; it is only reachable
+#     via the secrets/github.token contexts, so withholding it from the step env
+#     genuinely denies the minter any fallback.) The script additionally requires
+#     the resolved PR to be authored by the allowlisted commitperclip[bot] — any
+#     other author (notably github-actions[bot]) fails closed, so a check-less
+#     witness can never masquerade as green.
 #
 # The bounded logic lives in .github/scripts/autonomy-witness.sh; this workflow
 # only checks out the default branch, mints the App token, and runs it with
@@ -46,7 +53,8 @@ name: Autonomy Witness
 #   - Manual dispatch only, and NO inputs (no arbitrary path/content/shell).
 #   - Writes exactly one generated docs file under doc/autonomy-witness/<run_id>.md.
 #   - Fixed branch prefix `autonomy-witness/`.
-#   - Minimal permissions: contents:write + pull-requests:write only.
+#   - Minimal workflow-token permissions: contents:write only (branch push).
+#     pull-requests:write comes from the App installation token, not GITHUB_TOKEN.
 #   - Only the COMMITPERCLIP_KEY secret is referenced — no PAT, no other secret.
 #   - Only first-party actions, pinned by commit SHA — no third-party/mutable actions.
 #   - Never merges, never approves, never changes settings.
@@ -61,7 +69,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 concurrency:
   group: autonomy-witness-${{ github.run_id }}
@@ -73,7 +80,6 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
-      pull-requests: write
     steps:
       - name: Checkout default branch
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3

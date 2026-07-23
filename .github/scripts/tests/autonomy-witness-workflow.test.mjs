@@ -49,15 +49,20 @@ test('workflow: trigger is workflow_dispatch and takes NO inputs', () => {
   assert.doesNotMatch(wf, /^\s{2}push:\s*$/m);
 });
 
-test('workflow: minimal permissions — contents:write + pull-requests:write only', () => {
+test('workflow: minimal workflow-token permissions — contents:write only', () => {
   const block = topLevelPermissionsBlock();
   assert.ok(block, 'must declare a top-level permissions block');
   const perms = block
     .map(l => l.split('#')[0].trim())
     .filter(Boolean)
     .sort();
-  assert.deepEqual(perms, ['contents: write', 'pull-requests: write'],
-    'exactly contents:write and pull-requests:write, nothing broader');
+  assert.deepEqual(perms, ['contents: write'],
+    'GITHUB_TOKEN needs only contents:write (branch push); PR scope comes from the App token');
+  // pull-requests:write must NOT be granted to the workflow token: every `gh`
+  // call uses the App installation token (which carries that scope), so the
+  // ambient GITHUB_TOKEN stays minimal.
+  assert.doesNotMatch(wfCode, /^\s*pull-requests:\s*write\b/m,
+    'workflow token must not be granted pull-requests:write');
   assert.doesNotMatch(wf, /\b(id-token|packages|actions|checks|deployments|security-events|statuses|issues|pages|discussions):\s*write\b/,
     'no additional write scopes may be granted');
 });
@@ -163,16 +168,16 @@ test('script: references no secrets, PAT, or App-key minting (token is injected 
   assert.doesNotMatch(shCode, /get-bot-token|generateJWT|installations\/.*access_tokens/, 'no App token minting in the script');
 });
 
-test('script: fails closed on the GITHUB_TOKEN event-suppression signature', () => {
-  // A PR authored by github-actions[bot] can only come from the built-in
-  // GITHUB_TOKEN, whose pull_request workflows are suppressed → the required
-  // checks never ran. The script must refuse such a PR rather than treat a
-  // check-less PR as a valid witness.
-  assert.match(shCode, /FORBIDDEN_AUTHOR="github-actions\[bot\]"/, 'names the suppressed identity');
+test('script: fails closed unless the PR is authored by the allowlisted App identity', () => {
+  // Positive allowlist: the witness author MUST be commitperclip[bot]. This
+  // rejects the github-actions[bot] event-suppression signature (built-in
+  // GITHUB_TOKEN → suppressed pull_request workflows → no required checks) AND
+  // any other unexpected identity (a misconfigured App or wrong installation).
+  assert.match(shCode, /EXPECTED_AUTHOR="commitperclip\[bot\]"/, 'names the expected allowlisted identity');
   assert.match(shCode, /gh pr view "\$pr_number" --repo "\$REPO" --json author --jq \.author\.login/,
     'must read the resolved PR author');
-  assert.match(shCode, /if \[ "\$author" = "\$FORBIDDEN_AUTHOR" \]; then[\s\S]*?exit 1/,
-    'must exit non-zero (fail closed) when the author is the forbidden identity');
+  assert.match(shCode, /if \[ "\$author" != "\$EXPECTED_AUTHOR" \]; then[\s\S]*?exit 1/,
+    'must exit non-zero (fail closed) when the author is not the expected identity');
 });
 
 // ── the two fixes ─────────────────────────────────────────────────────────────

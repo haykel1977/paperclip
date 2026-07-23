@@ -27,10 +27,13 @@
 #   DEFAULT_BRANCH  repository default branch
 set -euo pipefail
 
-# A PR authored by this identity was created with GITHUB_TOKEN, whose events are
-# suppressed → its required pull_request workflows never ran. The script fails
-# closed on it so a check-less witness can never masquerade as a valid one.
-FORBIDDEN_AUTHOR="github-actions[bot]"
+# The witness must be authored by the allowlisted commitperclip App identity. A
+# positive allowlist (rather than merely excluding github-actions[bot]) also
+# catches a misconfigured App or a wrong installation. In particular a
+# github-actions[bot] author means the PR was created with the built-in
+# GITHUB_TOKEN, whose pull_request workflows are suppressed → the required checks
+# never ran, so a check-less witness could otherwise masquerade as valid.
+EXPECTED_AUTHOR="commitperclip[bot]"
 
 : "${GH_TOKEN:?GH_TOKEN required}"
 : "${RUN_ID:?RUN_ID required}"
@@ -124,13 +127,14 @@ else
   fi
 fi
 
-# Fail closed on the event-suppression signature. A PR authored by
-# github-actions[bot] was created with GITHUB_TOKEN, so its required
-# pull_request workflows were suppressed and never ran — a check-less witness.
-# Refuse it (whether freshly created or reused) rather than let it look valid.
+# Fail closed unless the PR is authored by the expected allowlisted App identity.
+# A positive allowlist rejects not only the github-actions[bot] event-suppression
+# signature (built-in GITHUB_TOKEN → suppressed pull_request workflows → no
+# required checks) but also any misconfigured App or wrong installation. Applies
+# whether the PR was freshly created or reused.
 author="$(gh pr view "$pr_number" --repo "$REPO" --json author --jq .author.login)"
-if [ "$author" = "$FORBIDDEN_AUTHOR" ]; then
-  echo "ERROR: witness PR #${pr_number} is authored by ${FORBIDDEN_AUTHOR}. That identity is only produced by the built-in GITHUB_TOKEN, whose pull_request workflows are suppressed, so the required checks never run. Open the witness with a minted App installation token instead." >&2
+if [ "$author" != "$EXPECTED_AUTHOR" ]; then
+  echo "ERROR: witness PR #${pr_number} is authored by '${author}', not the allowlisted App identity '${EXPECTED_AUTHOR}'. In particular github-actions[bot] is produced only by the built-in GITHUB_TOKEN, whose pull_request workflows are suppressed so the required checks never run. Open the witness with a minted commitperclip App installation token instead." >&2
   exit 1
 fi
 
