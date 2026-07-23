@@ -41,7 +41,12 @@
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { classifyPrRiskLane, LANES } from './classify-pr-risk-lane.mjs';
+import {
+  classifyPrRiskLane,
+  LANES,
+  DEPENDENCY_MANIFEST_LABEL,
+  isDependencyAutomationManifestOnly,
+} from './classify-pr-risk-lane.mjs';
 
 // The checker's OWN bot identity. The real GitHub App is
 // `solidus-paperclip-checker` (App ID 4372695); its bot login is therefore
@@ -318,6 +323,17 @@ export function evaluateChecker({
 
   // Risk lane judges SHAPE only (title/labels/paths/size/actor); evidence is
   // evaluated separately below so we can distinguish "pending" from "failed".
+  //
+  // Bounded dependency-automation carve-out, IDENTICAL to enable-agent-automerge
+  // (shared isDependencyAutomationManifestOnly): a Dependabot or lockfile-refresh
+  // PR whose diff is EXCLUSIVELY dependency manifests/lockfiles may exempt that
+  // one RED surface, so the App gate treats it as GREEN just like the rest of
+  // autonomy. The exemption is exactly one label and evaporates the moment any
+  // source/workflow/sacred non-manifest path (or .npmrc/pnpmfile/pnpm-workspace,
+  // which carry a distinct non-exemptable label) appears — fail closed to RED.
+  const exemptRedPathLabels = isDependencyAutomationManifestOnly(pr, files)
+    ? [DEPENDENCY_MANIFEST_LABEL]
+    : [];
   const classification = classifyPrRiskLane({
     title: pr?.title ?? '',
     labels: labelNames(pr),
@@ -327,6 +343,7 @@ export function evaluateChecker({
     expectedHeadSha: expected,
     evidence: [],
     requiredEvidence: [],
+    exemptRedPathLabels,
   });
   if (classification.lane !== LANES.GREEN) {
     reasons.push(`Risk lane is ${classification.lane}; only GREEN is eligible for App approval.`);

@@ -260,6 +260,64 @@ test('evaluateChecker: GREEN + fresh SHA + green checks → approved', () => {
   assert.equal(r.riskLane, 'GREEN');
 });
 
+// ── evaluateChecker: dependency-automation carve-out (aligned with automerge) ─
+// A lockfile/package.json is a RED (sacred) path. The App gate must apply the
+// SAME bounded exemption enable-agent-automerge uses, so a trusted, manifest-
+// only dependency PR reaches GREEN — and must fail closed to RED the instant a
+// non-manifest / untrusted-actor condition appears.
+
+const depManifestFiles = () => [
+  { filename: 'pnpm-lock.yaml', additions: 4, deletions: 2, changes: 6 },
+  { filename: 'server/package.json', additions: 1, deletions: 1, changes: 2 },
+];
+
+test('evaluateChecker: Dependabot manifest-only PR is exempted → approved (not RED-blocked)', () => {
+  const r = evalGreen({
+    pr: greenPr({ user: { login: 'dependabot[bot]' }, head: { sha: HEAD, ref: 'dependabot/npm/x', repo: { full_name: 'paperclipai/paperclip' } } }),
+    files: depManifestFiles(),
+  });
+  assert.equal(r.decision, 'approved', r.reasons.join('; '));
+  assert.equal(r.riskLane, 'GREEN');
+});
+
+test('evaluateChecker: lockfile-refresh bot manifest-only PR is exempted → approved', () => {
+  const r = evalGreen({
+    pr: greenPr({ user: { login: 'github-actions[bot]' }, head: { sha: HEAD, ref: 'chore/refresh-lockfile', repo: { full_name: 'paperclipai/paperclip' } } }),
+    files: depManifestFiles(),
+  });
+  assert.equal(r.decision, 'approved', r.reasons.join('; '));
+  assert.equal(r.riskLane, 'GREEN');
+});
+
+test('evaluateChecker: Dependabot PR ALSO touching a workflow → RED, rejected (no exemption)', () => {
+  const r = evalGreen({
+    pr: greenPr({ user: { login: 'dependabot[bot]' }, head: { sha: HEAD, ref: 'dependabot/npm/x', repo: { full_name: 'paperclipai/paperclip' } } }),
+    files: [...depManifestFiles(), { filename: '.github/workflows/pr.yml', additions: 1, deletions: 0, changes: 1 }],
+  });
+  assert.equal(r.decision, 'rejected', r.reasons.join('; '));
+  assert.equal(r.riskLane, 'RED');
+});
+
+test('evaluateChecker: manifest-only but UNTRUSTED author → RED, rejected (exemption withheld)', () => {
+  const r = evalGreen({
+    pr: greenPr({ user: { login: 'mallory' }, head: { sha: HEAD, ref: 'chore/refresh-lockfile', repo: { full_name: 'paperclipai/paperclip' } } }),
+    files: depManifestFiles(),
+    headCommitAuthorLogin: 'mallory',
+    lastPusherLogin: 'mallory',
+  });
+  assert.equal(r.decision, 'rejected', r.reasons.join('; '));
+  assert.equal(r.riskLane, 'RED');
+});
+
+test('evaluateChecker: Dependabot touching .npmrc (non-exemptable label) → RED, rejected', () => {
+  const r = evalGreen({
+    pr: greenPr({ user: { login: 'dependabot[bot]' }, head: { sha: HEAD, ref: 'dependabot/npm/x', repo: { full_name: 'paperclipai/paperclip' } } }),
+    files: [{ filename: 'pnpm-lock.yaml', additions: 4, deletions: 2, changes: 6 }, { filename: '.npmrc', additions: 1, deletions: 0, changes: 1 }],
+  });
+  assert.equal(r.decision, 'rejected', r.reasons.join('; '));
+  assert.equal(r.riskLane, 'RED');
+});
+
 // ── evaluateChecker: identity separation of duties ──────────────────────────
 
 test('evaluateChecker: App is PR author → rejected (self-approval)', () => {

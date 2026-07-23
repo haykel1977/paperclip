@@ -154,6 +154,27 @@ export function isDependencyManifestOnly(files) {
   });
 }
 
+/**
+ * True only for a trusted dependency-automation PR whose diff is EXCLUSIVELY
+ * dependency manifests/lockfiles — the sole precondition under which a caller
+ * may exempt the `DEPENDENCY_MANIFEST_LABEL` RED surface (and nothing else).
+ *
+ * Trusted producers are exactly: Dependabot (`dependabot[bot]`) and the
+ * repo's own lockfile-refresh automation (`github-actions[bot]` pushing the
+ * `chore/refresh-lockfile` branch). ANY other author, ANY other branch, or ANY
+ * non-manifest path in the diff (a workflow, source, auth file, `.npmrc`,
+ * `pnpmfile`, `pnpm-workspace.yaml`, …) makes this false, so the exemption
+ * evaporates and the PR stays RED. Shared by enable-agent-automerge.mjs and the
+ * paperclip-checker App gate so both apply the identical, narrowly-bounded
+ * carve-out and never diverge.
+ */
+export function isDependencyAutomationManifestOnly(pr, files) {
+  const author = String(pr?.user?.login ?? '').trim();
+  const isLockfileRefresh =
+    author === 'github-actions[bot]' && String(pr?.head?.ref ?? '') === 'chore/refresh-lockfile';
+  return (isLockfileRefresh || author === 'dependabot[bot]') && isDependencyManifestOnly(files);
+}
+
 function normalizeLabel(label) {
   return String(label ?? '').trim().toLowerCase();
 }
