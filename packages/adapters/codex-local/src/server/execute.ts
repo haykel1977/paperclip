@@ -50,6 +50,7 @@ import {
 import { pathExists, prepareManagedCodexHome, resolveManagedCodexHomeDir, resolveSharedCodexHomeDir } from "./codex-home.js";
 import { resolveCodexDesiredSkillNames } from "./skills.js";
 import { buildCodexExecArgs } from "./codex-args.js";
+import { installNativeDeliveryCommandGuard } from "./delivery-command-guard.js";
 import { SANDBOX_INSTALL_COMMAND } from "../index.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
@@ -905,6 +906,17 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     };
   };
 
+  const nativeDeliveryCommandGuard = executionTargetIsRemote
+    ? null
+    : await installNativeDeliveryCommandGuard(runtimeEnv);
+  if (nativeDeliveryCommandGuard) {
+    Object.assign(runtimeEnv, nativeDeliveryCommandGuard.env);
+    await onLog(
+      "stdout",
+      "[paperclip] Native git push and GitHub PR mutations are blocked because PAPERCLIP_DELIVERY_LANE=disabled.\n",
+    );
+  }
+
   try {
     const initial = await runAttempt(sessionId);
     if (
@@ -913,6 +925,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       (initial.proc.exitCode ?? 0) !== 0 &&
       isCodexUnknownSessionError(initial.proc.stdout, initial.rawStderr)
     ) {
+
       await onLog(
         "stdout",
         `[paperclip] Codex resume session "${sessionId}" is unavailable; retrying with a fresh session.\n`,
@@ -952,7 +965,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     }
     return toResult(initial, false, false);
   } finally {
-
+    if (nativeDeliveryCommandGuard) {
+      await nativeDeliveryCommandGuard.cleanup();
+    }
     if (paperclipBridge) {
       await paperclipBridge.stop();
     }
