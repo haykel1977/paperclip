@@ -631,7 +631,55 @@ describe("executeDeliveryHook", () => {
     expect(calls.some((call) => call[0] === "pnpm")).toBe(false);
   });
 
+  it("blocks delivery when a Paperclip PR for the issue was closed without merge", async () => {
+    const worktreeCwd = mkWorktree();
+    const calls: string[][] = [];
+    const existingBody = [
+      "## Delivery Metadata",
+      "- Paperclip issue: HAS-222 (uuid)",
+      "- Repository: Beyn-SOLIDUS/quantum",
+      "- Idempotency key: beyn-solidus/quantum:uuid",
+    ].join("\n");
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list") {
+        if (args.includes("--head")) return { exitCode: 0, stdout: "", stderr: "" };
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify([{
+            url: "https://github.com/Beyn-SOLIDUS/quantum/pull/2788",
+            state: "CLOSED",
+            mergedAt: null,
+            mergeCommit: null,
+            title: "HAS-222: rejected delivery",
+            body: existingBody,
+            isCrossRepository: false,
+            baseRefName: "main",
+          }]),
+          stderr: "",
+
+        };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
+
+    expect(result).toEqual({
+      delivered: false,
+      prUrl: "https://github.com/Beyn-SOLIDUS/quantum/pull/2788",
+      reason: "delivery_blocked: prior issue PR closed without merge",
+    });
+    expect(calls.some((call) => call[0] === "git" && call[1] === "commit")).toBe(false);
+    expect(calls.some((call) => call[0] === "git" && call[1] === "push")).toBe(false);
+    expect(calls.some((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create")).toBe(false);
+    expect(calls.some((call) => call[0] === "pnpm")).toBe(false);
+  });
+
   it("rechecks issue idempotency after push and skips PR creation when another agent won the race", async () => {
+
     const worktreeCwd = mkWorktree();
     const calls: string[][] = [];
     let issueLookupCount = 0;

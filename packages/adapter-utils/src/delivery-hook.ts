@@ -354,12 +354,14 @@ function hasExactIssueReference(input: {
 
 async function findExistingPrForIssue(input: {
   repo: string;
+  baseBranch: string;
   issueIdentifier: string | null;
   issueId: string | null;
   worktreeCwd: string;
   env: Record<string, string>;
   runProc: DeliveryHookRunProcess;
 }): Promise<ExistingIssuePrLookup> {
+
   const searchTerm = input.issueIdentifier ?? input.issueId;
   if (!searchTerm) return { ok: true, pr: null };
 
@@ -377,11 +379,12 @@ async function findExistingPrForIssue(input: {
       "--limit",
       "100",
       "--json",
-      "url,state,mergedAt,mergeCommit,title,body",
+      "url,state,mergedAt,mergeCommit,title,body,isCrossRepository,baseRefName",
     ],
     input.worktreeCwd,
     input.env,
   );
+
   if (result.exitCode !== 0) {
     return { ok: false, reason: firstNonEmptyLine(result.stderr) || "GitHub PR lookup failed" };
   }
@@ -394,9 +397,12 @@ async function findExistingPrForIssue(input: {
     mergeCommit?: { oid?: unknown } | null;
     title?: unknown;
     body?: unknown;
+    isCrossRepository?: unknown;
+    baseRefName?: unknown;
   }>;
   try {
     const parsed = JSON.parse(result.stdout) as unknown;
+
     if (!Array.isArray(parsed)) return { ok: false, reason: "GitHub PR lookup returned a non-array payload" };
     rows = parsed;
   } catch {
@@ -412,6 +418,8 @@ async function findExistingPrForIssue(input: {
     const open = row.state === "OPEN";
     const closed = row.state === "CLOSED";
     if (!url || (!open && !closed && !merged)) return [];
+    if (row.isCrossRepository === true) return [];
+    if (typeof row.baseRefName === "string" && row.baseRefName !== input.baseBranch) return [];
     if (!hasExactIssueReference({
       body,
       title,
@@ -419,6 +427,7 @@ async function findExistingPrForIssue(input: {
       issueIdentifier: input.issueIdentifier,
       issueId: input.issueId,
     })) return [];
+
     return [{
       url,
       state: merged ? "MERGED" : open ? "OPEN" : "CLOSED",
@@ -915,6 +924,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
 
   const issuePrLookup = await findExistingPrForIssue({
     repo: input.repo,
+    baseBranch: input.baseBranch,
     issueIdentifier: input.issueIdentifier,
     issueId: input.issueId,
     worktreeCwd,
@@ -922,6 +932,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     runProc,
   });
   if (!issuePrLookup.ok) {
+
     await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="issue_pr_lookup_failed" detail="${issuePrLookup.reason}"\n`);
     return { delivered: false, prUrl: null, reason: "delivery_blocked: issue PR lookup failed" };
   }
@@ -1104,6 +1115,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
   // may have created the issue PR while this run was committing and pushing.
   const issuePrAfterPush = await findExistingPrForIssue({
     repo: input.repo,
+    baseBranch: input.baseBranch,
     issueIdentifier: input.issueIdentifier,
     issueId: input.issueId,
     worktreeCwd,
@@ -1111,10 +1123,19 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     runProc,
   });
   if (!issuePrAfterPush.ok) {
+
     await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="post_push_issue_pr_lookup_failed" detail="${issuePrAfterPush.reason}"\n`);
     return { delivered: false, prUrl: null, reason: "delivery_blocked: issue PR lookup failed" };
   }
   if (issuePrAfterPush.pr) {
+    if (issuePrAfterPush.pr.state === "CLOSED") {
+      await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="prior_issue_pr_closed_without_merge" issue_key=${buildIssueDeliveryKey(input.repo, input.issueIdentifier, input.issueId)} pr_url=${issuePrAfterPush.pr.url}\n`);
+      return {
+        delivered: false,
+        prUrl: issuePrAfterPush.pr.url,
+        reason: "delivery_blocked: prior issue PR closed without merge",
+      };
+    }
     const mergedPrIsOnBase = issuePrAfterPush.pr.state !== "MERGED" || await verifyMergedPrOnBase({
       repo: input.repo,
       baseBranch: input.baseBranch,
@@ -1141,6 +1162,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
   }
 
   // ── 8. create PR ──────────────────────────────────────────────────────────
+
   const repoLabels = await fetchRepoLabels({ repo: input.repo, worktreeCwd, env: deliveryCommandEnv, log, ts, runProc });
 
   const labelsToApply = deliveryLabels.filter((label) => repoLabels.includes(label));
@@ -1181,6 +1203,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     }
     const issuePrAfterCreateFailure = await findExistingPrForIssue({
       repo: input.repo,
+      baseBranch: input.baseBranch,
       issueIdentifier: input.issueIdentifier,
       issueId: input.issueId,
       worktreeCwd,
@@ -1188,6 +1211,15 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
       runProc,
     });
     if (issuePrAfterCreateFailure.ok && issuePrAfterCreateFailure.pr) {
+
+      if (issuePrAfterCreateFailure.pr.state === "CLOSED") {
+        await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="prior_issue_pr_closed_without_merge" issue_key=${buildIssueDeliveryKey(input.repo, input.issueIdentifier, input.issueId)} pr_url=${issuePrAfterCreateFailure.pr.url}\n`);
+        return {
+          delivered: false,
+          prUrl: issuePrAfterCreateFailure.pr.url,
+          reason: "delivery_blocked: prior issue PR closed without merge",
+        };
+      }
       const mergedPrIsOnBase = issuePrAfterCreateFailure.pr.state !== "MERGED" || await verifyMergedPrOnBase({
         repo: input.repo,
         baseBranch: input.baseBranch,
@@ -1213,6 +1245,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
       };
     }
     await log("stderr", `[delivery ${ts()}] gh_pr_create_failed: ${pr.stderr}\n`);
+
     return { delivered: false, prUrl: null, reason: "pr_create_failed" };
   }
 

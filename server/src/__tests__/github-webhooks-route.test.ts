@@ -33,12 +33,14 @@ function createDependencies(overrides: Partial<GitHubWebhookDependencies> = {}):
     listActiveRuns: vi.fn(async () => [{ id: "run-1" }, { id: "run-2" }]),
     cancelRun: vi.fn(async () => undefined),
     markIssueDone: vi.fn(async () => "done"),
-    logMerge: vi.fn(async () => undefined),
+    markIssueBlocked: vi.fn(async () => "blocked"),
+    logDelivery: vi.fn(async () => undefined),
     ...overrides,
   };
 }
 
 function createApp(dependencies: GitHubWebhookDependencies) {
+
   const app = express();
   app.use(express.json({
     verify(req, _res, buffer) {
@@ -59,11 +61,13 @@ function payload(repository = "Beyn-SOLIDUS/quantum") {
       merged_at: "2026-07-23T10:00:00.000Z",
       html_url: "https://github.com/Beyn-SOLIDUS/quantum/pull/42",
       merge_commit_sha: "abc123",
+      head: { repo: { full_name: repository } },
       body: [
         "## Delivery Metadata",
         `- Paperclip issue: QUA-38 (${ISSUE_ID})`,
         `- Repository: ${repository}`,
       ].join("\n"),
+
     },
   };
 }
@@ -108,19 +112,74 @@ describe("GitHub delivery webhook", () => {
     const response = await postWebhook(createApp(dependencies), body);
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ accepted: true, issueId: ISSUE_ID, status: "done", changed: true });
+    expect(response.body).toEqual({
+      accepted: true,
+      issueId: ISSUE_ID,
+      status: "done",
+      changed: true,
+      outcome: "merged",
+    });
     expect(dependencies.cancelRun).toHaveBeenCalledTimes(2);
     expect(dependencies.markIssueDone).toHaveBeenCalledWith(
       expect.objectContaining({ id: ISSUE_ID }),
-      expect.objectContaining({ repository: "beyn-solidus/quantum", deliveryId: "delivery-1" }),
+      expect.objectContaining({ status: "merged", repository: "beyn-solidus/quantum", deliveryId: "delivery-1" }),
     );
-    expect(dependencies.logMerge).toHaveBeenCalledWith(expect.objectContaining({
+    expect(dependencies.logDelivery).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: "merged",
       cancelledRunIds: ["run-1", "run-2"],
       changed: true,
     }));
   });
 
+  it("blocks the issue and cancels active runs when its delivery PR is closed without merge", async () => {
+    const dependencies = createDependencies();
+    const body = payload();
+    body.pull_request.merged = false;
+
+    const response = await postWebhook(createApp(dependencies), body);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      accepted: true,
+      issueId: ISSUE_ID,
+      status: "blocked",
+      changed: true,
+      outcome: "closed_without_merge",
+    });
+    expect(dependencies.cancelRun).toHaveBeenCalledTimes(2);
+    expect(dependencies.markIssueDone).not.toHaveBeenCalled();
+    expect(dependencies.markIssueBlocked).toHaveBeenCalledWith(
+      expect.objectContaining({ id: ISSUE_ID }),
+      expect.objectContaining({
+        status: "closed_without_merge",
+        repository: "beyn-solidus/quantum",
+        pullRequestUrl: "https://github.com/Beyn-SOLIDUS/quantum/pull/42",
+      }),
+    );
+    expect(dependencies.logDelivery).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: "closed_without_merge",
+      cancelledRunIds: ["run-1", "run-2"],
+      changed: true,
+    }));
+  });
+
+  it("ignores an unmerged closure from a fork before reading or mutating the issue", async () => {
+    const dependencies = createDependencies();
+    const body = payload();
+    body.pull_request.merged = false;
+    body.pull_request.head.repo.full_name = "external/fork";
+
+    const response = await postWebhook(createApp(dependencies), body);
+
+    expect(response.status).toBe(202);
+    expect(response.body).toEqual({ accepted: true, ignored: "untrusted_closed_delivery_source" });
+    expect(dependencies.findIssue).not.toHaveBeenCalled();
+    expect(dependencies.cancelRun).not.toHaveBeenCalled();
+    expect(dependencies.markIssueBlocked).not.toHaveBeenCalled();
+  });
+
   it("remains idempotent while still cancelling stale runs for an issue already done", async () => {
+
     const dependencies = createDependencies({ findIssue: vi.fn(async () => createIssue("done")) });
     const response = await postWebhook(createApp(dependencies), payload());
 
@@ -128,10 +187,14 @@ describe("GitHub delivery webhook", () => {
     expect(response.body.changed).toBe(false);
     expect(dependencies.cancelRun).toHaveBeenCalledTimes(2);
     expect(dependencies.markIssueDone).not.toHaveBeenCalled();
-    expect(dependencies.logMerge).toHaveBeenCalledWith(expect.objectContaining({ changed: false }));
+    expect(dependencies.logDelivery).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: "merged",
+      changed: false,
+    }));
   });
 
   it("rejects a repository that is not bound to the issue company and project", async () => {
+
     const dependencies = createDependencies({
       listTrustedRepositoryUrls: vi.fn(async () => ["https://github.com/Beyn-SOLIDUS/other-repo"]),
     });

@@ -25,10 +25,12 @@ type GitHubPullRequestWebhook = {
     html_url?: unknown;
     body?: unknown;
     merge_commit_sha?: unknown;
+    head?: { repo?: { full_name?: unknown } };
   };
 };
 
 export type GitHubDeliveryIssue = {
+
   id: string;
   companyId: string;
   projectId: string | null;
@@ -48,12 +50,13 @@ export type GitHubWebhookDependencies = {
   listActiveRuns(issue: GitHubDeliveryIssue): Promise<Array<{ id: string }>>;
   cancelRun(runId: string): Promise<unknown>;
   markIssueDone(issue: GitHubDeliveryIssue, delivery: Record<string, unknown>): Promise<string>;
-  logMerge(input: {
+  markIssueBlocked(issue: GitHubDeliveryIssue, delivery: Record<string, unknown>): Promise<string>;
+  logDelivery(input: {
     issue: GitHubDeliveryIssue;
+    outcome: "merged" | "closed_without_merge";
     repository: string;
     pullRequestNumber: number | null;
     pullRequestUrl: string | null;
-
     mergeCommitSha: string | null;
     deliveryId: string | null;
     cancelledRunIds: string[];
@@ -62,6 +65,7 @@ export type GitHubWebhookDependencies = {
 };
 
 function readString(value: unknown) {
+
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
@@ -172,15 +176,30 @@ function createDefaultDependencies(db: Db): GitHubWebhookDependencies {
       return updated?.status ?? "done";
     },
 
-    logMerge(input) {
+    async markIssueBlocked(issue, delivery) {
+      const updated = await issuesSvc.update(issue.id, {
+        status: "blocked",
+        assigneeAgentId: null,
+        executionState: {
+          ...parseObject(issue.executionState),
+          githubDelivery: delivery,
+        },
+      });
+      return updated?.status ?? "blocked";
+    },
+
+    logDelivery(input) {
       return logActivity(db, {
         companyId: input.issue.companyId,
         actorType: "system",
         actorId: "github-webhook",
-        action: "issue.github_delivery_merged",
+        action: input.outcome === "merged"
+          ? "issue.github_delivery_merged"
+          : "issue.github_delivery_closed_without_merge",
         entityType: "issue",
         entityId: input.issue.id,
         details: {
+          outcome: input.outcome,
           repository: input.repository,
           pullRequestNumber: input.pullRequestNumber,
           pullRequestUrl: input.pullRequestUrl,
@@ -195,6 +214,7 @@ function createDefaultDependencies(db: Db): GitHubWebhookDependencies {
 }
 
 export function githubWebhookRoutes(db: Db, dependencyOverrides?: GitHubWebhookDependencies) {
+
   const router = Router();
   const dependencies = dependencyOverrides ?? createDefaultDependencies(db);
 
@@ -219,14 +239,16 @@ export function githubWebhookRoutes(db: Db, dependencyOverrides?: GitHubWebhookD
     const payload = req.body && typeof req.body === "object"
       ? req.body as GitHubPullRequestWebhook
       : {};
-    if (payload.action !== "closed" || payload.pull_request?.merged !== true) {
-      res.status(202).json({ accepted: true, ignored: "pull_request_not_merged" });
+    if (payload.action !== "closed") {
+      res.status(202).json({ accepted: true, ignored: "pull_request_not_closed" });
       return;
     }
 
-    const body = readString(payload.pull_request.body);
+    const merged = payload.pull_request?.merged === true;
+    const body = readString(payload.pull_request?.body);
     const payloadRepository = normalizeGitHubRepository(readString(payload.repository?.full_name));
     const metadata = body ? parsePaperclipDeliveryMetadata(body) : null;
+
     if (!metadata) {
       res.status(202).json({ accepted: true, ignored: "not_a_paperclip_delivery" });
       return;
@@ -240,6 +262,13 @@ export function githubWebhookRoutes(db: Db, dependencyOverrides?: GitHubWebhookD
     if (metadataRepository !== payloadRepository) {
       res.status(400).json({ error: "Delivery repository metadata does not match webhook repository" });
       return;
+    }
+    if (!merged) {
+      const headRepository = normalizeGitHubRepository(readString(payload.pull_request?.head?.repo?.full_name));
+      if (headRepository !== payloadRepository) {
+        res.status(202).json({ accepted: true, ignored: "untrusted_closed_delivery_source" });
+        return;
+      }
     }
 
     const issue = await dependencies.findIssue(metadata.issueId);
@@ -265,25 +294,33 @@ export function githubWebhookRoutes(db: Db, dependencyOverrides?: GitHubWebhookD
     const activeRuns = await dependencies.listActiveRuns(issue);
     await Promise.all(activeRuns.map((run) => dependencies.cancelRun(run.id)));
 
-    const pullRequestNumber = typeof payload.pull_request.number === "number" ? payload.pull_request.number : null;
-    const pullRequestUrl = readString(payload.pull_request.html_url);
-    const mergeCommitSha = readString(payload.pull_request.merge_commit_sha);
-    const mergedAt = readString(payload.pull_request.merged_at);
+    const pullRequestNumber = typeof payload.pull_request?.number === "number" ? payload.pull_request.number : null;
+    const pullRequestUrl = readString(payload.pull_request?.html_url);
+    const mergeCommitSha = merged ? readString(payload.pull_request?.merge_commit_sha) : null;
+    const mergedAt = merged ? readString(payload.pull_request?.merged_at) : null;
     const deliveryId = readString(req.header("x-github-delivery"));
-    const changed = issue.status !== "done" && issue.status !== "cancelled";
+    const outcome = merged ? "merged" as const : "closed_without_merge" as const;
+
+    const terminalStatuses = new Set(["done", "cancelled"]);
+    const changed = !terminalStatuses.has(issue.status) && (merged || issue.status !== "blocked");
+    const delivery = {
+      status: outcome,
+      repository: payloadRepository,
+      pullRequestNumber,
+      pullRequestUrl,
+      mergeCommitSha,
+      mergedAt,
+      deliveryId,
+    };
     const status = changed
-      ? await dependencies.markIssueDone(issue, {
-          repository: payloadRepository,
-          pullRequestNumber,
-          pullRequestUrl,
-          mergeCommitSha,
-          mergedAt,
-          deliveryId,
-        })
+      ? merged
+        ? await dependencies.markIssueDone(issue, delivery)
+        : await dependencies.markIssueBlocked(issue, delivery)
       : issue.status;
 
-    await dependencies.logMerge({
+    await dependencies.logDelivery({
       issue,
+      outcome,
       repository: payloadRepository,
       pullRequestNumber,
       pullRequestUrl,
@@ -293,7 +330,7 @@ export function githubWebhookRoutes(db: Db, dependencyOverrides?: GitHubWebhookD
       changed,
     });
 
-    res.json({ accepted: true, issueId: issue.id, status, changed });
+    res.json({ accepted: true, issueId: issue.id, status, changed, outcome });
   });
 
   return router;
