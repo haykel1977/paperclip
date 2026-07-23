@@ -688,6 +688,17 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="conflict marker scan failed" detail="${firstNonEmptyLine(conflictMarkerScan.stderr)}"\n`);
     return { delivered: false, prUrl: null, reason: "delivery_blocked: conflict marker scan failed" };
   }
+  // Also scan untracked files that git add -A would include
+  const untrackedScan = await runProc(
+    "sh",
+    ["-c", "git ls-files --others --exclude-standard -z | xargs -0 grep -l -E '^(<{7} |>{7} )' 2>/dev/null || true"],
+    worktreeCwd,
+    env,
+  );
+  if (untrackedScan.exitCode === 0 && untrackedScan.stdout.trim()) {
+    await log("stderr", `[delivery ${ts()}] result=conflict reason="untracked file contains conflict marker — abort, no force"\n`);
+    return { delivered: false, prUrl: null, reason: "conflict" };
+  }
 
   // ── 2. bot token check (autonomous lane only) ────────────────────────────
   const deliveryBotToken = autonomousDelivery ? readDeliveryBotToken(env) : null;

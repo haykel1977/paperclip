@@ -1,8 +1,8 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { Router, type Request } from "express";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { heartbeatRuns, issues } from "@paperclipai/db";
+import { heartbeatRuns, issues, projectWorkspaces } from "@paperclipai/db";
 import { heartbeatService } from "../services/heartbeat.js";
 import { issueService } from "../services/issues.js";
 import { parseObject } from "../adapters/utils.js";
@@ -37,8 +37,8 @@ export function verifyGitHubWebhookSignature(rawBody: Buffer, signature: string 
 
 export function parsePaperclipDeliveryMetadata(body: string) {
   const issueId = body.match(PAPERCLIP_ISSUE_METADATA_RE)?.[1] ?? null;
-  if (!issueId) return null;
   const repository = body.match(REPOSITORY_METADATA_RE)?.[1] ?? null;
+  if (!issueId || !repository) return null;
   return { issueId, repository };
 }
 
@@ -84,7 +84,7 @@ export function githubWebhookRoutes(db: Db) {
       res.status(202).json({ accepted: true, ignored: "not_a_paperclip_delivery" });
       return;
     }
-    if (metadata.repository && repository && metadata.repository.toLowerCase() !== repository.toLowerCase()) {
+    if (metadata.repository.toLowerCase() !== repository?.toLowerCase()) {
       res.status(400).json({ error: "Delivery repository metadata does not match webhook repository" });
       return;
     }
@@ -104,15 +104,33 @@ export function githubWebhookRoutes(db: Db) {
       res.status(404).json({ error: "Paperclip issue not found" });
       return;
     }
-    if (issue.status === "done") {
-      res.json({ accepted: true, issueId: issue.id, status: "done", changed: false });
-      return;
-    }
-    if (issue.status === "cancelled") {
-      res.json({ accepted: true, issueId: issue.id, status: "cancelled", changed: false });
+
+    // Verify the webhook repository belongs to the issue's company
+    const repoFullName = metadata.repository.toLowerCase();
+    const repoUrlPatterns = [
+      `%github.com/${repoFullName}%`,
+      `%github.com/${repoFullName}.git%`,
+    ];
+    const authorizedWorkspace = await db
+      .select({ id: projectWorkspaces.id })
+      .from(projectWorkspaces)
+      .where(
+        and(
+          eq(projectWorkspaces.companyId, issue.companyId),
+          or(
+            sql`LOWER(${projectWorkspaces.repoUrl}) LIKE ${repoUrlPatterns[0]}`,
+            sql`LOWER(${projectWorkspaces.repoUrl}) LIKE ${repoUrlPatterns[1]}`,
+          ),
+        ),
+      )
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    if (!authorizedWorkspace) {
+      res.status(403).json({ error: "Repository is not authorized for this company" });
       return;
     }
 
+    // Always cancel active runs for this issue, even if already done/cancelled (idempotent cleanup)
     const activeRuns = await db
       .select({ id: heartbeatRuns.id })
       .from(heartbeatRuns)
@@ -123,11 +141,22 @@ export function githubWebhookRoutes(db: Db) {
           sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issue.id}`,
         ),
       );
-    await Promise.all(
-      activeRuns.map((run) =>
-        heartbeat.cancelRun(run.id, "Cancelled because the linked GitHub pull request was merged"),
-      ),
-    );
+    if (activeRuns.length > 0) {
+      await Promise.all(
+        activeRuns.map((run) =>
+          heartbeat.cancelRun(run.id, "Cancelled because the linked GitHub pull request was merged"),
+        ),
+      );
+    }
+
+    if (issue.status === "done") {
+      res.json({ accepted: true, issueId: issue.id, status: "done", changed: false, cancelledRuns: activeRuns.length });
+      return;
+    }
+    if (issue.status === "cancelled") {
+      res.json({ accepted: true, issueId: issue.id, status: "cancelled", changed: false, cancelledRuns: activeRuns.length });
+      return;
+    }
 
     const currentExecutionState = parseObject(issue.executionState);
     const prNumber = typeof payload.pull_request.number === "number" ? payload.pull_request.number : null;
