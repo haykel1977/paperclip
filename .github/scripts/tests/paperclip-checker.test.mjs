@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
   readCheckerConfig,
   loadCheckerPolicy,
@@ -7,6 +9,7 @@ import {
   evaluateChecker,
   findApprovedAppReview,
   resolvePrNumberForSha,
+  fetchAllPagesFromKey,
   sanitizeError,
   DEFAULT_APP_SLUG,
   DEFAULT_REQUIRED_CHECK_POLICY,
@@ -238,7 +241,7 @@ test('summarizeRequiredChecks: status-typed requirement with NO appSlug → fail
   const statusPolicy = [{ name: 'legacy-ci', type: 'status' }];
   const r = summarizeRequiredChecks([], [{ context: 'legacy-ci', state: 'success', creator: { login: 'anyone' } }], statusPolicy);
   assert.equal(r.state, 'failed');
-  assert.match(r.failures.join(' '), /unexpected creator/i);
+  assert.match(r.failures.join(' '), /no expected producer/i);
 });
 
 // ── evaluateChecker: activation gate (blocked, never a pass) ────────────────
@@ -720,4 +723,45 @@ test('integration(mocked): spoofed same-name check from wrong app is rejected en
   });
   assert.equal(result.decision, 'rejected');
   assert.match(result.reasons.join(' '), /unexpected app/i);
+});
+
+// ── object-keyed pagination (check-runs / combined status) ──────────────────
+
+test('fetchAllPagesFromKey: follows pages until a short page and concatenates the keyed arrays', async () => {
+  const pageOne = Array.from({ length: 100 }, (_, i) => ({ name: `verify-${i}` }));
+  const pageTwo = [{ name: 'gitleaks' }];
+  const calls = [];
+  const gh = async (path) => {
+    calls.push(path);
+    const page = Number(new URL(`https://x${path}`).searchParams.get('page'));
+    return { total_count: 101, check_runs: page === 1 ? pageOne : page === 2 ? pageTwo : [] };
+  };
+  const all = await fetchAllPagesFromKey(gh, '/repos/o/r/commits/abc/check-runs', 'tok', 'check_runs');
+  assert.equal(all.length, 101);
+  assert.equal(all[100].name, 'gitleaks');
+  // Stopped after the short page 2; did not request page 3.
+  assert.equal(calls.length, 2);
+  assert.match(calls[0], /per_page=100&page=1/);
+});
+
+test('fetchAllPagesFromKey: missing/invalid key yields empty (fail-closed, no crash)', async () => {
+  const gh = async () => ({ total_count: 0 });
+  const all = await fetchAllPagesFromKey(gh, '/repos/o/r/commits/abc/status', 'tok', 'statuses');
+  assert.deepEqual(all, []);
+});
+
+// ── workflow-level trust guard: executed checker code must be the default branch ──
+
+test('workflow: checkout pins the repository default branch, never the PR-selected base', () => {
+  const wfPath = fileURLToPath(new URL('../../workflows/paperclip-checker.yml', import.meta.url));
+  const wf = readFileSync(wfPath, 'utf8');
+  const refLine = wf.split('\n').find(l => /^\s*ref:\s/.test(l));
+  assert.ok(refLine, 'checkout step must declare a ref');
+  // The executed code (checker script + policy + classifier) must come from the
+  // branch-protected default branch. A PR-influenceable base.sha would let a PR
+  // targeting a malicious base branch swap in a different checker script that
+  // runs with the App private key in step env.
+  assert.match(refLine, /github\.event\.repository\.default_branch/);
+  assert.doesNotMatch(wf, /ref:.*pull_request\.base\.sha/);
+  assert.doesNotMatch(wf, /ref:.*head\.sha/);
 });

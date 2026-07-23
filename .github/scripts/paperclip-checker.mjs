@@ -199,7 +199,9 @@ export function summarizeRequiredChecks(checkRuns, statuses, requiredChecks = DE
       // producer can never satisfy the gate (parity with check_run/appMatches).
       const matching = named.filter(s => cfg.appSlug && normalizeLogin(s?.creator?.login) === normalizeLogin(cfg.appSlug));
       if (named.length > 0 && matching.length === 0) {
-        failures.push(`Required status \`${cfg.name}\` exists only from an unexpected creator; expected \`${cfg.appSlug ?? '(no producer configured)'}\`. Blocking.`);
+        failures.push(cfg.appSlug
+          ? `Required status \`${cfg.name}\` exists only from an unexpected creator; expected \`${cfg.appSlug}\`. Blocking.`
+          : `Required status \`${cfg.name}\` has no expected producer (appSlug) configured, so its creator cannot be verified. Blocking.`);
         evidence.push({ name: cfg.name, conclusion: 'unexpected_producer' });
         continue;
       }
@@ -366,7 +368,7 @@ async function fetchAllPages(ghFetch, path, token) {
 // { statuses }) are paginated too. A single page can silently drop a required
 // check on commits with large build matrices, degrading the gate into a false
 // negative. Page until a short page proves the list is exhausted.
-async function fetchAllPagesFromKey(ghFetch, path, token, key) {
+export async function fetchAllPagesFromKey(ghFetch, path, token, key) {
   const items = [];
   for (let page = 1; ; page += 1) {
     const sep = path.includes('?') ? '&' : '?';
