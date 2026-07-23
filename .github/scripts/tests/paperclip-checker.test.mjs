@@ -802,6 +802,48 @@ test('workflow: checker job pins the check name to the documented paperclip-chec
   assert.match(checkerBlock, /^ {4}name:\s*paperclip-checker\s*$/m);
 });
 
+// ── secret-scan workflow: required "Secret Scan" context must be produced ──
+// Branch protection on `main` requires the context "Secret Scan", while
+// internal tooling (producer binding, classifier, automerge, protection audit)
+// binds to "gitleaks". Both contexts must exist: the scanning job keeps its
+// `gitleaks` id/context, and a gate job publishes "Secret Scan" gated on it.
+
+function secretScanBlock(jobKey) {
+  const wfPath = fileURLToPath(new URL('../../workflows/secret-scan.yml', import.meta.url));
+  const wf = readFileSync(wfPath, 'utf8');
+  const lines = wf.split('\n');
+  const start = lines.findIndex(l => new RegExp(`^ {2}${jobKey}:\\s*$`).test(l));
+  if (start === -1) return null;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (/^ {2}\S/.test(lines[i])) { end = i; break; }
+  }
+  return lines.slice(start, end).join('\n');
+}
+
+test('secret-scan: gitleaks job/context is preserved for internal producer binding', () => {
+  // The checker producer binding, classifier, automerge, and protection audit
+  // all key on the check-run name `gitleaks`. Renaming this job would silently
+  // break every one of those bindings, so the id (== emitted context) must
+  // remain `gitleaks` with no overriding `name:`.
+  const block = secretScanBlock('gitleaks');
+  assert.ok(block, 'secret-scan workflow must keep a jobs.gitleaks block');
+  assert.doesNotMatch(block, /^ {4}name:\s/m, 'gitleaks job must not override its context name');
+});
+
+test('secret-scan: a gate job publishes the "Secret Scan" required context, gated on gitleaks', () => {
+  const block = secretScanBlock('secret-scan');
+  assert.ok(block, 'secret-scan workflow must define a jobs.secret-scan gate');
+  // Emits the exact context required by branch protection on `main`.
+  assert.match(block, /^ {4}name:\s*Secret Scan\s*$/m);
+  // Depends on the real scan so it cannot pass independently of gitleaks.
+  assert.match(block, /^ {4}needs:\s*\[gitleaks\]\s*$/m);
+  // Fails closed: only a `success` gitleaks result passes the gate.
+  assert.match(block, /needs\.gitleaks\.result/);
+  assert.match(block, /!=\s*"success"/);
+  assert.match(block, /exit 1/);
+});
+
 // ── executeDecision: post-decision side-effect sequencing (approve/dismiss) ──
 // Injected deps record every mint/dismiss/approve so we can assert the exact
 // side effects, including the anti-TOCTOU + stale-dismiss coupling.
