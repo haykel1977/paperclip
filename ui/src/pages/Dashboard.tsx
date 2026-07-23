@@ -60,6 +60,13 @@ export function Dashboard() {
     enabled: !!selectedCompanyId,
   });
 
+  const { data: blockedTriage } = useQuery({
+    queryKey: queryKeys.issues.blockedTriageSummary(selectedCompanyId!),
+    queryFn: () => issuesApi.blockedTriageSummary(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+    refetchInterval: 30_000,
+  });
+
   const { data: activity } = useQuery({
     queryKey: [...queryKeys.activity(selectedCompanyId!), { limit: DASHBOARD_ACTIVITY_LIMIT }],
     queryFn: () => activityApi.list(selectedCompanyId!, { limit: DASHBOARD_ACTIVITY_LIMIT }),
@@ -199,9 +206,15 @@ export function Dashboard() {
       : 0
   );
   const automationReadiness = data
-    ? computeAutomationReadiness({ summary: data, agentCount: dashboardAgentCount })
+    ? computeAutomationReadiness({
+        summary: data,
+        agentCount: dashboardAgentCount,
+        blockedOperatorAttentionCount: blockedTriage?.operatorAttentionCount,
+        blockedAgentWorkflowCount: blockedTriage?.agentWorkflowCount,
+      })
     : null;
   const automationHumanQueue = automationReadiness?.totalHumanQueue ?? 0;
+  const agentManagedBlockers = automationReadiness?.blockedAgentWorkflowCount ?? 0;
 
   return (
     <div className="space-y-6">
@@ -244,7 +257,11 @@ export function Dashboard() {
               </div>
             </div>
             <span className="shrink-0 text-sm font-medium text-emerald-700 dark:text-emerald-300">
-              {automationHumanQueue === 0 ? "Open automation center" : `${automationHumanQueue} item${automationHumanQueue === 1 ? "" : "s"} need review`}
+              {automationHumanQueue > 0
+                ? `${automationHumanQueue} item${automationHumanQueue === 1 ? "" : "s"} need review`
+                : agentManagedBlockers > 0
+                  ? `${agentManagedBlockers} blocker${agentManagedBlockers === 1 ? "" : "s"} handled by agents`
+                  : "Open automation center"}
             </span>
           </Link>
 

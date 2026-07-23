@@ -122,7 +122,13 @@ export function computeAutomationReadiness(input: {
           ? "No hidden human work: approvals, budget incidents, blocked tasks, and agent errors are clear."
           : `${totalHumanQueue} item${totalHumanQueue === 1 ? "" : "s"} require visible human attention before full autonomy.`,
       state: totalHumanQueue === 0 ? "ready" : "attention",
-      href: totalHumanQueue === 0 ? "/activity" : "/approvals",
+      href: totalHumanQueue === 0
+        ? "/activity"
+        : pendingApprovalCount > 0
+          ? "/approvals"
+          : blockedOperatorAttentionCount > 0
+            ? "/inbox/blocked"
+            : "/automation",
       action: totalHumanQueue === 0 ? "View audit trail" : "Review queue",
     },
   ];
@@ -143,9 +149,9 @@ export function computeAutomationReadiness(input: {
       },
       {
         kind: "blocked_tasks",
-        label: "Blocked tasks",
-        count: blockedTaskCount,
-        href: "/issues",
+        label: "Blocked tasks requiring review",
+        count: blockedOperatorAttentionCount,
+        href: "/inbox/blocked",
       },
       {
         kind: "agent_errors",
@@ -179,6 +185,8 @@ export function computeAutomationReadiness(input: {
     liveRunCount,
     openTaskCount,
     blockedTaskCount,
+    blockedOperatorAttentionCount,
+    blockedAgentWorkflowCount,
     totalHumanQueue,
     interventionItems,
   };

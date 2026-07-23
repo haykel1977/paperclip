@@ -42,7 +42,7 @@ describe("computeAutomationReadiness", () => {
     expect(readiness.mode).toBe("Autopilot operational");
     expect(readiness.totalHumanQueue).toBe(0);
     expect(readiness.interventionItems).toEqual([]);
-    expect(readiness.openTaskCount).toBe(4);
+    expect(readiness.openTaskCount).toBe(3);
   });
 
   it("requires setup when no agent is available", () => {
@@ -94,9 +94,9 @@ describe("computeAutomationReadiness", () => {
       },
       {
         kind: "blocked_tasks",
-        label: "Blocked tasks",
+        label: "Blocked tasks requiring review",
         count: 3,
-        href: "/issues",
+        href: "/inbox/blocked",
       },
       {
         kind: "agent_errors",
@@ -105,6 +105,29 @@ describe("computeAutomationReadiness", () => {
         href: "/agents/error",
       },
     ]);
+  });
+
+  it("separates agent-managed blockers from the human queue", () => {
+    const readiness = computeAutomationReadiness({
+      summary: makeSummary({ tasks: { open: 20, inProgress: 4, blocked: 12 } }),
+      agentCount: 3,
+      blockedOperatorAttentionCount: 3,
+      blockedAgentWorkflowCount: 7,
+    });
+
+    expect(readiness.openTaskCount).toBe(20);
+    expect(readiness.blockedTaskCount).toBe(12);
+    expect(readiness.blockedOperatorAttentionCount).toBe(3);
+    expect(readiness.blockedAgentWorkflowCount).toBe(7);
+    expect(readiness.totalHumanQueue).toBe(3);
+    expect(readiness.interventionItems).toContainEqual({
+      kind: "blocked_tasks",
+      label: "Blocked tasks requiring review",
+      count: 3,
+      href: "/inbox/blocked",
+    });
+    expect(readiness.checks.find((check) => check.title === "Human intervention queue")?.href)
+      .toBe("/inbox/blocked");
   });
 
   it("uses dashboard pending approvals when the dedicated approval count is unavailable", () => {

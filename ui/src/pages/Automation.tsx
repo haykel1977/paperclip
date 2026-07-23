@@ -19,6 +19,7 @@ import { agentsApi } from "../api/agents";
 import { approvalsApi } from "../api/approvals";
 import { dashboardApi } from "../api/dashboard";
 import { heartbeatsApi } from "../api/heartbeats";
+import { issuesApi } from "../api/issues";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useCompany } from "../context/CompanyContext";
 import {
@@ -26,6 +27,7 @@ import {
   type AutomationCheckState,
   type AutopilotInterventionKind,
 } from "../lib/automation-readiness";
+import { blockedReasonLabel } from "../lib/blockedInbox";
 import { queryKeys } from "../lib/queryKeys";
 import { cn } from "../lib/utils";
 import { Button } from "../components/ui/button";
@@ -52,6 +54,19 @@ function stateClassName(state: AutomationCheckState) {
   if (state === "attention") return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";
   return "border-border bg-muted text-muted-foreground";
 }
+
+function formatMedianStoppedHours(hours: number | null) {
+  if (hours === null) return "Unknown";
+  if (hours < 1) return "< 1h";
+  if (hours < 24) return `${Math.round(hours)}h`;
+  return `${Math.round(hours / 24)}d`;
+}
+
+const handlingLabels = {
+  human: "Human decision",
+  agent: "Agent workflow",
+  triage: "Operator triage",
+} as const;
 
 export function Automation() {
   const { selectedCompanyId, companies } = useCompany();
@@ -86,14 +101,32 @@ export function Automation() {
     refetchInterval: 10_000,
   });
 
-  const loading = summaryLoading || agentsLoading || approvalsLoading || liveRunsLoading;
+  const { data: blockedTriage, isLoading: blockedTriageLoading } = useQuery({
+    queryKey: selectedCompanyId
+      ? queryKeys.issues.blockedTriageSummary(selectedCompanyId)
+      : ["issues", "automation", "blocked-summary", "none"],
+    queryFn: () => issuesApi.blockedTriageSummary(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+    refetchInterval: 30_000,
+  });
+
+  const loading = summaryLoading || agentsLoading || approvalsLoading || liveRunsLoading || blockedTriageLoading;
 
   const automation = useMemo(() => computeAutomationReadiness({
     summary,
     agentCount: agents?.length ?? 0,
     pendingApprovalCount: pendingApprovals?.length,
     liveRunCount: liveRuns?.length ?? 0,
-  }), [agents?.length, liveRuns?.length, pendingApprovals?.length, summary]);
+    blockedOperatorAttentionCount: blockedTriage?.operatorAttentionCount,
+    blockedAgentWorkflowCount: blockedTriage?.agentWorkflowCount,
+  }), [
+    agents?.length,
+    blockedTriage?.agentWorkflowCount,
+    blockedTriage?.operatorAttentionCount,
+    liveRuns?.length,
+    pendingApprovals?.length,
+    summary,
+  ]);
 
   if (!selectedCompanyId) {
     return companies.length === 0 ? (
@@ -142,9 +175,69 @@ export function Automation() {
           <StatCard icon={Bot} label="Agents" value={automation.agentCount} detail={`${automation.runningAgents} running`} />
           <StatCard icon={PlayCircle} label="Live runs" value={automation.liveRunCount} detail="Refreshed every 10s" />
           <StatCard icon={CircleDot} label="Open tasks" value={automation.openTaskCount} detail={`${automation.blockedTaskCount} blocked`} />
-          <StatCard icon={UserCheck} label="Human queue" value={automation.totalHumanQueue} detail="Visible review only" />
+          <StatCard
+            icon={UserCheck}
+            label="Human queue"
+            value={automation.totalHumanQueue}
+            detail={`${automation.blockedAgentWorkflowCount} blockers handled by agents`}
+          />
         </div>
       </section>
+
+      {blockedTriage && (
+        <section className="rounded-xl border border-border bg-card p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="font-semibold">Blocked work triage</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Classified by cause so operators can focus on decisions while agents continue recoverable work.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="outline">{blockedTriage.operatorAttentionCount} operator</Badge>
+              <Badge variant="outline">{blockedTriage.agentWorkflowCount} agent workflow</Badge>
+              <Button asChild variant="outline" size="sm">
+                <Link to="/inbox/blocked">Open blocked inbox</Link>
+              </Button>
+            </div>
+          </div>
+
+          {blockedTriage.categories.length === 0 ? (
+            <p className="mt-4 rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300">
+              No stopped work currently requires triage.
+            </p>
+          ) : (
+            <div className="mt-4 overflow-x-auto rounded-lg border border-border">
+              <table className="w-full min-w-[720px] text-left text-sm">
+                <thead className="bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">Cause</th>
+                    <th className="px-3 py-2 text-right font-medium">Items</th>
+                    <th className="px-3 py-2 text-right font-medium">Median stopped</th>
+                    <th className="px-3 py-2 font-medium">Handling</th>
+                    <th className="px-3 py-2 font-medium">Next action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {blockedTriage.categories.map((category) => (
+                    <tr key={category.reason}>
+                      <td className="px-3 py-2.5 font-medium">{blockedReasonLabel(category.reason)}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums">{category.count}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-muted-foreground">
+                        {formatMedianStoppedHours(category.medianStoppedHours)}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <Badge variant="outline">{handlingLabels[category.handling]}</Badge>
+                      </td>
+                      <td className="px-3 py-2.5 text-muted-foreground">{category.actionLabel}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="grid gap-4 lg:grid-cols-[1fr_1.4fr]">
         <div className="rounded-xl border border-border bg-card p-4">
