@@ -473,6 +473,92 @@ function emit(decision, extra = {}) {
   console.log(JSON.stringify({ decision, ...extra }, null, 2));
 }
 
+/**
+ * Perform the post-decision side effects (dismiss stale approval → anti-TOCTOU
+ * pre-submit re-read → approve) and return a structured outcome. No process.exit
+ * / no logging here so the side-effect SEQUENCING is unit-testable; main() maps
+ * the outcome to emit()/exit. Token minting and the three write calls are
+ * injectable via `deps` for tests.
+ *
+ * Anti-TOCTOU + stale-dismiss coupling: `result.dismissStale` is computed from
+ * the gatherInputs snapshot. If the head advances DURING evaluation, the
+ * pre-submit re-read refuses to approve the now-stale commit — and, crucially,
+ * also dismisses any existing App approval that was NOT already dismissed above.
+ * A push mid-run can therefore never leave a stale approval standing while we
+ * refuse to approve the new commit.
+ */
+export async function executeDecision({
+  ghFetch,
+  readToken,
+  config,
+  repo,
+  prNumber,
+  eventHeadSha,
+  result,
+  existingAppReview,
+  deps = {},
+}) {
+  const mint = deps.mintAppToken ?? mintAppToken;
+  const dismiss = deps.dismissReview ?? dismissReview;
+  const approve = deps.submitApproval ?? submitApproval;
+  let dismissed = false;
+
+  // Dismiss/supersede a stale prior approval. The App token is minted here
+  // (write needed). If dismissal fails, fail closed and rely on the documented
+  // branch-protection backstop (dismiss_stale + last-push approval).
+  if (result.dismissStale && existingAppReview) {
+    try {
+      const appToken = await mint(ghFetch, config, repo);
+      await dismiss(ghFetch, appToken, repo, prNumber, existingAppReview.id);
+      dismissed = true;
+    } catch (error) {
+      return { status: 'blocked', exitCode: 1, dismissed, reasons: [`Failed to dismiss stale approval: ${sanitizeError(error)}`] };
+    }
+  }
+
+  if (result.decision === 'approved') {
+    // Anti-TOCTOU: re-read the head SHA immediately before approving.
+    let fresh;
+    try {
+      fresh = await ghFetch(`/repos/${repo}/pulls/${prNumber}`, readToken);
+    } catch (error) {
+      return { status: 'blocked', exitCode: 1, dismissed, reasons: [`Freshness re-read failed: ${sanitizeError(error)}`] };
+    }
+    const freshSha = String(fresh?.head?.sha ?? '').trim();
+    if (!SHA_RE.test(freshSha) || freshSha.toLowerCase() !== String(eventHeadSha).toLowerCase()) {
+      // Head advanced mid-run. Any existing App approval is necessarily for an
+      // older commit and is now stale; dismiss it (unless already dismissed
+      // above) before failing closed, so the refusal cannot coexist with a
+      // standing stale approval.
+      if (existingAppReview && !dismissed) {
+        try {
+          const appToken = await mint(ghFetch, config, repo);
+          await dismiss(ghFetch, appToken, repo, prNumber, existingAppReview.id);
+          dismissed = true;
+        } catch (error) {
+          return { status: 'blocked', exitCode: 1, dismissed, reasons: [`Head advanced during evaluation and dismissing the now-stale approval failed: ${sanitizeError(error)}`] };
+        }
+      }
+      return { status: 'rejected', exitCode: 1, dismissed, riskLane: result.riskLane, reasons: [`Head advanced during evaluation (now ${freshSha || 'unknown'}); refusing to approve a stale commit.`] };
+    }
+    try {
+      const appToken = await mint(ghFetch, config, repo);
+      await approve(ghFetch, appToken, repo, prNumber, eventHeadSha);
+    } catch (error) {
+      return { status: 'blocked', exitCode: 1, dismissed, reasons: [`Approval token/submit failed: ${sanitizeError(error)}`] };
+    }
+    return { status: 'approved', exitCode: 0, dismissed, riskLane: result.riskLane, reasons: result.reasons };
+  }
+
+  if (result.decision === 'pending') {
+    // Not a pass: no approval. Exit 0 so the completing CI workflow_run can
+    // re-invoke us cleanly when the last required check turns green.
+    return { status: 'pending', exitCode: 0, dismissed, riskLane: result.riskLane, reasons: result.reasons };
+  }
+
+  return { status: result.decision, exitCode: 1, dismissed, riskLane: result.riskLane, reasons: result.reasons };
+}
+
 async function main() {
   const config = readCheckerConfig(process.env);
 
@@ -555,60 +641,28 @@ async function main() {
     existingAppReview,
   });
 
-  // Dismiss/supersede a stale prior approval. The App token is minted here
-  // (write needed). If dismissal fails, fail closed and rely on the documented
-  // branch-protection backstop (dismiss_stale + last-push approval).
-  if (result.dismissStale && existingAppReview) {
-    try {
-      const appToken = await mintAppToken(ghFetch, config, repo);
-      await dismissReview(ghFetch, appToken, repo, prNumber, existingAppReview.id);
-      console.log(`Dismissed stale App approval #${existingAppReview.id}.`);
-    } catch (error) {
-      emit('blocked', { reasons: [`Failed to dismiss stale approval: ${sanitizeError(error)}`] });
-      console.error('paperclip-checker could not dismiss a stale approval; failing closed. Configure branch-protection dismiss_stale + last-push approval (see doc/PAPERCLIP-CHECKER.md).');
-      process.exit(1);
-    }
-  }
+  const outcome = await executeDecision({
+    ghFetch,
+    readToken,
+    config,
+    repo,
+    prNumber,
+    eventHeadSha,
+    result,
+    existingAppReview,
+  });
 
-  if (result.decision === 'approved') {
-    // Anti-TOCTOU: re-read the head SHA immediately before approving. If it
-    // advanced since evidence was gathered, fail closed rather than approve a
-    // now-stale commit.
-    let fresh;
-    try {
-      fresh = await ghFetch(`/repos/${repo}/pulls/${prNumber}`, readToken);
-    } catch (error) {
-      console.error(`paperclip-checker freshness re-read failed (fail-closed): ${sanitizeError(error)}`);
-      process.exit(1);
-    }
-    const freshSha = String(fresh?.head?.sha ?? '').trim();
-    if (!SHA_RE.test(freshSha) || freshSha.toLowerCase() !== String(eventHeadSha).toLowerCase()) {
-      emit('rejected', { riskLane: result.riskLane, reasons: [`Head advanced during evaluation (now ${freshSha || 'unknown'}); refusing to approve a stale commit.`] });
-      console.error('paperclip-checker detected a mid-run head advance; failing closed.');
-      process.exit(1);
-    }
-    try {
-      const appToken = await mintAppToken(ghFetch, config, repo);
-      await submitApproval(ghFetch, appToken, repo, prNumber, eventHeadSha);
-    } catch (error) {
-      emit('blocked', { reasons: [`Approval token/submit failed: ${sanitizeError(error)}`] });
-      console.error('paperclip-checker could not submit approval; failing closed.');
-      process.exit(1);
-    }
-    emit('approved', { riskLane: result.riskLane, reasons: result.reasons });
-    process.exit(0);
+  if (outcome.dismissed && existingAppReview) {
+    console.log(`Dismissed stale App approval #${existingAppReview.id}.`);
   }
-
-  if (result.decision === 'pending') {
-    // Not a pass: no approval. Exit 0 so the completing CI workflow_run can
-    // re-invoke us cleanly when the last required check turns green.
-    emit('pending', { riskLane: result.riskLane, reasons: result.reasons });
-    process.exit(0);
+  emit(outcome.status, {
+    ...(outcome.riskLane !== undefined ? { riskLane: outcome.riskLane } : {}),
+    reasons: outcome.reasons,
+  });
+  if (outcome.exitCode !== 0) {
+    console.error(`paperclip-checker did not approve (decision=${outcome.status}). Fail-closed.`);
   }
-
-  emit(result.decision, { riskLane: result.riskLane, reasons: result.reasons });
-  console.error(`paperclip-checker did not approve (decision=${result.decision}). Fail-closed.`);
-  process.exit(1);
+  process.exit(outcome.exitCode);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

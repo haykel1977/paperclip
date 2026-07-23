@@ -10,6 +10,7 @@ import {
   findApprovedAppReview,
   resolvePrNumberForSha,
   fetchAllPagesFromKey,
+  executeDecision,
   sanitizeError,
   DEFAULT_APP_SLUG,
   DEFAULT_REQUIRED_CHECK_POLICY,
@@ -799,4 +800,111 @@ test('workflow: checker job pins the check name to the documented paperclip-chec
   // The emitted check-run name must be `paperclip-checker` (the label the
   // runbook/branch-protection reference), not the bare job id `checker`.
   assert.match(checkerBlock, /^ {4}name:\s*paperclip-checker\s*$/m);
+});
+
+// ── executeDecision: post-decision side-effect sequencing (approve/dismiss) ──
+// Injected deps record every mint/dismiss/approve so we can assert the exact
+// side effects, including the anti-TOCTOU + stale-dismiss coupling.
+
+function recordingDeps() {
+  const calls = { mint: 0, dismiss: [], approve: [] };
+  return {
+    calls,
+    deps: {
+      mintAppToken: async () => { calls.mint += 1; return 'app-token'; },
+      dismissReview: async (_gh, _tok, _repo, _pr, id) => { calls.dismiss.push(id); },
+      submitApproval: async (_gh, _tok, _repo, _pr, sha) => { calls.approve.push(sha); },
+    },
+  };
+}
+
+const baseArgs = (over = {}) => ({
+  ghFetch: async () => ({ head: { sha: HEAD } }),
+  readToken: 'read',
+  config: activeConfig(),
+  repo: 'paperclipai/paperclip',
+  prNumber: 1,
+  eventHeadSha: HEAD,
+  existingAppReview: null,
+  ...over,
+});
+
+test('executeDecision: approved + fresh head + no prior review → approves at head, no dismiss', async () => {
+  const { calls, deps } = recordingDeps();
+  const outcome = await executeDecision(baseArgs({
+    result: { decision: 'approved', dismissStale: false, riskLane: 'GREEN', reasons: ['ok'] },
+    deps,
+  }));
+  assert.equal(outcome.status, 'approved');
+  assert.equal(outcome.exitCode, 0);
+  assert.deepEqual(calls.approve, [HEAD]);
+  assert.deepEqual(calls.dismiss, []);
+  assert.equal(outcome.dismissed, false);
+});
+
+test('executeDecision: TOCTOU — head advances mid-run with a prior (non-stale) approval → dismisses it, rejects, no approve', async () => {
+  const { calls, deps } = recordingDeps();
+  // Freshness re-read returns a DIFFERENT head than eventHeadSha.
+  const outcome = await executeDecision(baseArgs({
+    ghFetch: async () => ({ head: { sha: OTHER } }),
+    result: { decision: 'approved', dismissStale: false, riskLane: 'GREEN', reasons: ['ok'] },
+    existingAppReview: { id: 77, commit_id: HEAD, state: 'APPROVED' },
+    deps,
+  }));
+  assert.equal(outcome.status, 'rejected');
+  assert.equal(outcome.exitCode, 1);
+  assert.match(outcome.reasons.join(' '), /Head advanced during evaluation/);
+  // The now-stale approval MUST be dismissed even though dismissStale was false.
+  assert.deepEqual(calls.dismiss, [77]);
+  assert.equal(outcome.dismissed, true);
+  // And it must NOT approve the advanced commit.
+  assert.deepEqual(calls.approve, []);
+});
+
+test('executeDecision: TOCTOU after a stale dismiss already ran → does not double-dismiss', async () => {
+  const { calls, deps } = recordingDeps();
+  const outcome = await executeDecision(baseArgs({
+    ghFetch: async () => ({ head: { sha: OTHER } }),
+    // dismissStale true → dismissed once up front; then head advance is detected.
+    result: { decision: 'approved', dismissStale: true, riskLane: 'GREEN', reasons: ['ok'] },
+    existingAppReview: { id: 88, commit_id: OTHER, state: 'APPROVED' },
+    deps,
+  }));
+  assert.equal(outcome.status, 'rejected');
+  assert.deepEqual(calls.dismiss, [88]); // exactly once, not twice
+  assert.deepEqual(calls.approve, []);
+});
+
+test('executeDecision: rejected decision with prior approval and dismissStale → dismisses, no approve', async () => {
+  const { calls, deps } = recordingDeps();
+  const outcome = await executeDecision(baseArgs({
+    result: { decision: 'rejected', dismissStale: true, riskLane: 'RED', reasons: ['red lane'] },
+    existingAppReview: { id: 5, commit_id: HEAD, state: 'APPROVED' },
+    deps,
+  }));
+  assert.equal(outcome.status, 'rejected');
+  assert.equal(outcome.exitCode, 1);
+  assert.deepEqual(calls.dismiss, [5]);
+  assert.deepEqual(calls.approve, []);
+});
+
+test('executeDecision: TOCTOU dismiss failure → blocked (fail closed), still no approve', async () => {
+  const calls = { dismiss: 0, approve: 0 };
+  const deps = {
+    mintAppToken: async () => 'app-token',
+    dismissReview: async () => { calls.dismiss += 1; throw new Error('GET /x → 403'); },
+    submitApproval: async () => { calls.approve += 1; },
+  };
+  const outcome = await executeDecision(baseArgs({
+    ghFetch: async () => ({ head: { sha: OTHER } }),
+    result: { decision: 'approved', dismissStale: false, riskLane: 'GREEN', reasons: ['ok'] },
+    existingAppReview: { id: 9, commit_id: HEAD, state: 'APPROVED' },
+    deps,
+  }));
+  assert.equal(outcome.status, 'blocked');
+  assert.equal(outcome.exitCode, 1);
+  assert.equal(calls.approve, 0);
+  // Error is sanitized to status only, never the raw body.
+  assert.match(outcome.reasons.join(' '), /HTTP 403|dismissing the now-stale approval failed/);
+  assert.doesNotMatch(outcome.reasons.join(' '), /403:.*\{/);
 });

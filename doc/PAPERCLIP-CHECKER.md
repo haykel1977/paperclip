@@ -161,6 +161,12 @@ commit, or whenever the current re-evaluation does **not** re-approve (e.g. a
 API call fails, the checker **fails closed** (no approval) and relies on the
 documented branch-protection backstop below.
 
+If the head advances **during** evaluation (the anti-TOCTOU pre-submit re-read
+sees a different SHA than the trigger-time SHA), the checker refuses to approve
+the now-stale commit **and** dismisses any existing App approval that was not
+already dismissed above — a push mid-run can never leave a stale approval
+standing while the new commit is refused.
+
 ### Required branch-protection backstop
 
 Because a re-run cannot retroactively unwind an approval GitHub already counted,
