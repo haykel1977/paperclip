@@ -108,25 +108,32 @@ async function main() {
     process.exit(1);
   }
 
-  const jwt = generateJWT(privateKey);
+  try {
+    const jwt = generateJWT(privateKey);
 
-  const repo = process.env.GH_REPO ?? process.env.GITHUB_REPOSITORY;
-  const owner = process.env.GITHUB_REPOSITORY_OWNER ?? repo?.split('/')[0];
+    const repo = process.env.GH_REPO ?? process.env.GITHUB_REPOSITORY;
+    const owner = process.env.GITHUB_REPOSITORY_OWNER ?? repo?.split('/')[0];
 
-  const installationId = await resolveInstallationId(ghFetch, jwt, repo, owner);
+    const installationId = await resolveInstallationId(ghFetch, jwt, repo, owner);
 
-  const { token } = await ghFetch(
-    `/app/installations/${installationId}/access_tokens`,
-    jwt,
-    { method: 'POST', headers: { 'Content-Type': 'application/json' } }
-  );
+    const { token } = await ghFetch(
+      `/app/installations/${installationId}/access_tokens`,
+      jwt,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' } }
+    );
 
-  if (!token) {
-    console.error('ERROR: Failed to get installation token from GitHub API.');
-    process.exit(1);
+    if (!token) {
+      throw new Error('ERROR: Failed to get installation token from GitHub API.');
+    }
+
+    process.stdout.write(token);
+  } catch (error) {
+    const fallback = resolveFallbackToken();
+    if (!fallback) throw error;
+
+    console.error(`WARNING: Could not mint commitperclip installation token (${error.message}). Falling back to GITHUB_TOKEN.`);
+    process.stdout.write(fallback.token);
   }
-
-  process.stdout.write(token);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

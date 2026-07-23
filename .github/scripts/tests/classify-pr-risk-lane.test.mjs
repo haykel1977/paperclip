@@ -5,6 +5,7 @@ import {
   evaluateEvidence,
   matchRedPaths,
   isDependencyManifestOnly,
+  isDependencyAutomationManifestOnly,
   resolveNumstatNewPath,
   parseNameStatusOutput,
   parseNumstatOutput,
@@ -391,6 +392,45 @@ test('isDependencyManifestOnly: install-hook/registry configs are NOT manifest-o
   assert.equal(isDependencyManifestOnly([file('pnpmfile.cjs')]), false);
   assert.equal(isDependencyManifestOnly([file('pnpm-workspace.yaml')]), false);
   assert.equal(isDependencyManifestOnly([file('pnpm-lock.yaml'), file('.npmrc')]), false);
+});
+
+// ── isDependencyAutomationManifestOnly: shared, narrowly-bounded carve-out ──
+// The single precondition both enable-agent-automerge and the paperclip-checker
+// App gate use to exempt the dependency-manifest RED surface. It must be true
+// ONLY for a trusted producer whose diff is exclusively manifests.
+
+const manifestFiles = () => [file('pnpm-lock.yaml'), file('server/package.json')];
+const depPr = (over = {}) => ({ user: { login: 'dependabot[bot]' }, head: { ref: 'dependabot/npm_and_yarn/x' }, ...over });
+
+test('isDependencyAutomationManifestOnly: Dependabot + manifest-only diff → true', () => {
+  assert.equal(isDependencyAutomationManifestOnly(depPr(), manifestFiles()), true);
+});
+
+test('isDependencyAutomationManifestOnly: lockfile-refresh bot on chore/refresh-lockfile + manifest-only → true', () => {
+  const pr = { user: { login: 'github-actions[bot]' }, head: { ref: 'chore/refresh-lockfile' } };
+  assert.equal(isDependencyAutomationManifestOnly(pr, manifestFiles()), true);
+});
+
+test('isDependencyAutomationManifestOnly: github-actions on a DIFFERENT branch → false', () => {
+  const pr = { user: { login: 'github-actions[bot]' }, head: { ref: 'feature/whatever' } };
+  assert.equal(isDependencyAutomationManifestOnly(pr, manifestFiles()), false);
+});
+
+test('isDependencyAutomationManifestOnly: untrusted author, even manifest-only → false', () => {
+  const pr = { user: { login: 'mallory' }, head: { ref: 'chore/refresh-lockfile' } };
+  assert.equal(isDependencyAutomationManifestOnly(pr, manifestFiles()), false);
+});
+
+test('isDependencyAutomationManifestOnly: Dependabot touching a non-manifest path → false', () => {
+  assert.equal(isDependencyAutomationManifestOnly(depPr(), [file('pnpm-lock.yaml'), file('.github/workflows/pr.yml')]), false);
+  assert.equal(isDependencyAutomationManifestOnly(depPr(), [file('pnpm-lock.yaml'), file('server/src/auth.ts')]), false);
+  // .npmrc / pnpmfile are NOT manifests → precondition fails outright.
+  assert.equal(isDependencyAutomationManifestOnly(depPr(), [file('pnpm-lock.yaml'), file('.npmrc')]), false);
+});
+
+test('isDependencyAutomationManifestOnly: empty/missing inputs → false (fail closed)', () => {
+  assert.equal(isDependencyAutomationManifestOnly(depPr(), []), false);
+  assert.equal(isDependencyAutomationManifestOnly(undefined, manifestFiles()), false);
 });
 
 test('exemption does NOT rescue a pnpmfile/.npmrc even for a lockfile-only-looking diff', () => {

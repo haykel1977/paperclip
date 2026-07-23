@@ -1,0 +1,123 @@
+name: paperclip-checker (App gate)
+
+# Repository side of the FUTURE independent paperclip-checker GitHub App.
+#
+# DISABLED BY DEFAULT. The job only runs when the repository VARIABLE
+# `PAPERCLIP_CHECKER_ENABLED` is exactly "true". Until a maintainer creates the
+# App, installs it, and adds the ID/private-key secrets, this workflow is inert
+# (the guarded job is skipped). See doc/PAPERCLIP-CHECKER.md.
+#
+# Trust model. The job ALWAYS checks out and executes the repository DEFAULT
+# branch (the branch-protected, reviewed ref) under two safe triggers and NEVER
+# checks out or executes PR head code — nor the PR-selected base branch:
+#   - pull_request_target: reacts to PR lifecycle / label changes. Executes the
+#     default-branch checker code; PR head is only read via the API. The checkout
+#     step pins the default branch, so a PR that targets an arbitrary/malicious
+#     base branch cannot swap in a different checker script.
+#   - workflow_run (completed): fires when the CI workflows that PRODUCE the
+#     required checks finish. This is what re-evaluates the gate once checks reach
+#     a terminal state. workflow_run ALWAYS runs the default-branch workflow file
+#     with default-branch code and NEVER checks out PR head; it lacks PR context,
+#     so the script resolves the open same-repo PR from the head SHA.
+#
+# It only reads PR metadata/files/labels, the current head SHA, required
+# check-runs/statuses, and runs the base-branch risk-lane classifier — all with
+# the DEFAULT GITHUB_TOKEN. Its single privileged action is the App's own review,
+# performed with a separately-minted least-privilege App installation token.
+
+on:
+  # `edited` fires on title/body/base-branch changes, which feed the risk-lane
+  # classifier; including it lets a metadata edit invalidate a prior approval
+  # (see STALE_INDUCING_ACTIONS in paperclip-checker.mjs).
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, labeled, unlabeled, edited]
+  workflow_run:
+    # The base-branch CI workflows that produce the required checks (verify from
+    # "PR", gitleaks from "Secret Scan"). On completion the checker re-evaluates
+    # the PR at that head SHA, so a pending gate can turn into an approval once
+    # the last required check turns green.
+    workflows: ["PR", "Secret Scan"]
+    types: [completed]
+
+# Least privilege for the DEFAULT GITHUB_TOKEN. This token performs ALL reads
+# (PR, files, labels, check-runs, statuses, commit, reviews). It is NEVER used to
+# approve (a PR's own GITHUB_TOKEN cannot approve it anyway); approval/dismissal
+# is done with the separately-minted least-privilege App installation token.
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+  statuses: read
+
+concurrency:
+  # Serialize per HEAD SHA across BOTH triggers. pull_request_target and
+  # workflow_run for the same commit must share one group, or two jobs could run
+  # in parallel and interleave dismiss/approve API calls. Keying on the head SHA
+  # (available on both event payloads) unifies them; superseded runs are
+  # cancelled to bound the TOCTOU window.
+  group: paperclip-checker-${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha }}
+  cancel-in-progress: true
+
+jobs:
+  checker:
+    # Emitted check-run name. Without this the check would surface under the job
+    # id `checker`, but the runbook and branch-protection guidance reference
+    # `paperclip-checker`; pin the display name so the documented required-check
+    # label matches the check GitHub actually reports.
+    name: paperclip-checker
+    # Kill switch / activation gate: the entire job is skipped unless the
+    # repository variable is explicitly "true". This is the disabled-by-default
+    # state and the fast rollback (flip the variable to disable). For
+    # workflow_run, only act on runs that actually concluded (not stale/cancelled
+    # dispatch), keeping the gate a pure reaction to terminal CI.
+    if: >-
+      ${{ vars.PAPERCLIP_CHECKER_ENABLED == 'true' &&
+          (github.event_name != 'workflow_run' ||
+           github.event.workflow_run.conclusion != null) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout DEFAULT branch only (never PR head or PR-selected base)
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          # ALWAYS the repository default branch — the only demonstrably-trusted,
+          # branch-protected ref. Under pull_request_target the executed code is
+          # whatever this checkout pulls, so it must NOT be the PR-selected
+          # `pull_request.base.sha`: a PR may target ANY base branch, and anyone
+          # with push access could point `base` at a branch whose
+          # `.github/scripts/paperclip-checker.mjs` is malicious, then have it run
+          # with the App private key in step env. Pinning to default_branch means
+          # the checker code/policy is always the reviewed, protected version.
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20'
+
+      - name: Run paperclip-checker (fail-closed)
+        run: node .github/scripts/paperclip-checker.mjs
+        env:
+          # Activation config — all three required for the checker to act.
+          PAPERCLIP_CHECKER_ENABLED: ${{ vars.PAPERCLIP_CHECKER_ENABLED }}
+          PAPERCLIP_CHECKER_APP_ID: ${{ secrets.PAPERCLIP_CHECKER_APP_ID }}
+          PAPERCLIP_CHECKER_PRIVATE_KEY: ${{ secrets.PAPERCLIP_CHECKER_PRIVATE_KEY }}
+          GH_REPO: ${{ github.repository }}
+          # Protected default branch the PR must target; the checker rejects PRs
+          # based on any other branch (branch protection only applies here). Same
+          # ref the checkout step pins, so the guard matches the executed code.
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          # Which event fired — selects PR-context vs head-SHA PR resolution.
+          EVENT_NAME: ${{ github.event_name }}
+          # Default GITHUB_TOKEN performs every read; it cannot approve.
+          GH_READ_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # pull_request_target inputs (empty on workflow_run).
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_ACTION: ${{ github.event.action }}
+          # Independent SHA source captured at trigger time; compared against the
+          # freshly re-read API head SHA to detect a mid-run head advance → stale.
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # workflow_run input (empty on pull_request_target): the head SHA of the
+          # completed CI run; the script resolves the open PR from it.
+          WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}

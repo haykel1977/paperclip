@@ -1,0 +1,9 @@
+{
+  "$comment": "Machine-readable policy for the paperclip-checker App gate. Loaded from the TRUSTED base branch only. `appSlug` is the checker's OWN bot identity, used for separation-of-duties: the App can never approve a PR it authored, pushed, or committed. The real GitHub App is 'solidus-paperclip-checker' (App ID 4372695), so its bot login is 'solidus-paperclip-checker[bot]'. Each required check is bound to its expected producing app so a same-named check-run/status from any other app cannot satisfy the gate. github-actions is app id 15368 (slug 'github-actions'); both required checks are produced by GitHub Actions jobs (verify from workflow 'PR', gitleaks from workflow 'Secret Scan'). See doc/PAPERCLIP-CHECKER.md.",
+  "appSlug": "solidus-paperclip-checker[bot]",
+  "appId": 4372695,
+  "requiredChecks": [
+    { "name": "verify", "type": "check_run", "appSlug": "github-actions", "appId": 15368 },
+    { "name": "gitleaks", "type": "check_run", "appSlug": "github-actions", "appId": 15368 }
+  ]
+}

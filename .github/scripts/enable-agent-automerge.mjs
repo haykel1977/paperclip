@@ -18,7 +18,7 @@ import {
   classifyPrRiskLane,
   LANES,
   DEPENDENCY_MANIFEST_LABEL,
-  isDependencyManifestOnly,
+  isDependencyAutomationManifestOnly,
 } from './classify-pr-risk-lane.mjs';
 
 export const AUTOMERGE_LABEL = 'automerge';
@@ -360,10 +360,10 @@ export function planAutomerge({
   // Bounded, verifiable dependency exemption: an approved lockfile-refresh or
   // Dependabot PR whose changes are EXCLUSIVELY dependency manifests may treat
   // that one sacred surface as non-blocking. Any other touched surface (a
-  // workflow, an auth file, …) makes isDependencyManifestOnly false, so the
-  // exemption evaporates and the PR is RED as usual.
-  const dependencyAutomation =
-    (isLockfileAutomation(pr) || author === 'dependabot[bot]') && isDependencyManifestOnly(files);
+  // workflow, an auth file, …) makes this false, so the exemption evaporates and
+  // the PR is RED as usual. Shared with the paperclip-checker App gate so both
+  // apply the identical carve-out.
+  const dependencyAutomation = isDependencyAutomationManifestOnly(pr, files);
 
   let riskLane = LANES.RED;
   let laneReasons = ['Risk-lane classification unavailable; failing closed to RED.'];
