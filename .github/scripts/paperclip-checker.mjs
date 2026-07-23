@@ -658,35 +658,92 @@ export async function executeDecision({
 
   let dismissed = false;
 
+  // Does an App-authored SUCCESS check already STAND at the exact event head?
+  // `existingAppCheckRun` came from findAppCheckRun over the check-runs listing
+  // for eventHeadSha, so it is both app-id-bound (spoofs excluded) AND exact-head
+  // bound; we re-verify head_sha defensively. Such a check WOULD satisfy branch
+  // protection, so any NON-approval must actively revoke it — a swallowed write
+  // would otherwise leave green standing for a commit the checker just refused
+  // (Cursor Bugbot #49b17c31 / PR #59 discussion r3637958588).
+  const staleSuccessSha = String(existingAppCheckRun?.head_sha ?? '').trim();
+  const standingSuccessAtHead =
+    !!existingAppCheckRun &&
+    String(existingAppCheckRun?.conclusion ?? '').toLowerCase() === 'success' &&
+    SHA_RE.test(staleSuccessSha) &&
+    staleSuccessSha.toLowerCase() === String(eventHeadSha).toLowerCase();
+
+  const checkBody = (status, reasons) => {
+    const params = checkRunParamsForDecision(status, reasons);
+    return { name: checkRunName, status: params.status, conclusion: params.conclusion, title: params.title, summary: params.summary };
+  };
+
   // Publish (create or idempotently update) the App check run for `status`,
   // rendering the human-readable summary from the ACTUAL terminal `reasons`
   // (never a stale snapshot). Throws on API failure so callers can choose
   // fail-closed vs best-effort.
   const publishCheck = async (status, reasons) => {
-    const params = checkRunParamsForDecision(status, reasons);
     const token = await getToken();
-    await upsert(ghFetch, token, repo, eventHeadSha, {
-      existingId: existingAppCheckRun?.id,
-      name: checkRunName,
-      status: params.status,
-      conclusion: params.conclusion,
-      title: params.title,
-      summary: params.summary,
-    });
+    await upsert(ghFetch, token, repo, eventHeadSha, { existingId: existingAppCheckRun?.id, ...checkBody(status, reasons) });
   };
-  const publishBestEffort = async (status, reasons) => { try { await publishCheck(status, reasons); } catch { /* absence already fails closed */ } };
 
-  // Single source of truth for every NON-approved terminal path: publish the
-  // check and return the outcome from the SAME `reasons`, so the published
-  // `paperclip-checker/app` summary/conclusion can never diverge from the
-  // decision main() emits and exits on. The published status equals the
-  // returned status in all of these paths (blocked→failure, rejected→failure,
-  // pending→in_progress), preserving fail-closed + never-neutral semantics; the
-  // publish is best-effort because the ABSENCE of a success check already fails
-  // closed. Exact-head binding (eventHeadSha) and App-id binding (existingId via
-  // findAppCheckRun) are inherited from publishCheck.
+  // Revoke a STANDING success by downgrading it to a non-approval `status`
+  // (failure/in_progress). The write MUST land — never swallowed. GitHub
+  // evaluates the MOST RECENT check run of a given name at a commit, so if the
+  // in-place PATCH of the standing run fails we POST a fresh same-named
+  // non-success run (same App, same exact head) to SUPERSEDE the stale green
+  // (latest-wins revocation). Only if BOTH independent writes fail do we throw,
+  // and the caller fails closed. Both paths preserve exact-head + app-id binding
+  // and never emit `neutral`.
+  const revokeStandingSuccess = async (status, reasons) => {
+    const token = await getToken();
+    const body = checkBody(status, reasons);
+    try {
+      await upsert(ghFetch, token, repo, eventHeadSha, { existingId: existingAppCheckRun.id, ...body });
+      return;
+    } catch (patchError) {
+      try {
+        await upsert(ghFetch, token, repo, eventHeadSha, { existingId: undefined, ...body });
+        return;
+      } catch (postError) {
+        throw new Error(`in-place downgrade ${sanitizeError(patchError)}; latest-wins supersede ${sanitizeError(postError)}`);
+      }
+    }
+  };
+
+  // Single source of truth for every NON-approved terminal path. The published
+  // `paperclip-checker/app` summary/conclusion is rendered from the SAME
+  // `reasons` returned to main(), so they can never diverge, and the published
+  // status equals the returned status (blocked/rejected→failure,
+  // pending→in_progress), preserving fail-closed + never-neutral semantics.
+  //
+  // Two revocation regimes:
+  //  - No App success stands at this head → the ABSENCE of a success check
+  //    already fails closed, so publishing the non-approval check is best-effort
+  //    (a write error cannot manufacture a satisfiable state).
+  //  - A success DOES stand at this exact head → revocation is MANDATORY. If
+  //    neither the in-place downgrade nor the latest-wins supersede lands, we do
+  //    NOT return the requested (possibly exit-0 pending) outcome; we fail closed
+  //    to `blocked`/exit 1 with a diagnostic, because a satisfiable stale green
+  //    must never coexist with a non-approval.
   const finalize = async (status, exitCode, reasons) => {
-    await publishBestEffort(status, reasons);
+    if (standingSuccessAtHead) {
+      try {
+        await revokeStandingSuccess(status, reasons);
+      } catch (error) {
+        return {
+          status: 'blocked',
+          exitCode: 1,
+          dismissed,
+          riskLane: result.riskLane,
+          reasons: [
+            ...reasons,
+            `Refused to leave a stale successful ${checkRunName} check standing at the current head after a ${status} decision: ${sanitizeError(error)}. Failing closed so branch protection cannot be satisfied by the superseded success.`,
+          ],
+        };
+      }
+      return { status, exitCode, dismissed, riskLane: result.riskLane, reasons };
+    }
+    try { await publishCheck(status, reasons); } catch { /* absence already fails closed */ }
     return { status, exitCode, dismissed, riskLane: result.riskLane, reasons };
   };
 

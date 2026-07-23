@@ -1527,6 +1527,181 @@ test('finalize SSOT: rejected/blocked default publishes a FAILURE whose summary 
   }
 });
 
+// ── Stale-success revocation: a NON-approval must never leave a standing
+// App-authored `success` at the exact head satisfiable by branch protection
+// (Cursor Bugbot High / discussion_r3637958588). The downgrade is MANDATORY when
+// a success stands at this head: in-place PATCH, else a latest-wins supersede
+// POST; if BOTH fail, fail closed to blocked/exit 1. Exact-head and app-id
+// binding (the standing run comes from findAppCheckRun) are preserved.
+
+const standingSuccess = (over = {}) => ({ id: 500, conclusion: 'success', head_sha: HEAD, app: { id: APP_ID }, ...over });
+
+for (const decision of ['rejected', 'blocked', 'pending']) {
+  const expectedConclusion = decision === 'pending' ? undefined : 'failure';
+  const expectedStatus = decision === 'pending' ? 'in_progress' : 'completed';
+
+  test(`revocation: ${decision} + standing success + PATCH succeeds → single in-place downgrade, outcome preserved`, async () => {
+    const { calls, deps } = recordingDeps();
+    const outcome = await executeDecision(baseArgs({
+      result: { decision, dismissStale: false, riskLane: decision === 'pending' ? 'GREEN' : 'RED', reasons: [`t:${decision}`] },
+      existingAppCheckRun: standingSuccess(),
+      deps,
+    }));
+    assert.equal(outcome.status, decision);
+    assert.equal(outcome.exitCode, decision === 'pending' ? 0 : 1);
+    assert.equal(calls.upsert.length, 1); // in-place PATCH only
+    assert.equal(calls.upsert[0].existingId, 500);
+    assert.equal(calls.upsert[0].status, expectedStatus);
+    assert.equal(calls.upsert[0].conclusion, expectedConclusion);
+    assert.equal(calls.upsert[0].headSha, HEAD);
+  });
+
+  test(`revocation: ${decision} + standing success + PATCH fails → latest-wins supersede POST, outcome preserved`, async () => {
+    const calls = { upsert: [] };
+    const deps = {
+      mintAppToken: async () => 'app-token',
+      dismissReview: async () => {},
+      submitApproval: async () => { throw new Error('no approve on non-approval'); },
+      upsertCheckRun: async (_g, _t, _r, headSha, opts) => {
+        calls.upsert.push({ headSha, ...opts });
+        if (opts.existingId) { const e = new Error('patch body'); e.statusCode = 500; throw e; } // in-place downgrade fails
+        return { id: 99 }; // supersede POST succeeds
+      },
+    };
+    const outcome = await executeDecision(baseArgs({
+      result: { decision, dismissStale: false, riskLane: decision === 'pending' ? 'GREEN' : 'RED', reasons: [`t:${decision}`] },
+      existingAppCheckRun: standingSuccess(),
+      deps,
+    }));
+    // Non-approval outcome is PRESERVED because the supersede landed.
+    assert.equal(outcome.status, decision);
+    assert.equal(outcome.exitCode, decision === 'pending' ? 0 : 1);
+    assert.equal(calls.upsert.length, 2);
+    assert.equal(calls.upsert[0].existingId, 500); // PATCH attempt (in place)
+    assert.equal(calls.upsert[1].existingId, undefined); // POST supersede (latest-wins)
+    assert.equal(calls.upsert[1].name, DEFAULT_CHECK_RUN_NAME);
+    assert.equal(calls.upsert[1].status, expectedStatus);
+    assert.equal(calls.upsert[1].conclusion, expectedConclusion); // never neutral / never success
+    assert.equal(calls.upsert[1].headSha, HEAD); // exact-head bound
+  });
+
+  test(`revocation: ${decision} + standing success + BOTH writes fail → fail closed to blocked/exit 1 (never leaves stale green)`, async () => {
+    const calls = { upsert: [] };
+    const deps = {
+      mintAppToken: async () => 'app-token',
+      dismissReview: async () => {},
+      submitApproval: async () => {},
+      upsertCheckRun: async (_g, _t, _r, headSha, opts) => {
+        calls.upsert.push({ headSha, ...opts });
+        const e = new Error('secret write body {'); e.statusCode = 503; throw e;
+      },
+    };
+    const outcome = await executeDecision(baseArgs({
+      result: { decision, dismissStale: false, riskLane: decision === 'pending' ? 'GREEN' : 'RED', reasons: [`t:${decision}`] },
+      existingAppCheckRun: standingSuccess(),
+      deps,
+    }));
+    // CRITICAL: even a pending (normally exit 0) must fail closed while a stale
+    // success may still stand — no path may report "safe".
+    assert.equal(outcome.status, 'blocked');
+    assert.equal(outcome.exitCode, 1);
+    assert.equal(calls.upsert.length, 2); // tried in-place PATCH AND supersede POST
+    assert.match(outcome.reasons.join(' '), /Refused to leave a stale successful .* check standing/);
+    assert.match(outcome.reasons.join(' '), /HTTP 503/); // sanitized status only
+    assert.doesNotMatch(outcome.reasons.join(' '), /secret write body/); // no raw body
+  });
+}
+
+test('revocation exact-head binding: standing success at a DIFFERENT head is NOT force-revoked (best-effort, outcome preserved on write failure)', async () => {
+  const calls = { upsert: 0 };
+  const deps = {
+    mintAppToken: async () => 'app-token',
+    dismissReview: async () => {},
+    submitApproval: async () => {},
+    upsertCheckRun: async () => { calls.upsert += 1; throw new Error('PATCH → 500'); },
+  };
+  const outcome = await executeDecision(baseArgs({
+    // A success stands, but for OTHER (a different commit), so it does not satisfy
+    // protection for THIS head — mandatory revocation must not trigger and a
+    // swallowed best-effort publish keeps the (already-failing) rejected outcome.
+    result: { decision: 'rejected', dismissStale: false, riskLane: 'RED', reasons: ['red'] },
+    existingAppCheckRun: { id: 501, conclusion: 'success', head_sha: OTHER, app: { id: APP_ID } },
+    deps,
+  }));
+  assert.equal(outcome.status, 'rejected');
+  assert.equal(outcome.exitCode, 1);
+  assert.equal(calls.upsert, 1); // single best-effort attempt, not the 2-write mandatory revoke
+});
+
+test('revocation + TOCTOU: head advances, standing success at (stale) event head, PATCH fails → supersede POST + dismiss, rejected', async () => {
+  const calls = { upsert: [], dismiss: [] };
+  const deps = {
+    mintAppToken: async () => 'app-token',
+    dismissReview: async (_g, _t, _r, _p, id) => { calls.dismiss.push(id); },
+    submitApproval: async () => { throw new Error('no approve'); },
+    upsertCheckRun: async (_g, _t, _r, headSha, opts) => {
+      calls.upsert.push({ headSha, ...opts });
+      if (opts.existingId) { const e = new Error('patch'); e.statusCode = 500; throw e; }
+      return { id: 77 };
+    },
+  };
+  const outcome = await executeDecision(baseArgs({
+    ghFetch: async () => ({ head: { sha: OTHER } }), // head advanced mid-run
+    result: { decision: 'approved', dismissStale: false, riskLane: 'GREEN', reasons: ['ok'] },
+    existingAppReview: { id: 43, commit_id: HEAD, state: 'APPROVED' },
+    existingAppCheckRun: standingSuccess({ id: 430 }),
+    deps,
+  }));
+  assert.equal(outcome.status, 'rejected');
+  assert.equal(outcome.exitCode, 1);
+  assert.deepEqual(calls.dismiss, [43]); // stale review dismissed
+  assert.equal(calls.upsert.length, 2); // PATCH(430) failed → POST supersede
+  assert.equal(calls.upsert[0].existingId, 430);
+  assert.equal(calls.upsert[1].existingId, undefined);
+  assert.equal(calls.upsert[1].conclusion, 'failure');
+  assert.equal(calls.upsert[1].headSha, HEAD);
+});
+
+test('revocation + TOCTOU: standing success at head, both revoke writes fail → blocked (no stale green left standing)', async () => {
+  const calls = { upsert: 0 };
+  const deps = {
+    mintAppToken: async () => 'app-token',
+    dismissReview: async () => {},
+    submitApproval: async () => {},
+    upsertCheckRun: async () => { calls.upsert += 1; const e = new Error('x'); e.statusCode = 503; throw e; },
+  };
+  const outcome = await executeDecision(baseArgs({
+    ghFetch: async () => ({ head: { sha: OTHER } }),
+    result: { decision: 'approved', dismissStale: false, riskLane: 'GREEN', reasons: ['ok'] },
+    existingAppReview: { id: 44, commit_id: HEAD, state: 'APPROVED' },
+    existingAppCheckRun: standingSuccess({ id: 431 }),
+    deps,
+  }));
+  assert.equal(outcome.status, 'blocked');
+  assert.equal(outcome.exitCode, 1);
+  assert.equal(calls.upsert, 2);
+  assert.match(outcome.reasons.join(' '), /Refused to leave a stale successful/);
+});
+
+test('revocation idempotency: no standing success + non-approval publish fails → swallowed, outcome preserved (absence already fails closed)', async () => {
+  for (const decision of ['rejected', 'blocked', 'pending']) {
+    const deps = {
+      mintAppToken: async () => 'app-token',
+      dismissReview: async () => {},
+      submitApproval: async () => {},
+      upsertCheckRun: async () => { throw new Error('PATCH → 503'); },
+    };
+    const outcome = await executeDecision(baseArgs({
+      // No existing App check at all → no green can be standing → best-effort.
+      result: { decision, dismissStale: false, riskLane: decision === 'pending' ? 'GREEN' : 'RED', reasons: [decision] },
+      existingAppCheckRun: null,
+      deps,
+    }));
+    assert.equal(outcome.status, decision);
+    assert.equal(outcome.exitCode, decision === 'pending' ? 0 : 1);
+  }
+});
+
 test('upsertCheckRun: no existingId → POST creates a run bound to head_sha with name+status+output', async () => {
   let captured = null;
   const ghFetch = async (path, token, opts) => {

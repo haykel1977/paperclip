@@ -173,10 +173,24 @@ treats a neutral required check as passing (that would defeat fail-closed).
 
 `approved` and `pending` exit `0` (pending publishes no success); `rejected` and
 `blocked` exit non-zero. Publishing the check run for a non-approval is
-best-effort: the **absence** of a `success` check already fails closed, so a
-publish error can never turn a non-approval into a pass. A misconfigured or
-ambiguous run can never be mistaken for a success, and a not-yet-complete run
-waits (`in_progress`) rather than failing the PR.
+best-effort **only when no App-authored `success` already stands at the exact
+head**: the **absence** of a `success` check already fails closed, so a publish
+error cannot turn a non-approval into a pass. A misconfigured or ambiguous run
+can never be mistaken for a success, and a not-yet-complete run waits
+(`in_progress`) rather than failing the PR.
+
+**Mandatory stale-success revocation.** If a prior App-authored `success` check
+(matched by name **and** `app_id`, bound to this exact head) *does* stand and the
+current decision is a non-approval, that green would still satisfy branch
+protection — so downgrading it is **not** best-effort, it **must land**. The
+checker first PATCHes the standing run to the non-approval conclusion
+(`failure`, or `in_progress` for pending); if that write fails it POSTs a fresh
+same-named run at the same head, relying on GitHub evaluating the **most recent**
+check run of a given name (latest-wins supersede). Only if **both** independent
+writes fail does the checker refuse to return the requested outcome and instead
+fails closed to `blocked`/exit 1 — even a `pending` (normally exit 0) fails
+closed here, because no path may report "safe" while a satisfiable stale
+`success` might still stand.
 
 **Idempotency.** If THIS App's own check run (matched by name **and** `app_id`,
 so a spoofed same-named check is ignored) already reports `success` for the
