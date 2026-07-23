@@ -48,10 +48,18 @@ on:
 # (PR, files, labels, check-runs, statuses, commit, reviews). It is NEVER used to
 # approve (a PR's own GITHUB_TOKEN cannot approve it anyway); approval/dismissal
 # is done with the separately-minted least-privilege App installation token.
+#
+# `checks: write` is granted so the default token can publish the SECOND required
+# check — the RUNNER key `paperclip-checker-runner` — on the exact PR head. It is
+# authored by github-actions (app id 15368), a DIFFERENT identity and token from
+# the App key (`paperclip-checker/app`, app id 4372695, minted App token), giving
+# the two-key model two independent failure domains. The default token still
+# CANNOT approve a PR and cannot mint the App token; it only publishes/updates its
+# own runner check run.
 permissions:
   contents: read
   pull-requests: read
-  checks: read
+  checks: write
   statuses: read
 
 concurrency:
@@ -65,13 +73,17 @@ concurrency:
 
 jobs:
   checker:
-    # Runner job display name. This is the Actions check-run for the JOB itself
-    # and is DELIBERATELY DISTINCT from the App-authored required check
-    # `paperclip-checker/app`. Branch protection must require the App check (which
-    # is pinned to the App's app_id and only the write-privileged App can publish),
-    # never this runner job — whose success merely means "the script ran", not
-    # "the gate approved". Keeping the names distinct prevents an operator from
-    # accidentally requiring the spoofable runner context instead of the gate.
+    # Runner job DISPLAY NAME (the Actions check-run for the JOB itself). It is
+    # DELIBERATELY DISTINCT from BOTH required contexts:
+    #   - the App key   `paperclip-checker/app`      (app id 4372695, App token)
+    #   - the runner key `paperclip-checker-runner`  (app id 15368, default token)
+    # Both required contexts are API-published by the script onto the EXACT PR
+    # head. This job's own native Actions check reports on the BASE SHA under
+    # pull_request_target (not the PR head) and merely means "the script ran", so
+    # it must NEVER be a required context. Keeping this display name (note the
+    # space + parenthesis) different from the runner key `paperclip-checker-runner`
+    # prevents an operator from accidentally requiring the base-SHA job check
+    # instead of the head-bound, app-id-pinned runner key.
     name: paperclip-checker (runner)
     # Kill switch / activation gate: the entire job is skipped unless the
     # repository variable is explicitly "true". This is the disabled-by-default

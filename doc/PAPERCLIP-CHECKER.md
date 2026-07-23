@@ -37,6 +37,37 @@ same-named check from any other identity cannot spoof success). The App still
 submits a PR review, but **only as an audit trail** — merge eligibility does not
 depend on it.
 
+### Two-key model (why two required checks)
+
+The gate publishes **two** required check runs on the exact PR head, from **two
+different identities using two different tokens** — deliberately independent
+failure domains:
+
+| Key | Context name | Author (app id) | Token | Published when |
+| --- | --- | --- | --- | --- |
+| **App key** | `paperclip-checker/app` | `solidus-paperclip-checker` (**4372695**) | minted least-privilege **App installation token** | after the decision, by `executeDecision` |
+| **Runner key** | `paperclip-checker-runner` | `github-actions` (**15368**) | the workflow's **default `GITHUB_TOKEN`** | after the decision, by `main()` |
+
+Both are **API-published onto the exact PR head SHA** (not the job's base-SHA
+native check), both are **pinned to their app id** (a same-named check from any
+other identity is non-authoritative), and both are `success` **only** for an
+`approved` decision (`in_progress` for pending, `failure` otherwise; `neutral` is
+never emitted). Branch protection must require **both** contexts.
+
+**Why two keys are necessary.** A single App-authored key has an irreducible
+residual: if `checks:write` for the App token is unreachable for *both* an
+in-place PATCH *and* a latest-wins POST, a stale App `success` at the head can
+survive and keep satisfying branch protection despite a non-approval decision
+(the checker's exit code is not itself a merge gate). The runner key closes this:
+it is published by a **separate token** (the default `GITHUB_TOKEN`, no App JWT /
+installation mint), so the same non-approval decision drives the runner key to
+`failure` **independently**. For a stale green to authorize a merge now, *both*
+keys' writes must fail *simultaneously* across *both* tokens — a far smaller,
+honestly-bounded window than a single key's. The runner key mirrors the **final**
+outcome of `executeDecision`, so when the App key fails closed to `blocked`
+(e.g. its mandatory revocation could not land), the runner key is published as a
+`failure` and two-key protection blocks the merge.
+
 ### Triggers (base-branch code only)
 
 - `pull_request_target` — reacts to PR lifecycle and label changes.
@@ -69,14 +100,45 @@ check-run↔status fallback: a requirement typed `check_run` is satisfied only b
 check-run from the expected app; a `status`-typed requirement only by a status
 from the expected creator.
 
+### Fork & missing-secrets behavior (fail-closed)
+
+Both required keys are published on the exact PR head from **base-branch code**,
+so the trigger choice matters:
+
+- **Fork PRs.** The workflow uses `pull_request_target` (not `pull_request`), so
+  the job runs **base-branch** code with the repo's secrets and a **writable**
+  default token **even for fork-authored PRs**. That means both keys *can* be
+  published for a fork PR — and they are published as **`failure`**, because the
+  decision core rejects any PR whose head repo differs from the base repo ("Fork
+  PR … is never approved"). A fork PR therefore gets two red required checks and
+  is blocked. This is why `pull_request_target` is safer here than
+  `pull_request`: under `pull_request` a fork's token is read-only with no
+  secrets, so **neither** key could be written and the gate would depend on the
+  *absence* of a check — correct but fragile. Publishing an affirmative
+  `failure` from `pull_request_target` is the stronger, unambiguous signal, and
+  no PR-head code is ever executed (the job pins the checkout to the default
+  branch).
+- **Missing / malformed App secrets while enabled.** If `PAPERCLIP_CHECKER_ENABLED`
+  is `true` but `PAPERCLIP_CHECKER_APP_ID` / `PAPERCLIP_CHECKER_PRIVATE_KEY` are
+  missing or malformed, config is **invalid** → decision `blocked`. The App key
+  cannot be produced (no token to mint), so `main()` publishes only the **runner
+  key** = `failure` with the default token on the exact head (revoking any stale
+  runner `success`) and exits 1. The App context stays whatever it was; the
+  runner key going red blocks the merge. If a stale App `success` also stands and
+  is required, the runner-key failure still blocks — fail-closed.
+- **Disabled (default).** When the variable is not `true`, the job is **skipped**
+  entirely, so **neither** key is published. Pre-migration this must not block
+  merges — see [Activation](#activation) for the ordering that adds the required
+  contexts only *after* the gate is enabled.
+
 ## Components
 
 | Path | Role |
 | --- | --- |
-| `.github/workflows/paperclip-checker.yml` | `pull_request_target` + `workflow_run` workflow, base-branch only, gated by the activation variable. |
-| `.github/scripts/paperclip-checker.mjs` | Fail-closed decision logic + integration (fetch → classify → decide → publish check run + audit review). |
+| `.github/workflows/paperclip-checker.yml` | `pull_request_target` + `workflow_run` workflow, base-branch only, gated by the activation variable. Grants the default token `checks:write` to publish the runner key. |
+| `.github/scripts/paperclip-checker.mjs` | Fail-closed decision logic + integration (fetch → classify → decide → publish App key + runner key + audit review). |
 | `.github/scripts/paperclip-app-token.mjs` | Mints a short-lived, down-scoped installation token (`checks:write` + `pull_requests:write`). |
-| `.github/paperclip-checker.config.json` | Machine-readable producer-binding policy (required checks → expected app id/slug). |
+| `.github/paperclip-checker.config.json` | Machine-readable producer-binding policy (required checks → expected app id/slug; `appCheckName` + `runnerCheckName`). |
 | `.github/scripts/tests/paperclip-checker.test.mjs` | Unit + mocked integration tests. |
 
 ## Required configuration
@@ -142,10 +204,12 @@ are never logged.
 
 ## Decision model
 
-Each decision maps to a specific state of the `paperclip-checker/app` check run
-on the exact head SHA. `success` is the **only** conclusion that satisfies the
-required context; `neutral` is deliberately **never** emitted because GitHub
-treats a neutral required check as passing (that would defeat fail-closed).
+Each decision maps to a specific state of **both** required check runs
+(`paperclip-checker/app` and `paperclip-checker-runner`) on the exact head SHA:
+the runner key mirrors the App key's terminal state. `success` is the **only**
+conclusion that satisfies a required context; `neutral` is deliberately **never**
+emitted because GitHub treats a neutral required check as passing (that would
+defeat fail-closed). Below, "check run" means both keys unless noted.
 
 - **approved** → check run `completed`/**`success`**. ONLY when: the PR is GREEN
   per the classifier, not draft, not a fork, the trigger-time head SHA equals the
@@ -179,18 +243,27 @@ error cannot turn a non-approval into a pass. A misconfigured or ambiguous run
 can never be mistaken for a success, and a not-yet-complete run waits
 (`in_progress`) rather than failing the PR.
 
-**Mandatory stale-success revocation.** If a prior App-authored `success` check
+**Mandatory stale-success revocation (per key).** If a prior `success` check
 (matched by name **and** `app_id`, bound to this exact head) *does* stand and the
 current decision is a non-approval, that green would still satisfy branch
-protection — so downgrading it is **not** best-effort, it **must land**. The
-checker first PATCHes the standing run to the non-approval conclusion
-(`failure`, or `in_progress` for pending); if that write fails it POSTs a fresh
-same-named run at the same head, relying on GitHub evaluating the **most recent**
-check run of a given name (latest-wins supersede). Only if **both** independent
-writes fail does the checker refuse to return the requested outcome and instead
-fails closed to `blocked`/exit 1 — even a `pending` (normally exit 0) fails
-closed here, because no path may report "safe" while a satisfiable stale
-`success` might still stand.
+protection — so downgrading it is **not** best-effort, it **must land**. Applied
+to **each** key independently: the App key uses the App token, the runner key
+uses the default token. The checker first PATCHes the standing run to the
+non-approval conclusion (`failure`, or `in_progress` for pending); if that write
+fails it POSTs a fresh same-named run at the same head, relying on GitHub
+evaluating the **most recent** check run of a given name (latest-wins supersede).
+
+If **both** writes for the **App key** fail, `executeDecision` fails closed to
+`blocked`/exit 1 and does **not** claim the stale App green was superseded — it
+was not. What actually blocks the merge in that residual is the **runner key**:
+`main()` then publishes `paperclip-checker-runner` = `failure` with the default
+token (a separate failure domain), so two-key branch protection blocks despite
+the surviving App green. If the runner key **also** cannot land its non-success
+over a standing runner `success` (both default-token writes fail too), `main()`
+forces exit 1 — even a `pending` (normally exit 0) fails closed here. Only when
+**all four** writes fail simultaneously — across **both** tokens — can a stale
+green survive; that quadruple-failure window is the honest, irreducible residual,
+not a state the code claims to have closed.
 
 **Idempotency.** If THIS App's own check run (matched by name **and** `app_id`,
 so a spoofed same-named check is ignored) already reports `success` for the
@@ -223,10 +296,14 @@ stale approval standing while the new commit is refused.
 
 ### Required branch-protection backstop
 
-The enforceable signal is the `paperclip-checker/app` check run, which is bound
-to a head SHA and cannot carry to a new commit. Still configure `main` protection
-so the audit review can never accidentally carry a merge:
+The enforceable signals are the **two** check runs (`paperclip-checker/app` and
+`paperclip-checker-runner`), each bound to a head SHA and unable to carry to a new
+commit. Configure `main` protection to require **both** contexts, and also keep
+the review-hygiene rules so the audit review can never accidentally carry a merge:
 
+- **Require both status checks** — `paperclip-checker/app` (pin to `app_id`
+  **4372695**) **and** `paperclip-checker-runner` (pin to `app_id` **15368**).
+  Requiring only one re-opens the single-key residual described above.
 - **Dismiss stale pull request approvals when new commits are pushed**
   (`dismiss_stale_reviews: true`).
 - **Require approval from someone other than the last pusher**
@@ -234,15 +311,21 @@ so the audit review can never accidentally carry a merge:
   separation so the App can never approve its own push.
 
 See `doc/SECURITY-BRANCH-PROTECTION.md` for the full baseline. Do **not** add
-`paperclip-checker/app` as a required status check until after the witness PR
-below. When you do, require the context **`paperclip-checker/app`** produced by
-the App (`app_id` 4372695) — never the runner Actions job `paperclip-checker
-(runner)`, whose success only means "the script ran", not "the gate approved".
+either context as a required check until after the witness PR below. When you do,
+require the **API-published, head-bound, app-id-pinned** contexts
+`paperclip-checker/app` (`app_id` 4372695) and `paperclip-checker-runner`
+(`app_id` 15368) — **never** the runner Actions **job** `paperclip-checker
+(runner)`. The job's native check reports on the **base SHA** (under
+`pull_request_target`) and only means "the script ran", not "the gate approved";
+its name (with a space and parenthesis) is intentionally distinct from the runner
+**key** `paperclip-checker-runner`.
 
 ## Activation
 
 External App creation requires GitHub **sudo (2FA) authentication** and cannot
-be performed by automation. A maintainer must:
+be performed by automation. The ordering below is deliberate: **required contexts
+are added only after the gate is proven to produce them on a live head**, so a
+pre-migration merge is never blocked by a check that is not yet being published.
 
 1. Create the GitHub App with the [expected permissions](#expected-app-permissions-least-privilege)
    and subscribe to Pull request events. Note the numeric App ID; generate and
@@ -250,16 +333,25 @@ be performed by automation. A maintainer must:
 2. Install the App on this repository only.
 3. Add `PAPERCLIP_CHECKER_APP_ID` and `PAPERCLIP_CHECKER_PRIVATE_KEY` as
    repository secrets.
-4. **Witness PR (dry check first):** open a throwaway GREEN PR and confirm the
-   workflow reaches a live decision and publishes a `success`
-   `paperclip-checker/app` check run attributed to the App identity (and, as an
-   audit trail, the App review). Confirm a RED/ORANGE PR and an App-authored PR
-   both get a `failure` check and are refused.
-5. Only after the witness PR behaves correctly, set the repository variable
-   `PAPERCLIP_CHECKER_ENABLED=true`.
-6. Optionally, add the App-produced context `paperclip-checker/app` to `main`
-   required checks once trust is established (pin to `app_id` 4372695; never the
-   runner job `paperclip-checker (runner)`).
+4. **Enable the gate first, while neither context is required.** Set the
+   repository variable `PAPERCLIP_CHECKER_ENABLED=true`. Because neither
+   `paperclip-checker/app` nor `paperclip-checker-runner` is a required check yet,
+   this cannot block any current merge — it only starts the job publishing both
+   keys.
+5. **Witness PR (bootstrap both keys on the exact migration head):** open a
+   throwaway GREEN PR and confirm the workflow reaches a live decision and
+   publishes **both** a `success` `paperclip-checker/app` (attributed to the App,
+   app id 4372695) **and** a `success` `paperclip-checker-runner` (attributed to
+   github-actions, app id 15368) on the exact head — plus the audit review.
+   Confirm a RED/ORANGE PR, a fork PR, and an App-authored PR each get **both**
+   keys as `failure` and are refused.
+6. **Atomically add both required contexts and remove human-review authority.**
+   Only after the witness PR behaves correctly, in a single branch-protection
+   update: add `paperclip-checker/app` (pin `app_id` 4372695) **and**
+   `paperclip-checker-runner` (pin `app_id` 15368) as required checks, and make
+   the corresponding reduction to human-review authority. Adding both together
+   avoids a window where one key is required but the other is not. Never require
+   the runner **job** `paperclip-checker (runner)`.
 
 ## Key rotation
 
@@ -274,11 +366,20 @@ private key itself.
 
 ## Kill switch & rollback
 
-- **Kill switch:** set `PAPERCLIP_CHECKER_ENABLED` to anything other than
-  `true` (or unset it). The job is skipped on the next event; no code change.
+**Rollback reverses the activation order: relax protection *before* disabling the
+gate.** If the variable is unset while the two contexts are still required, the
+job stops publishing them, the contexts go/stay pending on every open PR, and
+**all merges block**. So always remove the required contexts first.
+
+- **Kill switch (safe order):**
+  1. In branch protection, remove `paperclip-checker/app` **and**
+     `paperclip-checker-runner` from required checks (and restore any human-review
+     authority you reduced during activation).
+  2. Only then set `PAPERCLIP_CHECKER_ENABLED` to anything other than `true` (or
+     unset it). The job is skipped on the next event; no code change.
 - **Secret compromise:** delete/replace the private key in App settings and
-  update the secret. Existing minted tokens expire within minutes.
-- **Full rollback:** remove `paperclip-checker/app` from required checks (if
-  added), unset the variable, and — if desired — revert the PR that introduced
-  these files. Reverting is safe because the gate is inert while the variable is
-  off.
+  update the secret. Existing minted tokens expire within minutes. The runner key
+  (default token) is unaffected.
+- **Full rollback:** after removing both required contexts and unsetting the
+  variable, — if desired — revert the PR that introduced these files. Reverting is
+  safe because the gate is inert while the variable is off.

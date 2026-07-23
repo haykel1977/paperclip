@@ -29,6 +29,17 @@
  * check from any other identity cannot spoof success. The check run is what
  * gates merge; the PR review below is retained only as an audit trail.
  *
+ * Two-key model. A SECOND required check run — the RUNNER key
+ * `paperclip-checker-runner` — is published on the EXACT head with the workflow's
+ * DEFAULT GITHUB_TOKEN (github-actions app id 15368), a different identity and
+ * token from the App key (app id 4372695, minted App token). The two are
+ * independent failure domains, and branch protection requires BOTH. The runner
+ * key mirrors the FINAL outcome (success iff approved), so a stale App `success`
+ * the App token could not revoke (both App writes failed) is still gated by the
+ * runner key going `failure` from the default token. Only a simultaneous
+ * quadruple write failure across both tokens leaves a stale green — the honest,
+ * irreducible residual. See publishRunnerCheck and doc/PAPERCLIP-CHECKER.md.
+ *
  * Decisions:
  *   - blocked  → activation disabled or App config (ID/key) missing/invalid, or
  *                token minting failed. Exit 1. Never a pass.
@@ -71,6 +82,28 @@ export const DEFAULT_APP_SLUG = 'solidus-paperclip-checker[bot]';
 // (pinned to the App's app_id), never the runner's own Actions check. Overridable
 // via the committed config's `appCheckName` or the APP_CHECK_NAME env.
 export const DEFAULT_CHECK_RUN_NAME = 'paperclip-checker/app';
+
+// Name of the SECOND, independent required check — the "runner key". It is
+// published on the exact PR head with the workflow's DEFAULT GITHUB_TOKEN, so it
+// is authored by github-actions (app id 15368) — a DIFFERENT identity and a
+// DIFFERENT token (no App JWT / installation mint) from the App check above.
+// This independence is the whole point of the two-key model: the App key
+// (`paperclip-checker/app`, app id 4372695, minted App token) and the runner key
+// (`paperclip-checker-runner`, app id 15368, default token) are separate failure
+// domains. Branch protection requires BOTH, so a stale App `success` that the App
+// token could not revoke (both App writes failed) is still gated by the runner
+// key, which the default token publishes as a non-success for the same
+// non-approval decision. The runner check mirrors the FINAL outcome: success iff
+// approved, in_progress for pending, failure otherwise. Its name is deliberately
+// distinct from the Actions runner JOB display name so an operator requires this
+// API-published, head-bound, app-id-pinned context — never the job's own
+// base-SHA Actions check. Overridable via config `runnerCheckName` / env.
+export const DEFAULT_RUNNER_CHECK_NAME = 'paperclip-checker-runner';
+
+// GitHub Actions' app id. Every check run written with the default GITHUB_TOKEN
+// is authored by this app, so the runner key is pinned to it (findAppCheckRun),
+// and a same-named runner check from any other identity is non-authoritative.
+export const GITHUB_ACTIONS_APP_ID = 15368;
 
 // Default producer-bound policy. Each required check is pinned to the app that
 // is expected to produce it; a same-named check-run/status from any other app
@@ -160,22 +193,24 @@ export function loadCheckerPolicy(env = {}, readFile = readFileSync) {
       requiredChecks,
       appSlug: raw?.appSlug ? String(raw.appSlug) : undefined,
       appCheckName: raw?.appCheckName ? String(raw.appCheckName).trim() : undefined,
+      runnerCheckName: raw?.runnerCheckName ? String(raw.runnerCheckName).trim() : undefined,
     };
   };
 
   const checkName = raw => raw.appCheckName || DEFAULT_CHECK_RUN_NAME;
+  const runnerName = raw => raw.runnerCheckName || DEFAULT_RUNNER_CHECK_NAME;
   if (env.REQUIRED_CHECKS_POLICY) {
     const parsed = coerce(JSON.parse(env.REQUIRED_CHECKS_POLICY));
-    if (parsed.requiredChecks.length) return { requiredChecks: parsed.requiredChecks, appSlug: parsed.appSlug ?? DEFAULT_APP_SLUG, appCheckName: checkName(parsed) };
+    if (parsed.requiredChecks.length) return { requiredChecks: parsed.requiredChecks, appSlug: parsed.appSlug ?? DEFAULT_APP_SLUG, appCheckName: checkName(parsed), runnerCheckName: runnerName(parsed) };
   }
   const path = env.CHECKER_CONFIG_PATH || '.github/paperclip-checker.config.json';
   try {
     const parsed = coerce(JSON.parse(readFile(path, 'utf8')));
-    if (parsed.requiredChecks.length) return { requiredChecks: parsed.requiredChecks, appSlug: parsed.appSlug ?? DEFAULT_APP_SLUG, appCheckName: checkName(parsed) };
+    if (parsed.requiredChecks.length) return { requiredChecks: parsed.requiredChecks, appSlug: parsed.appSlug ?? DEFAULT_APP_SLUG, appCheckName: checkName(parsed), runnerCheckName: runnerName(parsed) };
   } catch {
     // fall through to the built-in default
   }
-  return { requiredChecks: DEFAULT_REQUIRED_CHECK_POLICY.map(c => ({ ...c })), appSlug: DEFAULT_APP_SLUG, appCheckName: DEFAULT_CHECK_RUN_NAME };
+  return { requiredChecks: DEFAULT_REQUIRED_CHECK_POLICY.map(c => ({ ...c })), appSlug: DEFAULT_APP_SLUG, appCheckName: DEFAULT_CHECK_RUN_NAME, runnerCheckName: DEFAULT_RUNNER_CHECK_NAME };
 }
 
 function appMatches(runApp, cfg) {
@@ -586,6 +621,91 @@ export async function upsertCheckRun(ghFetch, token, repo, headSha, { existingId
   });
 }
 
+/**
+ * Publish the RUNNER key (`paperclip-checker-runner`) on the exact head with the
+ * DEFAULT GITHUB_TOKEN (github-actions app id 15368) — the independent second
+ * signal of the two-key model. It mirrors the FINAL outcome status returned by
+ * executeDecision: approved→success, pending→in_progress, rejected/blocked→failure.
+ *
+ * Fail-closed, symmetric with the App key's revocation regime:
+ *   - Publishing `success` (approved) MUST land — otherwise there is no green
+ *     runner key and the merge stays blocked (fail-safe). Returns not-landed on
+ *     error so main() exits non-zero.
+ *   - A non-success WITH a standing runner `success` at this exact head → the
+ *     stale green would still satisfy branch protection, so revocation is
+ *     MANDATORY: PATCH the standing run in place; if that write fails, POST a
+ *     fresh same-named run (latest-wins supersede). Only if BOTH writes fail do
+ *     we report not-landed so main() fails closed to exit 1.
+ *   - A non-success with NO standing success → the ABSENCE of a runner success
+ *     already fails closed, so publishing is best-effort (a write error cannot
+ *     manufacture a satisfiable state); reported as landed.
+ *
+ * `neutral` is never emitted (checkRunParamsForDecision maps non-approvals to
+ * `failure`/`in_progress` only). Returns { landed:boolean, error?:string }; never
+ * throws, so main() decides the exit code.
+ */
+export async function publishRunnerCheck({
+  ghFetch,
+  token,
+  repo,
+  headSha,
+  existingRunnerCheck = null,
+  status,
+  reasons = [],
+  runnerCheckName = DEFAULT_RUNNER_CHECK_NAME,
+  upsert = upsertCheckRun,
+}) {
+  const params = checkRunParamsForDecision(status, reasons);
+  const body = {
+    name: runnerCheckName,
+    status: params.status,
+    conclusion: params.conclusion,
+    title: params.title,
+    summary: params.summary,
+  };
+
+  const standingSha = String(existingRunnerCheck?.head_sha ?? '').trim();
+  const standingSuccessAtHead =
+    !!existingRunnerCheck &&
+    String(existingRunnerCheck?.conclusion ?? '').toLowerCase() === 'success' &&
+    SHA_RE.test(standingSha) &&
+    standingSha.toLowerCase() === String(headSha).toLowerCase();
+
+  // approved → the runner success MUST land (else no green runner key).
+  if (params.conclusion === 'success') {
+    try {
+      await upsert(ghFetch, token, repo, headSha, { existingId: existingRunnerCheck?.id, ...body });
+      return { landed: true };
+    } catch (error) {
+      return { landed: false, error: `Publishing the ${runnerCheckName} success check failed: ${sanitizeError(error)}` };
+    }
+  }
+
+  // non-approval + a standing runner success at the exact head → MANDATORY revoke.
+  if (standingSuccessAtHead) {
+    try {
+      await upsert(ghFetch, token, repo, headSha, { existingId: existingRunnerCheck.id, ...body });
+      return { landed: true };
+    } catch (patchError) {
+      try {
+        await upsert(ghFetch, token, repo, headSha, { existingId: undefined, ...body });
+        return { landed: true };
+      } catch (postError) {
+        return {
+          landed: false,
+          error: `Refused to leave a stale successful ${runnerCheckName} check standing at the current head after a ${status} decision: in-place downgrade ${sanitizeError(patchError)}; latest-wins supersede ${sanitizeError(postError)}.`,
+        };
+      }
+    }
+  }
+
+  // non-approval, no standing success → absence already fails closed; best-effort.
+  try {
+    await upsert(ghFetch, token, repo, headSha, { existingId: existingRunnerCheck?.id, ...body });
+  } catch { /* absence already fails closed */ }
+  return { landed: true };
+}
+
 async function dismissReview(ghFetch, token, repo, prNumber, reviewId) {
   return ghFetch(`/repos/${repo}/pulls/${prNumber}/reviews/${reviewId}/dismissals`, token, {
     method: 'PUT',
@@ -843,15 +963,25 @@ export async function executeDecision({
   return finalize(result.decision, 1, result.reasons);
 }
 
+/**
+ * Best-effort fetch of the head's check runs to locate a prior RUNNER-key run
+ * (used only on the config-invalid path, where gatherInputs has not run). Returns
+ * the most recent app-id-pinned runner check at that head, or null. Never throws:
+ * a read failure just yields null, and the absence of a standing runner success
+ * already fails closed.
+ */
+async function findExistingRunnerCheck(ghFetch, token, repo, headSha, runnerCheckName) {
+  if (!SHA_RE.test(String(headSha ?? ''))) return null;
+  try {
+    const runs = await fetchAllPagesFromKey(ghFetch, `/repos/${repo}/commits/${headSha}/check-runs`, token, 'check_runs');
+    return findAppCheckRun(runs, runnerCheckName, GITHUB_ACTIONS_APP_ID);
+  } catch {
+    return null;
+  }
+}
+
 async function main() {
   const config = readCheckerConfig(process.env);
-
-  // Fail closed on config BEFORE any token mint or network call.
-  if (!config.active) {
-    emit('blocked', { reasons: config.reasons });
-    console.error('paperclip-checker is BLOCKED (fail-closed). No approval performed.');
-    process.exit(1);
-  }
 
   const repo = process.env.GH_REPO ?? process.env.GITHUB_REPOSITORY;
   const eventName = String(process.env.EVENT_NAME ?? '').trim();
@@ -862,6 +992,8 @@ async function main() {
   // 'main' to fail closed on a conservative default rather than skipping the gate.
   const defaultBranch = String(process.env.DEFAULT_BRANCH || 'main').trim() || 'main';
 
+  // Infra prerequisites: without repo/read token we can neither read nor publish
+  // any check. Exit non-zero; the ABSENCE of both required checks fails closed.
   if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(String(repo ?? ''))) {
     console.error('ERROR: GH_REPO must be owner/repo.');
     process.exit(1);
@@ -875,6 +1007,7 @@ async function main() {
   const policy = loadCheckerPolicy(process.env);
   const appSlug = appSlugEnv || policy.appSlug || DEFAULT_APP_SLUG;
   const checkRunName = String(process.env.APP_CHECK_NAME || policy.appCheckName || DEFAULT_CHECK_RUN_NAME).trim() || DEFAULT_CHECK_RUN_NAME;
+  const runnerCheckName = String(process.env.RUNNER_CHECK_NAME || policy.runnerCheckName || DEFAULT_RUNNER_CHECK_NAME).trim() || DEFAULT_RUNNER_CHECK_NAME;
 
   // ── Resolve PR + trigger-time head SHA from whichever event fired ────────
   let prNumber;
@@ -891,7 +1024,8 @@ async function main() {
     }
     if (!prNumber) {
       // No open same-repo PR at this SHA (e.g. push build, fork, or already
-      // advanced). Nothing to act on — clean no-op, not an approval.
+      // advanced). No PR to gate — clean no-op, not an approval. No runner check
+      // is published on a non-PR commit.
       emit('noop', { reasons: [`No open same-repo PR found for head ${eventHeadSha}.`] });
       process.exit(0);
     }
@@ -905,6 +1039,25 @@ async function main() {
     }
   }
 
+  // ── Config invalid (variable is "true" but App ID/key missing/malformed) ──
+  // The job DID run (variable enabled) but the App key can never be produced, so
+  // this is a `blocked` decision. Publish the RUNNER key as a failure on the
+  // exact head so the second, default-token signal actively blocks (and revokes
+  // any stale runner success). The App key is intentionally NOT touched — no App
+  // token can be minted — so a stale App success (if any) is gated solely by the
+  // runner key going red. Fail closed regardless of the publish result.
+  if (!config.active) {
+    const existingRunnerCheck = await findExistingRunnerCheck(ghFetch, readToken, repo, eventHeadSha, runnerCheckName);
+    const runnerResult = await publishRunnerCheck({
+      ghFetch, token: readToken, repo, headSha: eventHeadSha,
+      existingRunnerCheck, status: 'blocked', reasons: config.reasons, runnerCheckName,
+    });
+    const reasons = runnerResult.landed ? config.reasons : [...config.reasons, runnerResult.error];
+    emit('blocked', { reasons });
+    console.error('paperclip-checker is BLOCKED (fail-closed). No approval performed.');
+    process.exit(1);
+  }
+
   // ── All reads use the default GITHUB_TOKEN (no App token yet) ─────────────
   let inputs;
   try {
@@ -915,6 +1068,7 @@ async function main() {
   }
   const existingAppReview = findApprovedAppReview(inputs.reviews, appSlug);
   const existingAppCheckRun = findAppCheckRun(inputs.checkRuns, checkRunName, config.appId);
+  const existingRunnerCheck = findAppCheckRun(inputs.checkRuns, runnerCheckName, GITHUB_ACTIONS_APP_ID);
 
   const result = evaluateChecker({
     config,
@@ -945,17 +1099,37 @@ async function main() {
     checkRunName,
   });
 
+  // ── Publish the RUNNER key (default token) mirroring the FINAL outcome ────
+  // This is the independent second signal. Crucially, when executeDecision has
+  // already failed closed to `blocked` (e.g. the App key's mandatory revocation
+  // could not land because BOTH App-token writes failed), the runner key is still
+  // published here as a failure with the DEFAULT token — a separate failure
+  // domain — so two-key branch protection blocks the merge despite any stale App
+  // green. If the runner publish cannot land (approved success failed, or a
+  // standing runner success could not be revoked by either write), force exit 1;
+  // the absence/red of the runner key keeps the PR unmergeable (fail-closed).
+  let exitCode = outcome.exitCode;
+  const outcomeReasons = [...outcome.reasons];
+  const runnerResult = await publishRunnerCheck({
+    ghFetch, token: readToken, repo, headSha: eventHeadSha,
+    existingRunnerCheck, status: outcome.status, reasons: outcome.reasons, runnerCheckName,
+  });
+  if (!runnerResult.landed) {
+    exitCode = 1;
+    outcomeReasons.push(runnerResult.error);
+  }
+
   if (outcome.dismissed && existingAppReview) {
     console.log(`Dismissed stale App approval #${existingAppReview.id}.`);
   }
   emit(outcome.status, {
     ...(outcome.riskLane !== undefined ? { riskLane: outcome.riskLane } : {}),
-    reasons: outcome.reasons,
+    reasons: outcomeReasons,
   });
-  if (outcome.exitCode !== 0) {
+  if (exitCode !== 0) {
     console.error(`paperclip-checker did not approve (decision=${outcome.status}). Fail-closed.`);
   }
-  process.exit(outcome.exitCode);
+  process.exit(exitCode);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

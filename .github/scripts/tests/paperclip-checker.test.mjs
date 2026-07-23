@@ -14,9 +14,12 @@ import {
   findAppCheckRun,
   checkRunParamsForDecision,
   upsertCheckRun,
+  publishRunnerCheck,
   sanitizeError,
   DEFAULT_APP_SLUG,
   DEFAULT_CHECK_RUN_NAME,
+  DEFAULT_RUNNER_CHECK_NAME,
+  GITHUB_ACTIONS_APP_ID,
   DEFAULT_REQUIRED_CHECK_POLICY,
 } from '../paperclip-checker.mjs';
 import {
@@ -1761,4 +1764,224 @@ test('upsertCheckRun: in_progress (no conclusion) omits the conclusion field ent
   });
   assert.equal(captured.status, 'in_progress');
   assert.ok(!('conclusion' in captured), 'conclusion must be omitted for in_progress');
+});
+
+// ── Two-key model: the RUNNER key (paperclip-checker-runner) ─────────────────
+// A SECOND required check published on the exact head with the DEFAULT token
+// (github-actions app id 15368) — an independent failure domain from the App key.
+// It mirrors the FINAL outcome and, for a non-approval, MUST revoke a standing
+// runner success or report not-landed so main() fails closed to exit 1.
+
+test('two-key: runner key name/app id are stable, distinct from the App key, and app-id-pinned', () => {
+  assert.equal(DEFAULT_RUNNER_CHECK_NAME, 'paperclip-checker-runner');
+  assert.equal(GITHUB_ACTIONS_APP_ID, 15368);
+  assert.notEqual(DEFAULT_RUNNER_CHECK_NAME, DEFAULT_CHECK_RUN_NAME);
+});
+
+test('two-key: findAppCheckRun selects the runner key by name AND github-actions app id, ignoring the App key and same-named spoofs', () => {
+  const runs = [
+    { name: DEFAULT_CHECK_RUN_NAME, conclusion: 'success', head_sha: HEAD, app: { id: 4372695 } },
+    { name: DEFAULT_RUNNER_CHECK_NAME, conclusion: 'success', head_sha: HEAD, app: { id: 12345 } }, // spoof from another app
+    { name: DEFAULT_RUNNER_CHECK_NAME, conclusion: 'failure', head_sha: HEAD, app: { id: GITHUB_ACTIONS_APP_ID }, completed_at: '2024-01-01T00:00:00Z' },
+    { name: DEFAULT_RUNNER_CHECK_NAME, conclusion: 'success', head_sha: HEAD, app: { id: GITHUB_ACTIONS_APP_ID }, completed_at: '2024-02-01T00:00:00Z' },
+  ];
+  const found = findAppCheckRun(runs, DEFAULT_RUNNER_CHECK_NAME, GITHUB_ACTIONS_APP_ID);
+  assert.ok(found);
+  assert.equal(found.app.id, GITHUB_ACTIONS_APP_ID);
+  assert.equal(found.conclusion, 'success'); // most recent AUTHENTIC runner run wins
+});
+
+test('publishRunnerCheck: approved → success published on the exact head (landed, single write, correct binding)', async () => {
+  const writes = [];
+  const res = await publishRunnerCheck({
+    ghFetch: async () => {}, token: 'read', repo: 'o/r', headSha: HEAD,
+    existingRunnerCheck: null, status: 'approved', reasons: ['ok'],
+    upsert: async (_g, _t, _r, sha, opts) => { writes.push({ sha, ...opts }); return { id: 1 }; },
+  });
+  assert.equal(res.landed, true);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].name, DEFAULT_RUNNER_CHECK_NAME);
+  assert.equal(writes[0].sha, HEAD);
+  assert.equal(writes[0].status, 'completed');
+  assert.equal(writes[0].conclusion, 'success');
+});
+
+test('publishRunnerCheck: approved but success publish fails → NOT landed (no green runner key; main fails closed) + no raw body leak', async () => {
+  const res = await publishRunnerCheck({
+    ghFetch: async () => {}, token: 'read', repo: 'o/r', headSha: HEAD,
+    existingRunnerCheck: null, status: 'approved', reasons: ['ok'],
+    upsert: async () => { const e = new Error('SECRET body {token:abc}'); e.statusCode = 503; throw e; },
+  });
+  assert.equal(res.landed, false);
+  assert.match(res.error, /HTTP 503/);
+  assert.doesNotMatch(res.error, /SECRET body|token:abc/);
+});
+
+test('publishRunnerCheck: approved + existing runner success at head → single in-place PATCH (idempotent duplicate run)', async () => {
+  const writes = [];
+  const res = await publishRunnerCheck({
+    ghFetch: async () => {}, token: 'read', repo: 'o/r', headSha: HEAD,
+    existingRunnerCheck: { id: 909, conclusion: 'success', head_sha: HEAD, app: { id: GITHUB_ACTIONS_APP_ID } },
+    status: 'approved', reasons: ['ok'],
+    upsert: async (_g, _t, _r, _sha, opts) => { writes.push(opts); return { id: opts.existingId }; },
+  });
+  assert.equal(res.landed, true);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].existingId, 909);
+  assert.equal(writes[0].conclusion, 'success');
+});
+
+for (const status of ['rejected', 'blocked', 'pending']) {
+  test(`publishRunnerCheck: ${status} + NO standing runner success → best-effort publish, landed even on write error (absence already fails closed)`, async () => {
+    let writes = 0;
+    const res = await publishRunnerCheck({
+      ghFetch: async () => {}, token: 'read', repo: 'o/r', headSha: HEAD,
+      existingRunnerCheck: null, status, reasons: [status],
+      upsert: async (_g, _t, _r, _sha, opts) => { writes += 1; assert.notEqual(opts.conclusion, 'neutral'); throw new Error('down'); },
+    });
+    assert.equal(res.landed, true);
+    assert.equal(writes, 1);
+  });
+
+  test(`publishRunnerCheck: ${status} + standing runner success at head → mandatory in-place PATCH revoke lands`, async () => {
+    const writes = [];
+    const res = await publishRunnerCheck({
+      ghFetch: async () => {}, token: 'read', repo: 'o/r', headSha: HEAD,
+      existingRunnerCheck: { id: 909, conclusion: 'success', head_sha: HEAD, app: { id: GITHUB_ACTIONS_APP_ID } },
+      status, reasons: [status],
+      upsert: async (_g, _t, _r, _sha, opts) => { writes.push(opts); return { id: opts.existingId ?? 1 }; },
+    });
+    assert.equal(res.landed, true);
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].existingId, 909);
+    assert.notEqual(writes[0].conclusion, 'neutral');
+  });
+
+  test(`publishRunnerCheck: ${status} + standing runner success + PATCH fails → latest-wins supersede POST lands`, async () => {
+    const writes = [];
+    const res = await publishRunnerCheck({
+      ghFetch: async () => {}, token: 'read', repo: 'o/r', headSha: HEAD,
+      existingRunnerCheck: { id: 909, conclusion: 'success', head_sha: HEAD, app: { id: GITHUB_ACTIONS_APP_ID } },
+      status, reasons: [status],
+      upsert: async (_g, _t, _r, _sha, opts) => { writes.push(opts); if (writes.length === 1) throw new Error('patch fail'); return { id: 2 }; },
+    });
+    assert.equal(res.landed, true);
+    assert.equal(writes.length, 2);
+    assert.equal(writes[0].existingId, 909); // PATCH in place
+    assert.equal(writes[1].existingId, undefined); // POST supersede (latest-wins)
+  });
+
+  test(`two-key adversarial: ${status} + standing runner success + BOTH runner writes fail → NOT landed → main fails closed to exit 1`, async () => {
+    let writes = 0;
+    const res = await publishRunnerCheck({
+      ghFetch: async () => {}, token: 'read', repo: 'o/r', headSha: HEAD,
+      existingRunnerCheck: { id: 909, conclusion: 'success', head_sha: HEAD, app: { id: GITHUB_ACTIONS_APP_ID } },
+      status, reasons: [status],
+      upsert: async () => { writes += 1; const e = new Error('leak {token}'); e.statusCode = 500; throw e; },
+    });
+    assert.equal(res.landed, false);
+    assert.equal(writes, 2); // tried in-place PATCH AND latest-wins POST
+    assert.match(res.error, /HTTP 500/);
+    assert.doesNotMatch(res.error, /leak|token/);
+  });
+}
+
+test('publishRunnerCheck: standing runner success at a DIFFERENT head is not force-revoked (best-effort, single attempt)', async () => {
+  let writes = 0;
+  const res = await publishRunnerCheck({
+    ghFetch: async () => {}, token: 'read', repo: 'o/r', headSha: HEAD,
+    existingRunnerCheck: { id: 909, conclusion: 'success', head_sha: OTHER, app: { id: GITHUB_ACTIONS_APP_ID } },
+    status: 'rejected', reasons: ['r'],
+    upsert: async () => { writes += 1; throw new Error('down'); },
+  });
+  assert.equal(res.landed, true); // not mandatory: the stale success is not at THIS head
+  assert.equal(writes, 1); // single best-effort attempt, not the 2-write mandatory revoke
+});
+
+test('two-key independence: App key both-writes-fail (executeDecision → blocked) still yields a runner FAILURE via the default token', async () => {
+  // Model the residual the review flagged: executeDecision fails closed to
+  // `blocked` because BOTH App-token writes failed and a stale App success may
+  // survive. main() then publishes the RUNNER key with the DEFAULT token — a
+  // separate failure domain — so protection blocks despite the stale App green.
+  const writes = [];
+  const res = await publishRunnerCheck({
+    ghFetch: async () => {}, token: 'read', repo: 'o/r', headSha: HEAD,
+    existingRunnerCheck: null, // no prior runner success at this head
+    status: 'blocked', reasons: ['App key revocation could not land'],
+    upsert: async (_g, _t, _r, _sha, opts) => { writes.push(opts); return { id: 3 }; },
+  });
+  assert.equal(res.landed, true);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].name, DEFAULT_RUNNER_CHECK_NAME);
+  assert.equal(writes[0].status, 'completed');
+  assert.equal(writes[0].conclusion, 'failure'); // independent red key blocks the merge
+});
+
+// ── Two-key wiring: workflow permissions/job, config policy ──────────────────
+
+test('workflow: default GITHUB_TOKEN is granted checks:write to publish the runner key', () => {
+  const wfPath = fileURLToPath(new URL('../../workflows/paperclip-checker.yml', import.meta.url));
+  const wf = readFileSync(wfPath, 'utf8');
+  const start = wf.split('\n').findIndex(l => /^permissions:\s*$/.test(l));
+  assert.ok(start !== -1, 'workflow must declare a top-level permissions block');
+  const lines = wf.split('\n');
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (/^\S/.test(lines[i])) { end = i; break; }
+  }
+  const block = lines.slice(start, end).join('\n');
+  assert.match(block, /^\s*checks:\s*write\s*$/m);
+});
+
+test('workflow: runner job DISPLAY name is distinct from BOTH required contexts (app key AND runner key)', () => {
+  const wfPath = fileURLToPath(new URL('../../workflows/paperclip-checker.yml', import.meta.url));
+  const lines = readFileSync(wfPath, 'utf8').split('\n');
+  const start = lines.findIndex(l => /^ {2}checker:\s*$/.test(l));
+  assert.ok(start !== -1);
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (/^ {2}\S/.test(lines[i])) { end = i; break; }
+  }
+  const block = lines.slice(start, end).join('\n');
+  const jobName = block.match(/^ {4}name:\s*(.+?)\s*$/m)[1].trim();
+  assert.equal(jobName, 'paperclip-checker (runner)');
+  assert.notEqual(jobName, DEFAULT_CHECK_RUN_NAME);
+  assert.notEqual(jobName, DEFAULT_RUNNER_CHECK_NAME);
+});
+
+test('workflow: enabled job is NEVER skipped for fork/author — only the enable variable (+ workflow_run conclusion) gate it', () => {
+  const wfPath = fileURLToPath(new URL('../../workflows/paperclip-checker.yml', import.meta.url));
+  const lines = readFileSync(wfPath, 'utf8').split('\n');
+  const start = lines.findIndex(l => /^ {2}checker:\s*$/.test(l));
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (/^ {2}\S/.test(lines[i])) { end = i; break; }
+  }
+  const block = lines.slice(start, end).join('\n');
+  const ifIdx = block.split('\n').findIndex(l => /^ {4}if:/.test(l));
+  assert.ok(ifIdx !== -1, 'checker job must declare an if: guard');
+  // The guard gates only on the activation variable (+ a concluded workflow_run),
+  // so an enabled steady-state job always RUNS and publishes both keys — it is
+  // never skipped for forks or specific authors (which would leave a required
+  // context perpetually pending and block/allow merges incorrectly).
+  assert.match(block, /vars\.PAPERCLIP_CHECKER_ENABLED == 'true'/);
+  assert.doesNotMatch(block, /if:[\s\S]*?(fork|head\.repo|pull_request\.user)/);
+});
+
+test('config: committed policy pins the runner key name (paperclip-checker-runner) alongside the App key', () => {
+  const cfgPath = fileURLToPath(new URL('../../paperclip-checker.config.json', import.meta.url));
+  const cfg = JSON.parse(readFileSync(cfgPath, 'utf8'));
+  assert.equal(cfg.appCheckName, 'paperclip-checker/app');
+  assert.equal(cfg.runnerCheckName, 'paperclip-checker-runner');
+});
+
+test('loadCheckerPolicy: committed config yields runnerCheckName; default fallback also provides it', () => {
+  const fake = JSON.stringify({
+    appSlug: 'x[bot]', appCheckName: 'paperclip-checker/app', runnerCheckName: 'paperclip-checker-runner',
+    requiredChecks: [{ name: 'verify', type: 'check_run', appSlug: 'github-actions', appId: 15368 }],
+  });
+  const p = loadCheckerPolicy({ CHECKER_CONFIG_PATH: '/whatever.json' }, () => fake);
+  assert.equal(p.runnerCheckName, 'paperclip-checker-runner');
+  const d = loadCheckerPolicy({}, () => { throw new Error('ENOENT'); });
+  assert.equal(d.runnerCheckName, DEFAULT_RUNNER_CHECK_NAME);
 });
