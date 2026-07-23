@@ -9752,18 +9752,36 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           contextSnapshot: promotedContextSnapshot,
           wakeCommentId: deferredCommentIds.at(-1) ?? null,
           requestedByActorType: deferred.requestedByActorType,
-        }) && isWithinIssueAutomationWakeCooldown(run.finishedAt ?? run.updatedAt)) {
-          await tx
-            .update(agentWakeupRequests)
-            .set({
-              status: "skipped",
-              reason: "issue_automation_cooldown",
-              finishedAt: new Date(),
-              error: "Deferred automation wake suppressed by the post-terminal issue cooldown",
-              updatedAt: new Date(),
+        })) {
+          const latestPriorTerminalRun = await tx
+            .select({
+              finishedAt: heartbeatRuns.finishedAt,
+              updatedAt: heartbeatRuns.updatedAt,
             })
-            .where(eq(agentWakeupRequests.id, deferred.id));
-          continue;
+            .from(heartbeatRuns)
+            .where(and(
+              eq(heartbeatRuns.companyId, issue.companyId),
+              inArray(heartbeatRuns.status, [...HEARTBEAT_RUN_TERMINAL_STATUSES]),
+              sql`${heartbeatRuns.id} <> ${run.id}`,
+              sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issue.id}`,
+            ))
+            .orderBy(desc(sql`coalesce(${heartbeatRuns.finishedAt}, ${heartbeatRuns.updatedAt}, ${heartbeatRuns.createdAt})`))
+            .limit(1)
+            .then((rows) => rows[0] ?? null);
+          const priorTerminalAt = latestPriorTerminalRun?.finishedAt ?? latestPriorTerminalRun?.updatedAt;
+          if (isWithinIssueAutomationWakeCooldown(priorTerminalAt)) {
+            await tx
+              .update(agentWakeupRequests)
+              .set({
+                status: "skipped",
+                reason: "issue_automation_cooldown",
+                finishedAt: new Date(),
+                error: "Deferred automation wake suppressed by the post-terminal issue cooldown",
+                updatedAt: new Date(),
+              })
+              .where(eq(agentWakeupRequests.id, deferred.id));
+            continue;
+          }
         }
 
         const sessionBefore =
@@ -9772,6 +9790,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         const promotedContinuationAttempt = readContinuationAttempt(
           promotedContextSnapshot.livenessContinuationAttempt,
         );
+
         const now = new Date();
         const newRun = await tx
           .insert(heartbeatRuns)
