@@ -527,6 +527,22 @@ test('resolvePrNumberForSha: malformed sha → null (no network)', async () => {
   assert.equal(n, null);
 });
 
+test('resolvePrNumberForSha: ambiguous — multiple open same-repo PRs share the head SHA → null (fail closed)', async () => {
+  const gh = async () => [
+    { number: 42, state: 'open', head: { sha: HEAD, repo: { full_name: 'paperclipai/paperclip' } }, base: { repo: { full_name: 'paperclipai/paperclip' } } },
+    { number: 43, state: 'open', head: { sha: HEAD, repo: { full_name: 'paperclipai/paperclip' } }, base: { repo: { full_name: 'paperclipai/paperclip' } } },
+  ];
+  const n = await resolvePrNumberForSha(gh, 'tok', 'paperclipai/paperclip', HEAD);
+  assert.equal(n, null);
+});
+
+test('resolvePrNumberForSha: same PR listed twice still resolves (unique candidate)', async () => {
+  const pr = { number: 42, state: 'open', head: { sha: HEAD, repo: { full_name: 'paperclipai/paperclip' } }, base: { repo: { full_name: 'paperclipai/paperclip' } } };
+  const gh = async () => [pr, pr];
+  const n = await resolvePrNumberForSha(gh, 'tok', 'paperclipai/paperclip', HEAD);
+  assert.equal(n, 42);
+});
+
 // ── sanitizeError: never leak raw API bodies ────────────────────────────────
 
 test('sanitizeError: surfaces only HTTP status, not body', () => {
@@ -769,7 +785,18 @@ test('workflow: checkout pins the repository default branch, never the PR-select
 test('workflow: checker job pins the check name to the documented paperclip-checker label', () => {
   const wfPath = fileURLToPath(new URL('../../workflows/paperclip-checker.yml', import.meta.url));
   const wf = readFileSync(wfPath, 'utf8');
+  const lines = wf.split('\n');
+  // Scope to the `jobs.checker` block specifically: from its 2-space-indented
+  // `checker:` header to the next job (another 2-space-indented `key:`). A
+  // whole-file match could be satisfied by some other job's name.
+  const start = lines.findIndex(l => /^ {2}checker:\s*$/.test(l));
+  assert.ok(start !== -1, 'workflow must define a jobs.checker block');
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (/^ {2}\S/.test(lines[i])) { end = i; break; }
+  }
+  const checkerBlock = lines.slice(start, end).join('\n');
   // The emitted check-run name must be `paperclip-checker` (the label the
   // runbook/branch-protection reference), not the bare job id `checker`.
-  assert.match(wf, /^\s{4}name:\s*paperclip-checker\s*$/m);
+  assert.match(checkerBlock, /^ {4}name:\s*paperclip-checker\s*$/m);
 });

@@ -394,17 +394,26 @@ export function findApprovedAppReview(reviews, appSlug = DEFAULT_APP_SLUG) {
  * Resolve the OPEN, same-repo PR whose head is exactly `sha`. Used by the
  * workflow_run trigger (which lacks PR context). Returns the PR number or null.
  * Fork PRs (head repo != base repo) are ignored here and rejected downstream.
+ *
+ * Fail closed on ambiguity: GitHub's commits/{sha}/pulls can list several open
+ * same-repo PRs when multiple branches point at the same commit. Approving is a
+ * per-PR-number action, so guessing risks classifying one PR's diff and posting
+ * the App approval on a different PR. If more than one candidate matches, return
+ * null (no-op); each such PR is still evaluated with real context via its own
+ * pull_request_target events.
  */
 export async function resolvePrNumberForSha(ghFetch, token, repo, sha) {
   if (!SHA_RE.test(String(sha ?? ''))) return null;
   const prs = await ghFetch(`/repos/${repo}/commits/${sha}/pulls`, token);
+  const matches = [];
   for (const pr of Array.isArray(prs) ? prs : []) {
     if (pr?.state !== 'open') continue;
     if (String(pr?.head?.sha ?? '').toLowerCase() !== String(sha).toLowerCase()) continue;
     if (pr?.head?.repo?.full_name && pr?.base?.repo?.full_name && pr.head.repo.full_name !== pr.base.repo.full_name) continue;
-    return pr.number;
+    matches.push(pr.number);
   }
-  return null;
+  const unique = [...new Set(matches)];
+  return unique.length === 1 ? unique[0] : null;
 }
 
 async function gatherInputs(ghFetch, token, repo, prNumber) {
