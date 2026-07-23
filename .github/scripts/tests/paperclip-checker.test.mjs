@@ -267,6 +267,73 @@ test('evaluateChecker: App is head-commit author → rejected (own commit)', () 
   assert.match(r.reasons.join(' '), /head-commit author/);
 });
 
+// ── real bound identity: solidus-paperclip-checker[bot] never self-approves ─
+// These pin the LITERAL production identity (App `solidus-paperclip-checker`,
+// App ID 4372695 → bot login `solidus-paperclip-checker[bot]`) so a future slug
+// change cannot silently re-open a self-approval path.
+
+const REAL_APP = 'solidus-paperclip-checker[bot]';
+
+test('bound identity: DEFAULT_APP_SLUG is the real solidus-paperclip-checker[bot]', () => {
+  assert.equal(DEFAULT_APP_SLUG, REAL_APP);
+});
+
+test('bound identity: committed config binds appSlug to solidus-paperclip-checker[bot]', () => {
+  // Uses the real base-branch config file (default path), no env override.
+  const p = loadCheckerPolicy({});
+  assert.equal(p.appSlug, REAL_APP);
+});
+
+for (const login of [REAL_APP, 'solidus-paperclip-checker', 'Solidus-Paperclip-Checker[BOT]']) {
+  test(`bound identity: real App as PR author (${login}) → never approved`, () => {
+    const r = evalGreen({ appSlug: REAL_APP, pr: greenPr({ user: { login } }) });
+    assert.notEqual(r.decision, 'approved');
+    assert.equal(r.decision, 'rejected');
+    assert.match(r.reasons.join(' '), /PR author/);
+  });
+
+  test(`bound identity: real App as last pusher (${login}) → never approved`, () => {
+    const r = evalGreen({ appSlug: REAL_APP, lastPusherLogin: login });
+    assert.notEqual(r.decision, 'approved');
+    assert.equal(r.decision, 'rejected');
+    assert.match(r.reasons.join(' '), /last pusher/);
+  });
+
+  test(`bound identity: real App as head-commit author (${login}) → never approved`, () => {
+    const r = evalGreen({ appSlug: REAL_APP, headCommitAuthorLogin: login });
+    assert.notEqual(r.decision, 'approved');
+    assert.equal(r.decision, 'rejected');
+    assert.match(r.reasons.join(' '), /head-commit author/);
+  });
+}
+
+test('bound identity: real App author+pusher+committer simultaneously → rejected (all reasons)', () => {
+  const r = evalGreen({
+    appSlug: REAL_APP,
+    pr: greenPr({ user: { login: REAL_APP } }),
+    lastPusherLogin: REAL_APP,
+    headCommitAuthorLogin: REAL_APP,
+  });
+  assert.equal(r.decision, 'rejected');
+  const joined = r.reasons.join(' ');
+  assert.match(joined, /PR author/);
+  assert.match(joined, /last pusher/);
+  assert.match(joined, /head-commit author/);
+});
+
+test('bound identity (mocked e2e): PR authored+committed by real App is rejected', async () => {
+  const result = await drive({
+    pr: greenPr({ user: { login: REAL_APP } }),
+    files: [{ filename: 'server/src/services/cursor.ts', additions: 4, deletions: 1, changes: 5 }],
+    checkRuns: greenChecks(),
+    statuses: [],
+    reviews: [],
+    headCommit: { author: { login: REAL_APP }, committer: { login: REAL_APP } },
+  });
+  assert.equal(result.decision, 'rejected');
+  assert.match(result.reasons.join(' '), /PR author|last pusher|head-commit author/);
+});
+
 // ── evaluateChecker: stale / mismatched head SHA ────────────────────────────
 
 test('evaluateChecker: stale head SHA (new push after evidence) → rejected', () => {

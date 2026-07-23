@@ -43,7 +43,13 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { classifyPrRiskLane, LANES } from './classify-pr-risk-lane.mjs';
 
-export const DEFAULT_APP_SLUG = 'paperclip-checker[bot]';
+// The checker's OWN bot identity. The real GitHub App is
+// `solidus-paperclip-checker` (App ID 4372695); its bot login is therefore
+// `solidus-paperclip-checker[bot]`. This slug is what separation-of-duties
+// compares the PR author / last pusher / head-commit author against, so the App
+// can never approve a PR it authored, pushed, or committed. Overridable by the
+// committed config file's top-level `appSlug`.
+export const DEFAULT_APP_SLUG = 'solidus-paperclip-checker[bot]';
 
 // Default producer-bound policy. Each required check is pinned to the app that
 // is expected to produce it; a same-named check-run/status from any other app

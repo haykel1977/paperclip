@@ -38,7 +38,12 @@ dismiss — its single capability is writing its own review.
 
 It is intentionally a **separate identity** from commitperclip so its approval
 is attributable and can satisfy a branch-protection "last push was not by the
-approver" rule.
+approver" rule. The bound identity is the GitHub App **`solidus-paperclip-checker`**
+(App ID **4372695**), whose bot login is **`solidus-paperclip-checker[bot]`**.
+Separation of duties compares this login against the PR author, last pusher, and
+head-commit author, so the App can **never** approve a PR it authored, pushed, or
+committed. The identity is pinned in code (`DEFAULT_APP_SLUG`) and in the
+committed policy file's top-level `appSlug`.
 
 ### Producer binding
 
