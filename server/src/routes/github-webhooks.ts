@@ -53,10 +53,10 @@ export type GitHubWebhookDependencies = {
     repository: string;
     pullRequestNumber: number | null;
     pullRequestUrl: string | null;
-
     mergeCommitSha: string | null;
     deliveryId: string | null;
     cancelledRunIds: string[];
+
     changed: boolean;
   }): Promise<void>;
 };

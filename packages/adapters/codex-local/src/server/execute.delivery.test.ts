@@ -228,10 +228,38 @@ describe("executeDeliveryHook", () => {
     expect(calls.some((call) => call[0] === "gh")).toBe(false);
   });
 
+  it("blocks autonomous delivery without an immutable issue id", async () => {
+    const worktreeCwd = mkWorktree();
+    const calls: string[][] = [];
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const result = await executeDeliveryHook({
+      ...base,
+      issueId: null,
+      worktreeCwd,
+      env: {
+        PAPERCLIP_AUTONOMOUS_DELIVERY: "1",
+        PAPERCLIP_DELIVERY_BOT_TOKEN: "bot-token",
+      },
+      runProc,
+    });
+
+    expect(result.reason).toBe("delivery_blocked: missing immutable issue id");
+    expect(calls.some((call) => call[0] === "git" && call[1] === "commit")).toBe(false);
+    expect(calls.some((call) => call[0] === "git" && call[1] === "push")).toBe(false);
+    expect(calls.some((call) => call[0] === "gh")).toBe(false);
+  });
+
   it("flag ON + gate vert -> PR Quantum truth-first avec token bot et commit signé", async () => {
     const worktreeCwd = mkWorktree();
     const calls: string[][] = [];
     const envCalls: Array<{ cmd: string; args: string[]; env: Record<string, string> }> = [];
+
     const runProc = vi.fn(async (cmd: string, args: string[], _cwd: string, callEnv: Record<string, string>) => {
       calls.push([cmd, ...args]);
       envCalls.push({ cmd, args, env: callEnv });

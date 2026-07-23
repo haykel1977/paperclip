@@ -143,11 +143,24 @@ describe("GitHub delivery webhook", () => {
     expect(dependencies.markIssueDone).not.toHaveBeenCalled();
   });
 
+  it("does not authorize repositories by URL prefix", async () => {
+    const dependencies = createDependencies({
+      listTrustedRepositoryUrls: vi.fn(async () => ["https://github.com/Beyn-SOLIDUS/quantum-extra.git"]),
+    });
+    const response = await postWebhook(createApp(dependencies), payload());
+
+    expect(response.status).toBe(403);
+    expect(dependencies.listActiveRuns).not.toHaveBeenCalled();
+    expect(dependencies.cancelRun).not.toHaveBeenCalled();
+    expect(dependencies.markIssueDone).not.toHaveBeenCalled();
+  });
+
   it("fails closed when the issue has no trusted repository binding", async () => {
     const dependencies = createDependencies({ listTrustedRepositoryUrls: vi.fn(async () => []) });
     const response = await postWebhook(createApp(dependencies), payload());
 
     expect(response.status).toBe(409);
+
     expect(dependencies.cancelRun).not.toHaveBeenCalled();
     expect(dependencies.markIssueDone).not.toHaveBeenCalled();
   });

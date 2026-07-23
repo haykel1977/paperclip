@@ -252,15 +252,14 @@ const ISSUE_AUTOMATION_WAKE_COOLDOWN_EXEMPT_REASONS = new Set([
 ]);
 
 export function shouldEnforceIssueAutomationWakeCooldown(input: {
-
   source: string;
   contextSnapshot: Record<string, unknown> | null | undefined;
   wakeCommentId: string | null;
   requestedByActorType?: string | null;
 }) {
-
   if (input.source !== "automation" && input.source !== "timer") return false;
   if (input.requestedByActorType === "user" || input.wakeCommentId) return false;
+
   const wakeReason = readNonEmptyString(input.contextSnapshot?.wakeReason);
   if (!wakeReason) return true;
   if (wakeReason.startsWith("recovery_") || wakeReason.startsWith("source_scoped_recovery")) return false;

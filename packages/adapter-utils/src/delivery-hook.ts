@@ -125,12 +125,12 @@ function buildFallbackDeliveryBranch(input: {
   return sanitizeDeliveryBranchName(`paperclip/${issueRef}-${runSuffix}`);
 }
 
-function buildCanonicalIssueDeliveryBranch(issueIdentifier: string | null, issueId: string | null): string | null {
-  const immutableIssueRef = issueId ?? issueIdentifier;
-  return immutableIssueRef ? sanitizeDeliveryBranchName(`paperclip/${immutableIssueRef}-delivery`) : null;
+function buildCanonicalIssueDeliveryBranch(issueId: string): string {
+  return sanitizeDeliveryBranchName(`paperclip/${issueId}-delivery`);
 }
 
 function isGitBranchAlreadyExistsError(stderr: string): boolean {
+
   const normalized = stderr.toLowerCase();
   return normalized.includes("already exists") || normalized.includes("a branch named") || normalized.includes("cannot create branch");
 }
@@ -886,11 +886,16 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="missing bot token"\n`);
     return { delivered: false, prUrl: null, reason: "delivery_blocked: missing bot token" };
   }
+  if (autonomousDelivery && !input.issueId?.trim()) {
+    await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="missing immutable issue id"\n`);
+    return { delivered: false, prUrl: null, reason: "delivery_blocked: missing immutable issue id" };
+  }
 
   const deliveryCommandEnv = deliveryBotToken ? { ...env, GH_TOKEN: deliveryBotToken } : env;
 
   // ── 3. idempotency: check for existing PR BEFORE committing ──────────────
   const existingPrUrl = await findExistingPr({ repo: input.repo, branch, worktreeCwd, env: deliveryCommandEnv, runProc });
+
   if (existingPrUrl) {
     // Reconcile labels on the already-open PR (non-fatal)
     const existingLabels = await fetchRepoLabels({ repo: input.repo, worktreeCwd, env: deliveryCommandEnv, log, ts, runProc });
@@ -947,10 +952,11 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
   }
 
   const canonicalIssueBranch = autonomousDelivery
-    ? buildCanonicalIssueDeliveryBranch(input.issueIdentifier, input.issueId)
+    ? buildCanonicalIssueDeliveryBranch(input.issueId!)
     : null;
   if (canonicalIssueBranch && branch !== canonicalIssueBranch) {
     const canonicalCheckout = await checkoutNewOrExistingBranch({
+
       branch: canonicalIssueBranch,
       worktreeCwd,
       env,

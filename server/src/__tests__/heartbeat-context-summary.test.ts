@@ -280,8 +280,17 @@ describe("shouldEnforceIssueAutomationWakeCooldown", () => {
     })).toBe(false);
     for (const wakeReason of [
       "issue_assigned",
+      "issue_assignment_recovery",
       "issue_blockers_resolved",
+      "issue_comment_mentioned",
+      "issue_continuation_needed",
       "execution_review_requested",
+      "execution_approval_requested",
+      "execution_changes_requested",
+      "transient_failure_retry",
+      "max_turns_continuation_retry",
+      "run_liveness_continuation",
+      "finish_successful_run_handoff",
     ]) {
       expect(shouldEnforceIssueAutomationWakeCooldown({
         source: "automation",
@@ -289,17 +298,6 @@ describe("shouldEnforceIssueAutomationWakeCooldown", () => {
         wakeCommentId: null,
       })).toBe(false);
     }
-    expect(shouldEnforceIssueAutomationWakeCooldown({
-      source: "automation",
-      contextSnapshot: { wakeReason: "transient_failure_retry" },
-      wakeCommentId: null,
-    })).toBe(false);
-
-    expect(shouldEnforceIssueAutomationWakeCooldown({
-      source: "automation",
-      contextSnapshot: { wakeReason: "finish_successful_run_handoff" },
-      wakeCommentId: null,
-    })).toBe(false);
     expect(shouldEnforceIssueAutomationWakeCooldown({
       source: "automation",
       contextSnapshot: { wakeReason: "recovery_workspace_validation" },
