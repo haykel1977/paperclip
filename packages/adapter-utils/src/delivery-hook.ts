@@ -336,7 +336,6 @@ type ExistingIssuePrLookup =
   | { ok: false; reason: string };
 
 function hasExactIssueReference(input: {
-
   body: string;
   title: string;
   idempotencyKey: string;
@@ -344,6 +343,7 @@ function hasExactIssueReference(input: {
   issueId: string | null;
 }) {
   const bodyLines = input.body.split(/\r?\n/).map((line) => line.trim().toLowerCase());
+
   if (bodyLines.includes(`- idempotency key: ${input.idempotencyKey}`.toLowerCase())) return true;
   if (input.issueId && input.body.includes(`(${input.issueId})`)) return true;
   if (!input.issueIdentifier) return false;
@@ -361,11 +361,11 @@ async function findExistingPrForIssue(input: {
   env: Record<string, string>;
   runProc: DeliveryHookRunProcess;
 }): Promise<ExistingIssuePrLookup> {
-
   const searchTerm = input.issueIdentifier ?? input.issueId;
   if (!searchTerm) return { ok: true, pr: null };
 
   const result = await input.runProc(
+
     "gh",
     [
       "pr",
@@ -384,13 +384,13 @@ async function findExistingPrForIssue(input: {
     input.worktreeCwd,
     input.env,
   );
-
   if (result.exitCode !== 0) {
     return { ok: false, reason: firstNonEmptyLine(result.stderr) || "GitHub PR lookup failed" };
   }
   if (!result.stdout.trim()) return { ok: true, pr: null };
 
   let rows: Array<{
+
     url?: unknown;
     state?: unknown;
     mergedAt?: unknown;
@@ -402,7 +402,6 @@ async function findExistingPrForIssue(input: {
   }>;
   try {
     const parsed = JSON.parse(result.stdout) as unknown;
-
     if (!Array.isArray(parsed)) return { ok: false, reason: "GitHub PR lookup returned a non-array payload" };
     rows = parsed;
   } catch {
@@ -427,11 +426,11 @@ async function findExistingPrForIssue(input: {
       issueIdentifier: input.issueIdentifier,
       issueId: input.issueId,
     })) return [];
-
     return [{
       url,
       state: merged ? "MERGED" : open ? "OPEN" : "CLOSED",
       mergeCommitOid:
+
         merged && row.mergeCommit && typeof row.mergeCommit.oid === "string"
           ? row.mergeCommit.oid
           : null,
@@ -448,12 +447,12 @@ async function findExistingPrForIssue(input: {
 }
 
 async function verifyMergedPrOnBase(input: {
-
   repo: string;
   baseBranch: string;
   pr: ExistingIssuePr;
   worktreeCwd: string;
   env: Record<string, string>;
+
   runProc: DeliveryHookRunProcess;
 }): Promise<boolean> {
   if (input.pr.state !== "MERGED" || !input.pr.mergeCommitOid) return false;
@@ -932,11 +931,11 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     runProc,
   });
   if (!issuePrLookup.ok) {
-
     await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="issue_pr_lookup_failed" detail="${issuePrLookup.reason}"\n`);
     return { delivered: false, prUrl: null, reason: "delivery_blocked: issue PR lookup failed" };
   }
   if (issuePrLookup.pr?.state === "OPEN") {
+
     await log("stdout", `[delivery ${ts()}] result=pr_exists issue_key=${buildIssueDeliveryKey(input.repo, input.issueIdentifier, input.issueId)} pr_url=${issuePrLookup.pr.url}\n`);
     return { delivered: true, prUrl: issuePrLookup.pr.url, reason: "pr_exists" };
   }
@@ -970,10 +969,10 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
   }
 
   const canonicalIssueBranch = autonomousDelivery
-
     ? buildCanonicalIssueDeliveryBranch(input.issueIdentifier, input.issueId)
     : null;
   if (canonicalIssueBranch && branch !== canonicalIssueBranch) {
+
     const canonicalCheckout = await checkoutNewOrExistingBranch({
       branch: canonicalIssueBranch,
       worktreeCwd,
