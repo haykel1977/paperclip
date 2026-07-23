@@ -264,6 +264,7 @@ export function evaluateChecker({
   headCommitAuthorLogin = '',
   lastPusherLogin = '',
   existingAppReview = null,
+  defaultBranch = 'main',
 } = {}) {
   if (!config?.active) {
     return {
@@ -298,6 +299,26 @@ export function evaluateChecker({
   const reasons = [];
 
   if (pr?.draft) reasons.push('Draft PR is never approved.');
+
+  // Only OPEN PRs are eligible. A pull_request_target job can be queued and then
+  // run after the PR is closed/merged; approving then is meaningless at best and
+  // could re-open an approval race at worst. Mirrors automerge's `state === 'open'`
+  // gate. Strict equality fails closed on a missing/unknown state.
+  if (pr?.state !== 'open') {
+    reasons.push(`PR state is \`${pr?.state ?? 'unknown'}\`, not \`open\`; only open PRs are approved.`);
+  }
+
+  // The PR must target the protected default branch. Branch protection (and thus
+  // the required-check/anti-stale backstops the whole gate relies on) only
+  // applies to the default branch; a same-repo PR retargeted at an unprotected
+  // branch could otherwise be approved without those guarantees. Mirrors
+  // automerge's `base.ref === defaultBranch` gate. `edited` (base-branch change)
+  // is already a STALE_INDUCING_ACTION, so a mid-life retarget re-triggers here.
+  const baseRef = pr?.base?.ref;
+  if (baseRef !== defaultBranch) {
+    reasons.push(`PR base ref \`${baseRef ?? 'unknown'}\` is not the protected default branch \`${defaultBranch}\`; only ${defaultBranch}-targeted PRs are approved.`);
+  }
+
   const headRepo = pr?.head?.repo?.full_name;
   const baseRepo = pr?.base?.repo?.full_name;
   if (!headRepo || !baseRepo || headRepo !== baseRepo) {
@@ -565,6 +586,25 @@ export async function executeDecision({
       }
       return { status: 'rejected', exitCode: 1, dismissed, riskLane: result.riskLane, reasons: [`Head advanced during evaluation (now ${freshSha || 'unknown'}); refusing to approve a stale commit.`] };
     }
+    // Idempotency: a valid App approval may already stand for this exact,
+    // freshness-confirmed head (typical on a second workflow_run at the same
+    // SHA). It was NOT dismissed above (dismissStale false), so re-POSTing APPROVE
+    // is redundant — and a failed resubmit would exit `blocked` and fail the
+    // check despite a standing valid approval. Skip the resubmit; the guarantees
+    // still hold because the anti-TOCTOU re-read above already re-confirmed the
+    // head, and the standing approval targets that same commit. Only reached when
+    // the prior approval's commit_id equals the fresh head and it survived the
+    // dismiss-stale phase, so it can never mask a stale approval.
+    const priorSha = String(existingAppReview?.commit_id ?? '').trim();
+    if (existingAppReview && !dismissed && SHA_RE.test(priorSha) && priorSha.toLowerCase() === String(eventHeadSha).toLowerCase()) {
+      return {
+        status: 'approved',
+        exitCode: 0,
+        dismissed,
+        riskLane: result.riskLane,
+        reasons: [...result.reasons, `Existing App approval #${existingAppReview.id} already targets the current head; not resubmitting (idempotent).`],
+      };
+    }
     try {
       const appToken = await mint(ghFetch, config, repo);
       await approve(ghFetch, appToken, repo, prNumber, eventHeadSha);
@@ -597,6 +637,10 @@ async function main() {
   const eventName = String(process.env.EVENT_NAME ?? '').trim();
   const appSlugEnv = process.env.PAPERCLIP_CHECKER_APP_SLUG || '';
   const readToken = process.env.GH_READ_TOKEN;
+  // Protected default branch the PR must target. Sourced from the workflow's
+  // repository.default_branch (the same ref the job checks out); falls back to
+  // 'main' to fail closed on a conservative default rather than skipping the gate.
+  const defaultBranch = String(process.env.DEFAULT_BRANCH || 'main').trim() || 'main';
 
   if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(String(repo ?? ''))) {
     console.error('ERROR: GH_REPO must be owner/repo.');
@@ -663,6 +707,7 @@ async function main() {
     headCommitAuthorLogin: inputs.headCommitAuthorLogin,
     lastPusherLogin: inputs.lastPusherLogin,
     existingAppReview,
+    defaultBranch,
   });
 
   const outcome = await executeDecision({

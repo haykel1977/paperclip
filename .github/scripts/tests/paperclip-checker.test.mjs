@@ -40,6 +40,7 @@ function greenPr(overrides = {}) {
   return {
     title: 'fix(server): correct cursor anchor timestamp binding',
     draft: false,
+    state: 'open',
     user: { login: 'paperclipai[bot]' },
     labels: [],
     base: { ref: 'main', repo: { full_name: 'paperclipai/paperclip' } },
@@ -62,6 +63,7 @@ function evalGreen(overrides = {}) {
     headCommitAuthorLogin: overrides.headCommitAuthorLogin ?? 'paperclipai[bot]',
     lastPusherLogin: overrides.lastPusherLogin ?? 'paperclipai[bot]',
     existingAppReview: overrides.existingAppReview ?? null,
+    ...('defaultBranch' in overrides ? { defaultBranch: overrides.defaultBranch } : {}),
   });
 }
 
@@ -316,6 +318,62 @@ test('evaluateChecker: Dependabot touching .npmrc (non-exemptable label) → RED
   });
   assert.equal(r.decision, 'rejected', r.reasons.join('; '));
   assert.equal(r.riskLane, 'RED');
+});
+
+// ── evaluateChecker: base-ref must equal the protected default branch ────────
+
+test('evaluateChecker: PR based on a non-default branch → rejected', () => {
+  const r = evalGreen({ pr: greenPr({ base: { ref: 'develop', repo: { full_name: 'paperclipai/paperclip' } } }) });
+  assert.equal(r.decision, 'rejected');
+  assert.match(r.reasons.join(' '), /not the protected default branch/);
+});
+
+test('evaluateChecker: retarget to a same-repo feature branch → rejected (not approvable)', () => {
+  const r = evalGreen({ pr: greenPr({ base: { ref: 'feat/other', repo: { full_name: 'paperclipai/paperclip' } } }), eventAction: 'edited' });
+  assert.equal(r.decision, 'rejected');
+  assert.match(r.reasons.join(' '), /base ref .*feat\/other.*not the protected default branch/);
+});
+
+test('evaluateChecker: missing base ref → rejected (fail closed)', () => {
+  const r = evalGreen({ pr: greenPr({ base: { repo: { full_name: 'paperclipai/paperclip' } } }) });
+  assert.equal(r.decision, 'rejected');
+  assert.match(r.reasons.join(' '), /base ref .*unknown.*not the protected default branch/);
+});
+
+test('evaluateChecker: custom defaultBranch is honored — PR on that branch approves', () => {
+  const r = evalGreen({
+    pr: greenPr({ base: { ref: 'release', repo: { full_name: 'paperclipai/paperclip' } } }),
+    defaultBranch: 'release',
+  });
+  assert.equal(r.decision, 'approved', r.reasons.join('; '));
+});
+
+test('evaluateChecker: custom defaultBranch — a main-based PR is now rejected', () => {
+  const r = evalGreen({ defaultBranch: 'release' });
+  assert.equal(r.decision, 'rejected');
+  assert.match(r.reasons.join(' '), /base ref .*main.*not the protected default branch .*release/);
+});
+
+// ── evaluateChecker: only OPEN PRs are eligible ─────────────────────────────
+
+test('evaluateChecker: closed PR → rejected', () => {
+  const r = evalGreen({ pr: greenPr({ state: 'closed' }) });
+  assert.equal(r.decision, 'rejected');
+  assert.match(r.reasons.join(' '), /state is `closed`, not `open`/);
+});
+
+test('evaluateChecker: merged PR (state closed) → rejected', () => {
+  const r = evalGreen({ pr: greenPr({ state: 'closed', merged: true }) });
+  assert.equal(r.decision, 'rejected');
+  assert.match(r.reasons.join(' '), /not `open`/);
+});
+
+test('evaluateChecker: missing/unknown state → rejected (fail closed)', () => {
+  const pr = greenPr();
+  delete pr.state;
+  const r = evalGreen({ pr });
+  assert.equal(r.decision, 'rejected');
+  assert.match(r.reasons.join(' '), /state is `unknown`, not `open`/);
 });
 
 // ── evaluateChecker: identity separation of duties ──────────────────────────
@@ -1042,4 +1100,70 @@ test('executeDecision: TOCTOU dismiss failure → blocked (fail closed), still n
   // Error is sanitized to status only, never the raw body.
   assert.match(outcome.reasons.join(' '), /HTTP 403|dismissing the now-stale approval failed/);
   assert.doesNotMatch(outcome.reasons.join(' '), /403:.*\{/);
+});
+
+// ── executeDecision: idempotent re-run when a valid approval already stands ──
+
+test('executeDecision: approved + valid standing approval at current head → idempotent (no mint/approve/dismiss)', async () => {
+  const { calls, deps } = recordingDeps();
+  const outcome = await executeDecision(baseArgs({
+    // Typical second workflow_run at the same green SHA: decision approved,
+    // dismissStale false, and the App already approved this exact head.
+    result: { decision: 'approved', dismissStale: false, riskLane: 'GREEN', reasons: ['ok'] },
+    existingAppReview: { id: 42, commit_id: HEAD, state: 'APPROVED' },
+    deps,
+  }));
+  assert.equal(outcome.status, 'approved');
+  assert.equal(outcome.exitCode, 0);
+  // No resubmit: a redundant APPROVE is skipped, so a transient POST failure
+  // cannot flip a standing valid approval to blocked.
+  assert.deepEqual(calls.approve, []);
+  assert.deepEqual(calls.dismiss, []);
+  assert.equal(calls.mint, 0);
+  assert.match(outcome.reasons.join(' '), /already targets the current head; not resubmitting \(idempotent\)/);
+});
+
+test('executeDecision: idempotency STILL runs anti-TOCTOU — standing approval but head advanced → dismiss + reject', async () => {
+  const { calls, deps } = recordingDeps();
+  const outcome = await executeDecision(baseArgs({
+    // Prior approval is for eventHeadSha, but the freshness re-read shows the
+    // head advanced. Idempotency must NOT short-circuit the freshness check.
+    ghFetch: async () => ({ head: { sha: OTHER } }),
+    result: { decision: 'approved', dismissStale: false, riskLane: 'GREEN', reasons: ['ok'] },
+    existingAppReview: { id: 43, commit_id: HEAD, state: 'APPROVED' },
+    deps,
+  }));
+  assert.equal(outcome.status, 'rejected');
+  assert.equal(outcome.exitCode, 1);
+  assert.match(outcome.reasons.join(' '), /Head advanced during evaluation/);
+  assert.deepEqual(calls.dismiss, [43]);
+  assert.deepEqual(calls.approve, []);
+});
+
+test('executeDecision: no idempotent skip once the stale approval was dismissed → re-approves fresh', async () => {
+  const { calls, deps } = recordingDeps();
+  const outcome = await executeDecision(baseArgs({
+    // Stale by action (e.g. `edited`) at the SAME head: dismissed up front, so
+    // the standing approval is gone and a fresh APPROVE must be posted.
+    result: { decision: 'approved', dismissStale: true, riskLane: 'GREEN', reasons: ['ok'] },
+    existingAppReview: { id: 44, commit_id: HEAD, state: 'APPROVED' },
+    deps,
+  }));
+  assert.equal(outcome.status, 'approved');
+  assert.deepEqual(calls.dismiss, [44]);
+  assert.deepEqual(calls.approve, [HEAD]);
+});
+
+test('executeDecision: prior approval targets an OLDER commit → not idempotent, approves at fresh head', async () => {
+  const { calls, deps } = recordingDeps();
+  const outcome = await executeDecision(baseArgs({
+    // commit_id !== eventHeadSha → the standing approval is not for this head;
+    // the idempotency guard must not fire. (dismissStale left false to isolate
+    // the SHA comparison in the guard itself.)
+    result: { decision: 'approved', dismissStale: false, riskLane: 'GREEN', reasons: ['ok'] },
+    existingAppReview: { id: 45, commit_id: OTHER, state: 'APPROVED' },
+    deps,
+  }));
+  assert.equal(outcome.status, 'approved');
+  assert.deepEqual(calls.approve, [HEAD]);
 });

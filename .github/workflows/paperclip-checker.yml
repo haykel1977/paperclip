@@ -104,6 +104,10 @@ jobs:
           PAPERCLIP_CHECKER_APP_ID: ${{ secrets.PAPERCLIP_CHECKER_APP_ID }}
           PAPERCLIP_CHECKER_PRIVATE_KEY: ${{ secrets.PAPERCLIP_CHECKER_PRIVATE_KEY }}
           GH_REPO: ${{ github.repository }}
+          # Protected default branch the PR must target; the checker rejects PRs
+          # based on any other branch (branch protection only applies here). Same
+          # ref the checkout step pins, so the guard matches the executed code.
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           # Which event fired — selects PR-context vs head-SHA PR resolution.
           EVENT_NAME: ${{ github.event_name }}
           # Default GITHUB_TOKEN performs every read; it cannot approve.
