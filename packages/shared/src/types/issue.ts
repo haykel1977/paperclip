@@ -301,6 +301,24 @@ export interface IssueBlockedInboxAttention {
   };
 }
 
+export type IssueBlockedTriageHandling = "human" | "agent" | "triage";
+
+export interface IssueBlockedTriageCategory {
+  reason: IssueBlockedInboxReason;
+  count: number;
+  medianStoppedHours: number | null;
+  handling: IssueBlockedTriageHandling;
+  actionLabel: string;
+}
+
+export interface IssueBlockedTriageSummary {
+  total: number;
+  operatorAttentionCount: number;
+  agentWorkflowCount: number;
+  categories: IssueBlockedTriageCategory[];
+  generatedAt: string;
+}
+
 export type IssueProductivityReviewTrigger =
   | "no_comment_streak"
   | "long_active_duration"

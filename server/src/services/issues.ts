@@ -41,11 +41,14 @@ import type {
   IssueBlockerAttention,
   IssueBlockedInboxAttention,
   IssueBlockedInboxIssueRef,
+  IssueBlockedTriageHandling,
+  IssueBlockedTriageSummary,
   IssueProductivityReview,
   IssueProductivityReviewTrigger,
   IssueRelationIssueSummary,
   LowTrustBoundary,
   SuccessfulRunHandoffState,
+
 } from "@paperclipai/shared";
 import {
   clampIssueRequestDepth,
@@ -2474,7 +2477,89 @@ function compareBlockedInboxRows(
   return right.id.localeCompare(left.id);
 }
 
+function blockedTriageHandling(
+  reason: IssueBlockedInboxAttention["reason"],
+): IssueBlockedTriageHandling {
+  switch (reason) {
+    case "open_recovery_issue":
+    case "missing_successful_run_disposition":
+    case "blocked_by_assigned_backlog_issue":
+      return "agent";
+    case "pending_board_decision":
+    case "pending_user_decision":
+    case "external_owner_action":
+      return "human";
+    default:
+      return "triage";
+  }
+}
+
+export function summarizeBlockedInboxIssues(
+  rows: ReadonlyArray<{ blockedInboxAttention?: IssueBlockedInboxAttention | null }>,
+  now: Date = new Date(),
+): IssueBlockedTriageSummary {
+  const buckets = new Map<IssueBlockedInboxAttention["reason"], {
+    count: number;
+    stoppedHours: number[];
+    handling: IssueBlockedTriageHandling;
+    actionLabel: string;
+  }>();
+
+  for (const row of rows) {
+    const attention = row.blockedInboxAttention;
+    if (!attention) continue;
+    const bucket = buckets.get(attention.reason) ?? {
+      count: 0,
+      stoppedHours: [],
+      handling: blockedTriageHandling(attention.reason),
+      actionLabel: attention.action.label || "Inspect blocked work",
+    };
+    bucket.count += 1;
+    if (attention.stoppedSinceAt) {
+      const stoppedAt = new Date(attention.stoppedSinceAt).getTime();
+      if (Number.isFinite(stoppedAt)) {
+        bucket.stoppedHours.push(Math.max(0, (now.getTime() - stoppedAt) / 3_600_000));
+      }
+    }
+    buckets.set(attention.reason, bucket);
+  }
+
+  const categories = [...buckets.entries()]
+    .map(([reason, bucket]) => {
+      const sortedHours = [...bucket.stoppedHours].sort((left, right) => left - right);
+      const middle = Math.floor(sortedHours.length / 2);
+      const median = sortedHours.length === 0
+        ? null
+        : sortedHours.length % 2 === 1
+          ? sortedHours[middle]!
+          : (sortedHours[middle - 1]! + sortedHours[middle]!) / 2;
+      return {
+        reason,
+        count: bucket.count,
+        medianStoppedHours: median === null ? null : Math.round(median * 10) / 10,
+        handling: bucket.handling,
+        actionLabel: bucket.actionLabel,
+      };
+    })
+    .sort((left, right) => right.count - left.count || left.reason.localeCompare(right.reason));
+
+  const total = categories.reduce((sum, category) => sum + category.count, 0);
+  const agentWorkflowCount = categories.reduce(
+    (sum, category) => sum + (category.handling === "agent" ? category.count : 0),
+    0,
+  );
+
+  return {
+    total,
+    operatorAttentionCount: total - agentWorkflowCount,
+    agentWorkflowCount,
+    categories,
+    generatedAt: now.toISOString(),
+  };
+}
+
 async function listIssueBlockedInboxAttentionMap(
+
   dbOrTx: any,
   companyId: string,
   issueRows: BlockedInboxIssueRow[],

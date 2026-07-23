@@ -4011,6 +4011,7 @@ for (const route of [
   ["get", "/api/companies/import/jobs/{jobId}", "Get company import job status"],
   ["get", "/api/companies/{companyId}/search", "Search company data"],
   ["get", "/api/companies/{companyId}/issues/count", "Count issues in a company"],
+  ["get", "/api/companies/{companyId}/issues/blocked-summary", "Summarize blocked work by cause"],
 ] as const) {
   registerCurrentRoute({
     method: route[0],

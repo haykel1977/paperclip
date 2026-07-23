@@ -53,7 +53,9 @@ export const queryKeys = {
     listUnreadTouchedByMe: (companyId: string) => ["issues", companyId, "unread-touched-by-me"] as const,
     listBlockedAttention: (companyId: string) => ["issues", companyId, "blocked-attention"] as const,
     countBlockedAttention: (companyId: string) => ["issues", companyId, "blocked-attention", "count"] as const,
+    blockedTriageSummary: (companyId: string) => ["issues", companyId, "blocked-attention", "summary"] as const,
     labels: (companyId: string) => ["issues", companyId, "labels"] as const,
+
     listByProject: (companyId: string, projectId: string) =>
       ["issues", companyId, "project", projectId] as const,
     listPluginOperationsByProject: (companyId: string, projectId: string, originKindPrefix: string) =>

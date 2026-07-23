@@ -109,11 +109,15 @@ import { assertEnvironmentSelectionForCompany } from "./environment-selection.js
 import { executionWorkspaceService as executionWorkspaceServiceDirect } from "../services/execution-workspaces.js";
 import { feedbackService } from "../services/feedback.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
-import { readAcceptedPlanConfirmationTarget } from "../services/issues.js";
+import {
+  readAcceptedPlanConfirmationTarget,
+  summarizeBlockedInboxIssues,
+} from "../services/issues.js";
 import { environmentService } from "../services/environments.js";
 import { redactSensitiveText } from "../redaction.js";
 import {
   createCompanySearchRateLimiter,
+
   type CompanySearchRateLimiter,
 } from "../services/company-search-rate-limit.js";
 import {
@@ -2508,6 +2512,42 @@ export function issueRoutes(
     res.json({ count });
   });
 
+  router.get("/companies/:companyId/issues/blocked-summary", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const filters = {
+      attention: "blocked",
+      includeBlockedBy: true,
+      includeBlockedInboxAttention: true,
+    } as const;
+
+    if (await actorCanReadCompanyScope(req, companyId)) {
+      res.json(summarizeBlockedInboxIssues(await svc.list(companyId, filters)));
+      return;
+    }
+
+    const trustResolution = req.actor.type === "agent"
+      ? await resolveAgentTrustForIssue({
+          agentId: req.actor.agentId,
+          runId: req.actor.runId,
+        }, companyId, null)
+      : null;
+    if (trustResolution?.kind === "denied") {
+      throw forbidden(trustResolution.detail);
+    }
+    if (trustResolution?.kind === "low_trust_review") {
+      const rows = await svc.list(companyId, {
+        ...filters,
+        lowTrustBoundary: trustResolution.boundary,
+      });
+      res.json(summarizeBlockedInboxIssues(rows));
+      return;
+    }
+
+    const rows = await svc.list(companyId, filters);
+    res.json(summarizeBlockedInboxIssues(await filterIssuesForActor(req, rows)));
+  });
+
   router.get("/companies/:companyId/labels", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
@@ -2516,6 +2556,7 @@ export function issueRoutes(
   });
 
   router.post("/companies/:companyId/labels", validate(createIssueLabelSchema), async (req, res) => {
+
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
     const label = await svc.createLabel(companyId, req.body);
