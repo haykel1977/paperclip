@@ -44,9 +44,11 @@ import { accessRoutes } from "./routes/access.js";
 import { pluginRoutes } from "./routes/plugins.js";
 import { adapterRoutes } from "./routes/adapters.js";
 import { pluginUiStaticRoutes } from "./routes/plugin-ui-static.js";
+import { githubWebhookRoutes } from "./routes/github-webhooks.js";
 import { readBrandedStaticIndexHtml } from "./static-index-html.js";
 import { applyUiBranding } from "./ui-branding.js";
 import { logger } from "./middleware/logger.js";
+
 import { DEFAULT_LOCAL_PLUGIN_DIR, pluginLoader } from "./services/plugin-loader.js";
 import { createPluginWorkerManager, type PluginWorkerManager } from "./services/plugin-worker-manager.js";
 import { createPluginJobScheduler } from "./services/plugin-job-scheduler.js";
@@ -182,6 +184,8 @@ export async function createApp(
       bindHost: opts.bindHost,
     }),
   );
+  // GitHub authenticates this callback with its HMAC signature, not a board session.
+  app.use("/api/webhooks/github", githubWebhookRoutes(db));
   app.use(
     actorMiddleware(db, {
       deploymentMode: opts.deploymentMode,
@@ -192,6 +196,7 @@ export async function createApp(
   if (opts.betterAuthHandler) {
     app.all("/api/auth/{*authPath}", opts.betterAuthHandler);
   }
+
   app.use(llmRoutes(db));
 
   const hostServicesDisposers = new Map<string, () => void>();

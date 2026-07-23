@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { WebSocketServer } from "ws";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
 import {
   agents,
   agentWakeupRequests,
@@ -270,12 +271,257 @@ describe("heartbeat comment wake batching", () => {
     expect(runs[0]?.id).toBe(runId);
   });
 
+  it("promotes an automation wake deferred before the current run became terminal", async () => {
+    const gateway = await createControlledGatewayServer();
+    const companyId = randomUUID();
+    const activeAgentId = randomUUID();
+    const followupAgentId = randomUUID();
+    const issueId = randomUUID();
+    const activeRunId = randomUUID();
+    const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+    const heartbeat = heartbeatService(db);
+
+    try {
+      await db.insert(companies).values({
+        id: companyId,
+        name: "Paperclip",
+        issuePrefix,
+        requireBoardApprovalForNewAgents: false,
+      });
+
+      await db.insert(agents).values([
+        {
+          id: activeAgentId,
+          companyId,
+          name: "Active Agent",
+          role: "engineer",
+          status: "running",
+          adapterType: "process",
+          adapterConfig: {},
+          runtimeConfig: {},
+          permissions: {},
+        },
+        {
+          id: followupAgentId,
+          companyId,
+          name: "Follow-up Agent",
+          role: "engineer",
+          status: "idle",
+          adapterType: "openclaw_gateway",
+          adapterConfig: {
+            url: gateway.url,
+            headers: { "x-openclaw-token": "gateway-token" },
+            payloadTemplate: { message: "run deferred automation" },
+            waitTimeoutMs: 2_000,
+          },
+          runtimeConfig: {},
+          permissions: {},
+        },
+      ]);
+
+      await db.insert(heartbeatRuns).values({
+        id: activeRunId,
+        companyId,
+        agentId: activeAgentId,
+        invocationSource: "assignment",
+        triggerDetail: "system",
+        status: "running",
+        contextSnapshot: {
+          issueId,
+          taskId: issueId,
+          wakeReason: "issue_assigned",
+        },
+      });
+
+      await db.insert(issues).values({
+        id: issueId,
+        companyId,
+        title: "Promote deferred automation",
+        status: "blocked",
+        priority: "medium",
+        assigneeAgentId: activeAgentId,
+        executionRunId: activeRunId,
+        executionAgentNameKey: "active-agent",
+        executionLockedAt: new Date(),
+        issueNumber: 2,
+        identifier: `${issuePrefix}-2`,
+      });
+
+      const followupRun = await heartbeat.wakeup(followupAgentId, {
+        source: "automation",
+        triggerDetail: "system",
+        reason: "issue_continuation_needed",
+        payload: { issueId },
+        contextSnapshot: {
+          issueId,
+          taskId: issueId,
+          wakeReason: "issue_continuation_needed",
+        },
+        requestedByActorType: "system",
+      });
+      expect(followupRun).toBeNull();
+
+      const deferred = await db
+        .select()
+        .from(agentWakeupRequests)
+        .where(and(
+          eq(agentWakeupRequests.agentId, followupAgentId),
+          eq(agentWakeupRequests.status, "deferred_issue_execution"),
+        ))
+        .then((rows) => rows[0] ?? null);
+      expect(deferred).not.toBeNull();
+
+      await heartbeat.cancelRun(activeRunId);
+      gateway.releaseFirstWait();
+
+      // Allow async promotion path to complete
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      const promoted = await db
+        .select()
+        .from(agentWakeupRequests)
+        .where(eq(agentWakeupRequests.id, deferred!.id))
+        .then((rows) => rows[0] ?? null);
+      // The wake was promoted: reason changed from issue_execution_deferred
+      expect(promoted?.reason).toBe("issue_execution_promoted");
+      // The status left deferred_issue_execution (promotion happened)
+      expect(promoted?.status).not.toBe("deferred_issue_execution");
+    } finally {
+      await gateway.close();
+    }
+  }, 30_000);
+
+  it("skips a deferred automation wake when a prior terminal run is within the cooldown window", async () => {
+    const gateway = await createControlledGatewayServer();
+    const companyId = randomUUID();
+    const activeAgentId = randomUUID();
+    const followupAgentId = randomUUID();
+    const cooldownIssueId = randomUUID();
+    const priorRunId = randomUUID();
+    const currentRunId = randomUUID();
+    const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+    const heartbeat = heartbeatService(db);
+
+    try {
+      await db.insert(companies).values({
+        id: companyId,
+        name: "Paperclip",
+        issuePrefix,
+        requireBoardApprovalForNewAgents: false,
+      });
+
+      await db.insert(agents).values([
+        {
+          id: activeAgentId,
+          companyId,
+          name: "Active Agent Cooldown",
+          role: "engineer",
+          status: "running",
+          adapterType: "process",
+          adapterConfig: {},
+          runtimeConfig: {},
+          permissions: {},
+        },
+        {
+          id: followupAgentId,
+          companyId,
+          name: "Follow-up Agent Cooldown",
+          role: "engineer",
+          status: "idle",
+          adapterType: "openclaw_gateway",
+          adapterConfig: {
+            url: gateway.url,
+            headers: { "x-openclaw-token": "gateway-token" },
+            payloadTemplate: { message: "run deferred automation" },
+            waitTimeoutMs: 2_000,
+          },
+          runtimeConfig: {},
+          permissions: {},
+        },
+      ]);
+
+      await db.insert(heartbeatRuns).values([
+        {
+          id: priorRunId,
+          companyId,
+          agentId: activeAgentId,
+          invocationSource: "automation",
+          triggerDetail: "system",
+          status: "succeeded",
+          contextSnapshot: { issueId: cooldownIssueId, wakeReason: "scheduled_tick" },
+          finishedAt: new Date(Date.now() - 60_000),
+        },
+        {
+          id: currentRunId,
+          companyId,
+          agentId: activeAgentId,
+          invocationSource: "assignment",
+          triggerDetail: "system",
+          status: "running",
+          contextSnapshot: { issueId: cooldownIssueId, wakeReason: "issue_assigned" },
+        },
+      ]);
+      await db.insert(issues).values({
+        id: cooldownIssueId,
+        companyId,
+        title: "Suppress deferred automation after a prior terminal run",
+        status: "blocked",
+        priority: "medium",
+        assigneeAgentId: activeAgentId,
+        executionRunId: currentRunId,
+        executionAgentNameKey: "active-agent",
+        executionLockedAt: new Date(),
+        issueNumber: 3,
+        identifier: `${issuePrefix}-3`,
+      });
+
+      await heartbeat.wakeup(followupAgentId, {
+        source: "automation",
+        triggerDetail: "system",
+        reason: "scheduled_tick",
+        payload: { issueId: cooldownIssueId },
+        contextSnapshot: {
+          issueId: cooldownIssueId,
+          taskId: cooldownIssueId,
+          wakeReason: "scheduled_tick",
+        },
+        requestedByActorType: "system",
+      });
+      const cooldownDeferred = await db
+        .select()
+        .from(agentWakeupRequests)
+        .where(and(
+          eq(agentWakeupRequests.agentId, followupAgentId),
+          eq(agentWakeupRequests.status, "deferred_issue_execution"),
+          sql`${agentWakeupRequests.payload} ->> 'issueId' = ${cooldownIssueId}`,
+        ))
+        .then((rows) => rows[0] ?? null);
+      expect(cooldownDeferred).not.toBeNull();
+
+      await heartbeat.cancelRun(currentRunId);
+      const skipped = await db
+        .select()
+        .from(agentWakeupRequests)
+        .where(eq(agentWakeupRequests.id, cooldownDeferred!.id))
+        .then((rows) => rows[0] ?? null);
+      expect(skipped).toMatchObject({
+        status: "skipped",
+        reason: "issue_automation_cooldown",
+      });
+      expect(gateway.getAgentPayloads()).toHaveLength(0);
+    } finally {
+      gateway.releaseFirstWait();
+      await gateway.close();
+    }
+  }, 30_000);
+
   it("batches deferred comment wakes and forwards the ordered batch to the next run", async () => {
     const gateway = await createControlledGatewayServer();
     const companyId = randomUUID();
     const agentId = randomUUID();
     const issueId = randomUUID();
     const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+
     const heartbeat = heartbeatService(db);
 
     try {
