@@ -317,7 +317,7 @@ async function findExistingPr(input: {
 }
 
 export function buildIssueDeliveryKey(repo: string, issueIdentifier: string | null, issueId: string | null): string {
-  return `${repo}:${issueIdentifier ?? issueId ?? "unknown"}`;
+  return `${repo.trim().toLowerCase()}:${issueId ?? issueIdentifier ?? "unknown"}`;
 }
 
 type ExistingIssuePr = {
@@ -812,8 +812,22 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     return { delivered: false, prUrl: null, reason: "no_diff" };
   }
   if (/^(UU|AA|DD) /m.test(status.stdout)) {
-    await log("stderr", `[delivery ${ts()}] result=conflict reason="merge conflict markers — abort, no force"\n`);
+    await log("stderr", `[delivery ${ts()}] result=conflict reason="unresolved git index conflict — abort, no force"\n`);
     return { delivered: false, prUrl: null, reason: "conflict" };
+  }
+  const conflictMarkerScan = await runProc(
+    "git",
+    ["grep", "--untracked", "-n", "-E", "^(<{7} |>{7} )", "--", "."],
+    worktreeCwd,
+    env,
+  );
+  if (conflictMarkerScan.exitCode === 0 && conflictMarkerScan.stdout.trim()) {
+    await log("stderr", `[delivery ${ts()}] result=conflict reason="conflict marker in tracked or untracked file — abort, no force"\n`);
+    return { delivered: false, prUrl: null, reason: "conflict" };
+  }
+  if (conflictMarkerScan.exitCode > 1) {
+    await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="conflict marker scan failed" detail="${firstNonEmptyLine(conflictMarkerScan.stderr)}"\n`);
+    return { delivered: false, prUrl: null, reason: "delivery_blocked: conflict marker scan failed" };
   }
 
   // ── 2. bot token check (autonomous lane only) ────────────────────────────
@@ -993,6 +1007,29 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     return { delivered: false, prUrl: null, reason };
   }
 
+  // Close the lookup/create race as far as GitHub's API permits: another agent
+  // may have created the issue PR while this run was committing and pushing.
+  const issuePrAfterPush = await findExistingPrForIssue({
+    repo: input.repo,
+    issueIdentifier: input.issueIdentifier,
+    issueId: input.issueId,
+    worktreeCwd,
+    env: deliveryCommandEnv,
+    runProc,
+  });
+  if (!issuePrAfterPush.ok) {
+    await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="post_push_issue_pr_lookup_failed" detail="${issuePrAfterPush.reason}"\n`);
+    return { delivered: false, prUrl: null, reason: "delivery_blocked: issue PR lookup failed" };
+  }
+  if (issuePrAfterPush.pr) {
+    await log("stdout", `[delivery ${ts()}] result=pr_exists_after_push issue_key=${buildIssueDeliveryKey(input.repo, input.issueIdentifier, input.issueId)} pr_url=${issuePrAfterPush.pr.url}\n`);
+    return {
+      delivered: issuePrAfterPush.pr.state === "OPEN",
+      prUrl: issuePrAfterPush.pr.url,
+      reason: issuePrAfterPush.pr.state === "OPEN" ? "pr_exists" : "issue_already_merged",
+    };
+  }
+
   // ── 8. create PR ──────────────────────────────────────────────────────────
   const repoLabels = await fetchRepoLabels({ repo: input.repo, worktreeCwd, env: deliveryCommandEnv, log, ts, runProc });
   const labelsToApply = deliveryLabels.filter((label) => repoLabels.includes(label));
@@ -1002,6 +1039,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
   }
 
   const prArgs = [
+
     "pr",
     "create",
     "--repo",
@@ -1029,6 +1067,22 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     if (existingAfterCreateFailure) {
       await log("stdout", `[delivery ${ts()}] result=pr_exists_after_create_failure pr_url=${existingAfterCreateFailure}\n`);
       return { delivered: true, prUrl: existingAfterCreateFailure, reason: "pr_exists" };
+    }
+    const issuePrAfterCreateFailure = await findExistingPrForIssue({
+      repo: input.repo,
+      issueIdentifier: input.issueIdentifier,
+      issueId: input.issueId,
+      worktreeCwd,
+      env: deliveryCommandEnv,
+      runProc,
+    });
+    if (issuePrAfterCreateFailure.ok && issuePrAfterCreateFailure.pr) {
+      await log("stdout", `[delivery ${ts()}] result=pr_exists_after_create_failure issue_key=${buildIssueDeliveryKey(input.repo, input.issueIdentifier, input.issueId)} pr_url=${issuePrAfterCreateFailure.pr.url}\n`);
+      return {
+        delivered: issuePrAfterCreateFailure.pr.state === "OPEN",
+        prUrl: issuePrAfterCreateFailure.pr.url,
+        reason: issuePrAfterCreateFailure.pr.state === "OPEN" ? "pr_exists" : "issue_already_merged",
+      };
     }
     await log("stderr", `[delivery ${ts()}] gh_pr_create_failed: ${pr.stderr}\n`);
     return { delivered: false, prUrl: null, reason: "pr_create_failed" };
