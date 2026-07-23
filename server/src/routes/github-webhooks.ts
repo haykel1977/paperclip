@@ -8,7 +8,8 @@ import { issueService } from "../services/issues.js";
 import { parseObject } from "../adapters/utils.js";
 
 const ACTIVE_DELIVERY_RUN_STATUSES = ["queued", "running", "scheduled_retry"] as const;
-const PAPERCLIP_ISSUE_METADATA_RE = /^- Paperclip issue: .+ \(([0-9a-f]{8}-[0-9a-f-]{27,})\)$/im;
+const UUID_V4_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+const PAPERCLIP_ISSUE_METADATA_RE = new RegExp(`^- Paperclip issue: .+ \\((${UUID_V4_PATTERN})\\)$`, "im");
 const REPOSITORY_METADATA_RE = /^- Repository: ([^\s/]+\/[^\s/]+)$/im;
 
 type RawBodyRequest = Request & { rawBody?: Buffer };
@@ -36,8 +37,8 @@ export function verifyGitHubWebhookSignature(rawBody: Buffer, signature: string 
 
 export function parsePaperclipDeliveryMetadata(body: string) {
   const issueId = body.match(PAPERCLIP_ISSUE_METADATA_RE)?.[1] ?? null;
+  if (!issueId) return null;
   const repository = body.match(REPOSITORY_METADATA_RE)?.[1] ?? null;
-  if (!issueId || !repository) return null;
   return { issueId, repository };
 }
 
@@ -83,8 +84,14 @@ export function githubWebhookRoutes(db: Db) {
       res.status(202).json({ accepted: true, ignored: "not_a_paperclip_delivery" });
       return;
     }
-    if (!repository || metadata.repository.toLowerCase() !== repository.toLowerCase()) {
+    if (metadata.repository && repository && metadata.repository.toLowerCase() !== repository.toLowerCase()) {
       res.status(400).json({ error: "Delivery repository metadata does not match webhook repository" });
+      return;
+    }
+
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!UUID_RE.test(metadata.issueId)) {
+      res.status(400).json({ error: "Invalid issue ID format" });
       return;
     }
 
@@ -116,9 +123,11 @@ export function githubWebhookRoutes(db: Db) {
           sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issue.id}`,
         ),
       );
-    for (const run of activeRuns) {
-      await heartbeat.cancelRun(run.id, "Cancelled because the linked GitHub pull request was merged");
-    }
+    await Promise.all(
+      activeRuns.map((run) =>
+        heartbeat.cancelRun(run.id, "Cancelled because the linked GitHub pull request was merged"),
+      ),
+    );
 
     const currentExecutionState = parseObject(issue.executionState);
     const prNumber = typeof payload.pull_request.number === "number" ? payload.pull_request.number : null;

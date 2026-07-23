@@ -9737,6 +9737,46 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           promotedContextSnapshot.livenessContinuationAttempt,
         );
         const now = new Date();
+
+        // Enforce cooldown on promoted deferred wakes (same as normal wake path)
+        const promotedWakeCommentId = extractWakeCommentIds(promotedContextSnapshot).at(-1) ?? null;
+        if (
+          shouldEnforceIssueAutomationWakeCooldown({
+            source: promotedSource,
+            contextSnapshot: promotedContextSnapshot,
+            wakeCommentId: promotedWakeCommentId,
+          })
+        ) {
+          const cooldownCutoff = new Date(now.getTime() - ISSUE_AUTOMATION_WAKE_COOLDOWN_MS);
+          const recentTerminalRun = await tx
+            .select({ id: heartbeatRuns.id, finishedAt: heartbeatRuns.finishedAt })
+            .from(heartbeatRuns)
+            .where(
+              and(
+                eq(heartbeatRuns.companyId, issue.companyId),
+                inArray(heartbeatRuns.status, [...HEARTBEAT_RUN_TERMINAL_STATUSES]),
+                gt(heartbeatRuns.finishedAt, cooldownCutoff),
+                sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issue.id}`,
+              ),
+            )
+            .orderBy(desc(heartbeatRuns.finishedAt))
+            .limit(1)
+            .then((rows) => rows[0] ?? null);
+
+          if (recentTerminalRun?.finishedAt) {
+            await tx
+              .update(agentWakeupRequests)
+              .set({
+                status: "skipped",
+                finishedAt: now,
+                error: "Deferred wake suppressed by cooldown",
+                updatedAt: now,
+              })
+              .where(eq(agentWakeupRequests.id, deferred.id));
+            continue;
+          }
+        }
+
         const newRun = await tx
           .insert(heartbeatRuns)
           .values({

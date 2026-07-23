@@ -540,6 +540,7 @@ function formatChangedFiles(statusStdout: string): string[] {
 function buildQuantumPrBody(input: {
   issueIdentifier: string | null;
   issueId: string | null;
+  repo: string;
   runId: string;
   adapterType?: string | null;
   agentId?: string | null;
@@ -578,6 +579,7 @@ function buildQuantumPrBody(input: {
     "",
     "## Delivery Metadata",
     `- Paperclip issue: ${issue} (${formatPrValue(input.issueId)})`,
+    `- Repository: ${input.repo}`,
     `- Run: ${input.runId}`,
     `- Adapter: ${formatPrValue(input.adapterType)}`,
     `- Agent: ${formatPrValue(input.agentId)}`,
@@ -674,7 +676,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
   }
   const conflictMarkerScan = await runProc(
     "git",
-    ["grep", "-n", "-E", "^(<<<<<<< |=======|>>>>>>> )", "--", "."],
+    ["grep", "-n", "-E", "^(<{7} |>{7} )", "--", "."],
     worktreeCwd,
     env,
   );
@@ -764,6 +766,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
   const body = buildQuantumPrBody({
     issueIdentifier: input.issueIdentifier,
     issueId: input.issueId,
+    repo: input.repo,
     runId: input.runId,
     adapterType: input.adapterType,
     agentId: input.agentId,
