@@ -15,9 +15,19 @@
  * It reads only PR metadata, changed files, labels, the current head SHA,
  * required check-runs/commit statuses, and the base-branch risk-lane classifier.
  * ALL reads use the workflow's default GITHUB_TOKEN. The least-privilege App
- * installation token is minted ONLY when the checker is about to approve or
- * dismiss — its single privileged action is submitting/dismissing its own
- * review.
+ * installation token is minted ONLY when the checker is about to write.
+ *
+ * Authoritative merge signal — an App-authored CHECK RUN, not a review. A GitHub
+ * App review has author-association NONE, so it can NEVER count toward branch
+ * protection's required_approving_review_count. Instead, after evaluation the
+ * checker creates/updates a distinct check run (`paperclip-checker/app`) on the
+ * EXACT PR head via the App installation token (checks:write): conclusion
+ * `success` ONLY for an approved decision; `in_progress` (no conclusion) for
+ * pending; `failure` for rejected/blocked (fail-closed — neutral is treated as
+ * passing by GitHub, so it is deliberately NOT used for non-approvals). Branch
+ * protection requires this context, pinned to the App's app_id, so a same-named
+ * check from any other identity cannot spoof success. The check run is what
+ * gates merge; the PR review below is retained only as an audit trail.
  *
  * Decisions:
  *   - blocked  → activation disabled or App config (ID/key) missing/invalid, or
@@ -55,6 +65,12 @@ import {
 // can never approve a PR it authored, pushed, or committed. Overridable by the
 // committed config file's top-level `appSlug`.
 export const DEFAULT_APP_SLUG = 'solidus-paperclip-checker[bot]';
+
+// Name of the App-authored required check run. Deliberately distinct from the
+// Actions runner job name so branch protection requires the App-published check
+// (pinned to the App's app_id), never the runner's own Actions check. Overridable
+// via the committed config's `appCheckName` or the APP_CHECK_NAME env.
+export const DEFAULT_CHECK_RUN_NAME = 'paperclip-checker/app';
 
 // Default producer-bound policy. Each required check is pinned to the app that
 // is expected to produce it; a same-named check-run/status from any other app
@@ -140,21 +156,26 @@ export function loadCheckerPolicy(env = {}, readFile = readFileSync) {
         appSlug: c.appSlug ? String(c.appSlug) : undefined,
         appId: Number.isFinite(Number(c.appId)) && c.appId != null ? Number(c.appId) : undefined,
       }));
-    return { requiredChecks, appSlug: raw?.appSlug ? String(raw.appSlug) : undefined };
+    return {
+      requiredChecks,
+      appSlug: raw?.appSlug ? String(raw.appSlug) : undefined,
+      appCheckName: raw?.appCheckName ? String(raw.appCheckName).trim() : undefined,
+    };
   };
 
+  const checkName = raw => raw.appCheckName || DEFAULT_CHECK_RUN_NAME;
   if (env.REQUIRED_CHECKS_POLICY) {
     const parsed = coerce(JSON.parse(env.REQUIRED_CHECKS_POLICY));
-    if (parsed.requiredChecks.length) return { requiredChecks: parsed.requiredChecks, appSlug: parsed.appSlug ?? DEFAULT_APP_SLUG };
+    if (parsed.requiredChecks.length) return { requiredChecks: parsed.requiredChecks, appSlug: parsed.appSlug ?? DEFAULT_APP_SLUG, appCheckName: checkName(parsed) };
   }
   const path = env.CHECKER_CONFIG_PATH || '.github/paperclip-checker.config.json';
   try {
     const parsed = coerce(JSON.parse(readFile(path, 'utf8')));
-    if (parsed.requiredChecks.length) return { requiredChecks: parsed.requiredChecks, appSlug: parsed.appSlug ?? DEFAULT_APP_SLUG };
+    if (parsed.requiredChecks.length) return { requiredChecks: parsed.requiredChecks, appSlug: parsed.appSlug ?? DEFAULT_APP_SLUG, appCheckName: checkName(parsed) };
   } catch {
     // fall through to the built-in default
   }
-  return { requiredChecks: DEFAULT_REQUIRED_CHECK_POLICY.map(c => ({ ...c })), appSlug: DEFAULT_APP_SLUG };
+  return { requiredChecks: DEFAULT_REQUIRED_CHECK_POLICY.map(c => ({ ...c })), appSlug: DEFAULT_APP_SLUG, appCheckName: DEFAULT_CHECK_RUN_NAME };
 }
 
 function appMatches(runApp, cfg) {
@@ -429,6 +450,51 @@ export function findApprovedAppReview(reviews, appSlug = DEFAULT_APP_SLUG) {
 }
 
 /**
+ * Find THIS App's own prior check run (by exact name AND authoritative app id)
+ * among the head's check runs. Binding on app id is what makes a same-named
+ * check from any other identity non-authoritative: a spoofed `paperclip-checker/app`
+ * from github-actions or another app is ignored, so we never PATCH someone else's
+ * run and never treat it as our standing result. Returns the most recent match
+ * or null.
+ */
+export function findAppCheckRun(checkRuns, checkRunName = DEFAULT_CHECK_RUN_NAME, appId = null) {
+  const name = String(checkRunName).trim();
+  const id = Number(appId);
+  let latest = null;
+  for (const run of Array.isArray(checkRuns) ? checkRuns : []) {
+    if (String(run?.name ?? '').trim() !== name) continue;
+    if (!Number.isFinite(id) || Number(run?.app?.id) !== id) continue;
+    if (!latest || recency(run) >= recency(latest)) latest = run;
+  }
+  return latest;
+}
+
+/**
+ * Map a final decision to the App check run's status/conclusion/output.
+ *   - approved → completed + success   (the ONLY way to a green required check)
+ *   - pending  → in_progress (NO conclusion) — the required check exists but is
+ *                not passing, so the PR stays blocked until re-evaluation flips
+ *                it to success. Fail-closed by construction.
+ *   - rejected → completed + failure
+ *   - blocked  → completed + failure
+ * `neutral` is intentionally never emitted: GitHub treats a neutral conclusion
+ * as passing for required checks, which would defeat fail-closed semantics.
+ */
+export function checkRunParamsForDecision(status, reasons = []) {
+  const summary = (Array.isArray(reasons) ? reasons : []).map(r => `- ${r}`).join('\n') || '_(no details)_';
+  switch (status) {
+    case 'approved':
+      return { status: 'completed', conclusion: 'success', title: 'Approved — GREEN lane, fresh head, required checks green.', summary };
+    case 'pending':
+      return { status: 'in_progress', conclusion: undefined, title: 'Pending — awaiting terminal state of required checks.', summary };
+    case 'rejected':
+      return { status: 'completed', conclusion: 'failure', title: 'Rejected — a disqualifier applies (fail-closed).', summary };
+    default:
+      return { status: 'completed', conclusion: 'failure', title: 'Blocked — fail-closed.', summary };
+  }
+}
+
+/**
  * Resolve the OPEN, same-repo PR whose head is exactly `sha`. Used by the
  * workflow_run trigger (which lacks PR context). Returns the PR number or null.
  * Fork PRs (head repo != base repo) are ignored here and rejected downstream.
@@ -497,6 +563,29 @@ async function submitApproval(ghFetch, token, repo, prNumber, headSha) {
   });
 }
 
+/**
+ * Create or idempotently update the App-authored check run on the exact head.
+ * When `existingId` is supplied (this App's prior run at the same head), PATCH it
+ * in place — never POST a duplicate. Otherwise POST a fresh run pinned to
+ * `head_sha`. Uses the App installation token (checks:write). `name`/`head_sha`
+ * are immutable on update, so they are sent only on create.
+ */
+export async function upsertCheckRun(ghFetch, token, repo, headSha, { existingId, name, status, conclusion, title, summary }) {
+  const payload = { status, output: { title, summary }, ...(conclusion ? { conclusion } : {}) };
+  if (existingId) {
+    return ghFetch(`/repos/${repo}/check-runs/${existingId}`, token, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  }
+  return ghFetch(`/repos/${repo}/check-runs`, token, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, head_sha: headSha, ...payload }),
+  });
+}
+
 async function dismissReview(ghFetch, token, repo, prNumber, reviewId) {
   return ghFetch(`/repos/${repo}/pulls/${prNumber}/reviews/${reviewId}/dismissals`, token, {
     method: 'PUT',
@@ -519,18 +608,31 @@ function emit(decision, extra = {}) {
 }
 
 /**
- * Perform the post-decision side effects (dismiss stale approval → anti-TOCTOU
- * pre-submit re-read → approve) and return a structured outcome. No process.exit
- * / no logging here so the side-effect SEQUENCING is unit-testable; main() maps
- * the outcome to emit()/exit. Token minting and the three write calls are
- * injectable via `deps` for tests.
+ * Perform the post-decision side effects and return a structured outcome. The
+ * AUTHORITATIVE side effect is publishing the App check run (`paperclip-checker/app`)
+ * on the exact event head; the legacy PR review is best-effort audit only. No
+ * process.exit / no logging here so the side-effect SEQUENCING is unit-testable;
+ * main() maps the outcome to emit()/exit. Token mint and the four write calls
+ * (dismiss, approve, upsertCheckRun, mint) are injectable via `deps` for tests.
  *
- * Anti-TOCTOU + stale-dismiss coupling: `result.dismissStale` is computed from
- * the gatherInputs snapshot. If the head advances DURING evaluation, the
- * pre-submit re-read refuses to approve the now-stale commit — and, crucially,
- * also dismisses any existing App approval that was NOT already dismissed above.
- * A push mid-run can therefore never leave a stale approval standing while we
- * refuse to approve the new commit.
+ * Sequencing for an approved decision:
+ *   1. dismiss any stale prior approval (as before);
+ *   2. anti-TOCTOU pre-write re-read — if the head advanced, dismiss the now-stale
+ *      approval and publish a FAILURE check on the (stale) event head, refusing to
+ *      green a commit that is no longer head;
+ *   3. idempotency — if THIS App's own check run already reports `success` for the
+ *      freshness-confirmed head and no stale dismissal intervened, do nothing (no
+ *      mint/approve/publish), so a transient write can never flip a standing green
+ *      check to red;
+ *   4. otherwise publish the SUCCESS check (must land — fail closed to `blocked`
+ *      if it errors, since without it there is no green required check), then post
+ *      the audit review best-effort.
+ *
+ * For pending/rejected/blocked the check run is published as in_progress/failure/
+ * failure respectively. Those writes are best-effort: the ABSENCE of a success
+ * check already fails closed, so a publish error is tolerated and never turns a
+ * non-approval into a pass. The App token is minted lazily and reused across all
+ * writes.
  */
 export async function executeDecision({
   ghFetch,
@@ -541,33 +643,130 @@ export async function executeDecision({
   eventHeadSha,
   result,
   existingAppReview,
+  existingAppCheckRun = null,
+  checkRunName = DEFAULT_CHECK_RUN_NAME,
   deps = {},
 }) {
   const mint = deps.mintAppToken ?? mintAppToken;
   const dismiss = deps.dismissReview ?? dismissReview;
   const approve = deps.submitApproval ?? submitApproval;
+  const upsert = deps.upsertCheckRun ?? upsertCheckRun;
+
+  // Mint at most once; reuse the token (and its promise) across every write.
+  let tokenPromise = null;
+  const getToken = () => (tokenPromise ??= mint(ghFetch, config, repo));
+
   let dismissed = false;
+
+  // Does an App-authored SUCCESS check already STAND at the exact event head?
+  // `existingAppCheckRun` came from findAppCheckRun over the check-runs listing
+  // for eventHeadSha, so it is both app-id-bound (spoofs excluded) AND exact-head
+  // bound; we re-verify head_sha defensively. Such a check WOULD satisfy branch
+  // protection, so any NON-approval must actively revoke it — a swallowed write
+  // would otherwise leave green standing for a commit the checker just refused
+  // (Cursor Bugbot #49b17c31 / PR #59 discussion r3637958588).
+  const staleSuccessSha = String(existingAppCheckRun?.head_sha ?? '').trim();
+  const standingSuccessAtHead =
+    !!existingAppCheckRun &&
+    String(existingAppCheckRun?.conclusion ?? '').toLowerCase() === 'success' &&
+    SHA_RE.test(staleSuccessSha) &&
+    staleSuccessSha.toLowerCase() === String(eventHeadSha).toLowerCase();
+
+  const checkBody = (status, reasons) => {
+    const params = checkRunParamsForDecision(status, reasons);
+    return { name: checkRunName, status: params.status, conclusion: params.conclusion, title: params.title, summary: params.summary };
+  };
+
+  // Publish (create or idempotently update) the App check run for `status`,
+  // rendering the human-readable summary from the ACTUAL terminal `reasons`
+  // (never a stale snapshot). Throws on API failure so callers can choose
+  // fail-closed vs best-effort.
+  const publishCheck = async (status, reasons) => {
+    const token = await getToken();
+    await upsert(ghFetch, token, repo, eventHeadSha, { existingId: existingAppCheckRun?.id, ...checkBody(status, reasons) });
+  };
+
+  // Revoke a STANDING success by downgrading it to a non-approval `status`
+  // (failure/in_progress). The write MUST land — never swallowed. GitHub
+  // evaluates the MOST RECENT check run of a given name at a commit, so if the
+  // in-place PATCH of the standing run fails we POST a fresh same-named
+  // non-success run (same App, same exact head) to SUPERSEDE the stale green
+  // (latest-wins revocation). Only if BOTH independent writes fail do we throw,
+  // and the caller fails closed. Both paths preserve exact-head + app-id binding
+  // and never emit `neutral`.
+  const revokeStandingSuccess = async (status, reasons) => {
+    const token = await getToken();
+    const body = checkBody(status, reasons);
+    try {
+      await upsert(ghFetch, token, repo, eventHeadSha, { existingId: existingAppCheckRun.id, ...body });
+      return;
+    } catch (patchError) {
+      try {
+        await upsert(ghFetch, token, repo, eventHeadSha, { existingId: undefined, ...body });
+        return;
+      } catch (postError) {
+        throw new Error(`in-place downgrade ${sanitizeError(patchError)}; latest-wins supersede ${sanitizeError(postError)}`);
+      }
+    }
+  };
+
+  // Single source of truth for every NON-approved terminal path. The published
+  // `paperclip-checker/app` summary/conclusion is rendered from the SAME
+  // `reasons` returned to main(), so they can never diverge, and the published
+  // status equals the returned status (blocked/rejected→failure,
+  // pending→in_progress), preserving fail-closed + never-neutral semantics.
+  //
+  // Two revocation regimes:
+  //  - No App success stands at this head → the ABSENCE of a success check
+  //    already fails closed, so publishing the non-approval check is best-effort
+  //    (a write error cannot manufacture a satisfiable state).
+  //  - A success DOES stand at this exact head → revocation is MANDATORY. If
+  //    neither the in-place downgrade nor the latest-wins supersede lands, we do
+  //    NOT return the requested (possibly exit-0 pending) outcome; we fail closed
+  //    to `blocked`/exit 1 with a diagnostic, because a satisfiable stale green
+  //    must never coexist with a non-approval.
+  const finalize = async (status, exitCode, reasons) => {
+    if (standingSuccessAtHead) {
+      try {
+        await revokeStandingSuccess(status, reasons);
+      } catch (error) {
+        return {
+          status: 'blocked',
+          exitCode: 1,
+          dismissed,
+          riskLane: result.riskLane,
+          reasons: [
+            ...reasons,
+            `Refused to leave a stale successful ${checkRunName} check standing at the current head after a ${status} decision: ${sanitizeError(error)}. Failing closed so branch protection cannot be satisfied by the superseded success.`,
+          ],
+        };
+      }
+      return { status, exitCode, dismissed, riskLane: result.riskLane, reasons };
+    }
+    try { await publishCheck(status, reasons); } catch { /* absence already fails closed */ }
+    return { status, exitCode, dismissed, riskLane: result.riskLane, reasons };
+  };
 
   // Dismiss/supersede a stale prior approval. The App token is minted here
   // (write needed). If dismissal fails, fail closed and rely on the documented
   // branch-protection backstop (dismiss_stale + last-push approval).
   if (result.dismissStale && existingAppReview) {
     try {
-      const appToken = await mint(ghFetch, config, repo);
-      await dismiss(ghFetch, appToken, repo, prNumber, existingAppReview.id);
+      const token = await getToken();
+      await dismiss(ghFetch, token, repo, prNumber, existingAppReview.id);
       dismissed = true;
     } catch (error) {
-      return { status: 'blocked', exitCode: 1, dismissed, reasons: [`Failed to dismiss stale approval: ${sanitizeError(error)}`] };
+      return finalize('blocked', 1, [`Failed to dismiss stale approval: ${sanitizeError(error)}`]);
     }
   }
 
   if (result.decision === 'approved') {
-    // Anti-TOCTOU: re-read the head SHA immediately before approving.
+    // Anti-TOCTOU: re-read the head SHA immediately before writing.
     let fresh;
     try {
       fresh = await ghFetch(`/repos/${repo}/pulls/${prNumber}`, readToken);
     } catch (error) {
-      return { status: 'blocked', exitCode: 1, dismissed, reasons: [`Freshness re-read failed: ${sanitizeError(error)}`] };
+      return finalize('blocked', 1, [`Freshness re-read failed: ${sanitizeError(error)}`]);
     }
     const freshSha = String(fresh?.head?.sha ?? '').trim();
     if (!SHA_RE.test(freshSha) || freshSha.toLowerCase() !== String(eventHeadSha).toLowerCase()) {
@@ -577,50 +776,71 @@ export async function executeDecision({
       // standing stale approval.
       if (existingAppReview && !dismissed) {
         try {
-          const appToken = await mint(ghFetch, config, repo);
-          await dismiss(ghFetch, appToken, repo, prNumber, existingAppReview.id);
+          const token = await getToken();
+          await dismiss(ghFetch, token, repo, prNumber, existingAppReview.id);
           dismissed = true;
         } catch (error) {
-          return { status: 'blocked', exitCode: 1, dismissed, reasons: [`Head advanced during evaluation and dismissing the now-stale approval failed: ${sanitizeError(error)}`] };
+          return finalize('blocked', 1, [`Head advanced during evaluation and dismissing the now-stale approval failed: ${sanitizeError(error)}`]);
         }
       }
-      return { status: 'rejected', exitCode: 1, dismissed, riskLane: result.riskLane, reasons: [`Head advanced during evaluation (now ${freshSha || 'unknown'}); refusing to approve a stale commit.`] };
+      return finalize('rejected', 1, [`Head advanced during evaluation (now ${freshSha || 'unknown'}); refusing to approve a stale commit.`]);
     }
-    // Idempotency: a valid App approval may already stand for this exact,
-    // freshness-confirmed head (typical on a second workflow_run at the same
-    // SHA). It was NOT dismissed above (dismissStale false), so re-POSTing APPROVE
-    // is redundant — and a failed resubmit would exit `blocked` and fail the
-    // check despite a standing valid approval. Skip the resubmit; the guarantees
-    // still hold because the anti-TOCTOU re-read above already re-confirmed the
-    // head, and the standing approval targets that same commit. Only reached when
-    // the prior approval's commit_id equals the fresh head and it survived the
-    // dismiss-stale phase, so it can never mask a stale approval.
-    const priorSha = String(existingAppReview?.commit_id ?? '').trim();
-    if (existingAppReview && !dismissed && SHA_RE.test(priorSha) && priorSha.toLowerCase() === String(eventHeadSha).toLowerCase()) {
+    // Idempotency: THIS App's own check run may already report success for this
+    // exact, freshness-confirmed head (typical on a second workflow_run at the
+    // same SHA). It survived the dismiss-stale phase (!dismissed), so re-writing
+    // it is redundant — and a transient PATCH/POST failure would otherwise flip a
+    // standing green check to blocked. Skip; anti-TOCTOU above already re-confirmed
+    // the head and the standing check targets that same commit, so it can never
+    // mask a stale result. Bound by app id in findAppCheckRun, so a spoofed
+    // same-named check from another identity is not eligible for this skip.
+    const priorCheckSha = String(existingAppCheckRun?.head_sha ?? '').trim();
+    if (
+      existingAppCheckRun && !dismissed &&
+      String(existingAppCheckRun?.conclusion ?? '').toLowerCase() === 'success' &&
+      SHA_RE.test(priorCheckSha) && priorCheckSha.toLowerCase() === String(eventHeadSha).toLowerCase()
+    ) {
       return {
         status: 'approved',
         exitCode: 0,
         dismissed,
         riskLane: result.riskLane,
-        reasons: [...result.reasons, `Existing App approval #${existingAppReview.id} already targets the current head; not resubmitting (idempotent).`],
+        reasons: [...result.reasons, `Existing App check run #${existingAppCheckRun.id} already reports success for the current head; not resubmitting (idempotent).`],
       };
     }
+    // Authoritative merge signal FIRST — the success check MUST land or we fail
+    // closed (there would be no green required check otherwise).
     try {
-      const appToken = await mint(ghFetch, config, repo);
-      await approve(ghFetch, appToken, repo, prNumber, eventHeadSha);
+      await publishCheck('approved', result.reasons);
     } catch (error) {
-      return { status: 'blocked', exitCode: 1, dismissed, reasons: [`Approval token/submit failed: ${sanitizeError(error)}`] };
+      return { status: 'blocked', exitCode: 1, dismissed, riskLane: result.riskLane, reasons: [`Publishing the success check run failed: ${sanitizeError(error)}`] };
     }
-    return { status: 'approved', exitCode: 0, dismissed, riskLane: result.riskLane, reasons: result.reasons };
+    // Legacy PR review — audit trail only, NOT relied on for merge. Best-effort:
+    // a failure here does not affect merge eligibility (the check run already
+    // carries the signal), so it must not fail the outcome.
+    let reviewNote = null;
+    try {
+      const token = await getToken();
+      await approve(ghFetch, token, repo, prNumber, eventHeadSha);
+    } catch (error) {
+      reviewNote = `Audit review submission failed (non-fatal; merge signal is the check run): ${sanitizeError(error)}`;
+    }
+    return {
+      status: 'approved',
+      exitCode: 0,
+      dismissed,
+      riskLane: result.riskLane,
+      reasons: reviewNote ? [...result.reasons, reviewNote] : result.reasons,
+    };
   }
 
   if (result.decision === 'pending') {
-    // Not a pass: no approval. Exit 0 so the completing CI workflow_run can
-    // re-invoke us cleanly when the last required check turns green.
-    return { status: 'pending', exitCode: 0, dismissed, riskLane: result.riskLane, reasons: result.reasons };
+    // Not a pass: publish an in_progress check (keeps the required context present
+    // but unsatisfied) and exit 0 so the completing CI workflow_run can re-invoke
+    // us cleanly when the last required check turns green.
+    return finalize('pending', 0, result.reasons);
   }
 
-  return { status: result.decision, exitCode: 1, dismissed, riskLane: result.riskLane, reasons: result.reasons };
+  return finalize(result.decision, 1, result.reasons);
 }
 
 async function main() {
@@ -654,6 +874,7 @@ async function main() {
   const { ghFetch } = await import('./get-bot-token.mjs');
   const policy = loadCheckerPolicy(process.env);
   const appSlug = appSlugEnv || policy.appSlug || DEFAULT_APP_SLUG;
+  const checkRunName = String(process.env.APP_CHECK_NAME || policy.appCheckName || DEFAULT_CHECK_RUN_NAME).trim() || DEFAULT_CHECK_RUN_NAME;
 
   // ── Resolve PR + trigger-time head SHA from whichever event fired ────────
   let prNumber;
@@ -693,6 +914,7 @@ async function main() {
     process.exit(1);
   }
   const existingAppReview = findApprovedAppReview(inputs.reviews, appSlug);
+  const existingAppCheckRun = findAppCheckRun(inputs.checkRuns, checkRunName, config.appId);
 
   const result = evaluateChecker({
     config,
@@ -719,6 +941,8 @@ async function main() {
     eventHeadSha,
     result,
     existingAppReview,
+    existingAppCheckRun,
+    checkRunName,
   });
 
   if (outcome.dismissed && existingAppReview) {
