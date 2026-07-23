@@ -327,7 +327,7 @@ export function buildIssueDeliveryKey(repo: string, issueIdentifier: string | nu
 
 type ExistingIssuePr = {
   url: string;
-  state: "OPEN" | "MERGED";
+  state: "OPEN" | "CLOSED" | "MERGED";
   mergeCommitOid: string | null;
 };
 
@@ -336,6 +336,7 @@ type ExistingIssuePrLookup =
   | { ok: false; reason: string };
 
 function hasExactIssueReference(input: {
+
   body: string;
   title: string;
   idempotencyKey: string;
@@ -409,7 +410,8 @@ async function findExistingPrForIssue(input: {
     const body = typeof row.body === "string" ? row.body : "";
     const merged = typeof row.mergedAt === "string" && row.mergedAt.length > 0;
     const open = row.state === "OPEN";
-    if (!url || (!open && !merged)) return [];
+    const closed = row.state === "CLOSED";
+    if (!url || (!open && !closed && !merged)) return [];
     if (!hasExactIssueReference({
       body,
       title,
@@ -419,7 +421,7 @@ async function findExistingPrForIssue(input: {
     })) return [];
     return [{
       url,
-      state: merged ? "MERGED" : "OPEN",
+      state: merged ? "MERGED" : open ? "OPEN" : "CLOSED",
       mergeCommitOid:
         merged && row.mergeCommit && typeof row.mergeCommit.oid === "string"
           ? row.mergeCommit.oid
@@ -431,11 +433,13 @@ async function findExistingPrForIssue(input: {
     ok: true,
     pr: matches.find((candidate) => candidate.state === "OPEN")
       ?? matches.find((candidate) => candidate.state === "MERGED")
+      ?? matches.find((candidate) => candidate.state === "CLOSED")
       ?? null,
   };
 }
 
 async function verifyMergedPrOnBase(input: {
+
   repo: string;
   baseBranch: string;
   pr: ExistingIssuePr;
@@ -925,6 +929,14 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     await log("stdout", `[delivery ${ts()}] result=pr_exists issue_key=${buildIssueDeliveryKey(input.repo, input.issueIdentifier, input.issueId)} pr_url=${issuePrLookup.pr.url}\n`);
     return { delivered: true, prUrl: issuePrLookup.pr.url, reason: "pr_exists" };
   }
+  if (issuePrLookup.pr?.state === "CLOSED") {
+    await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="prior_issue_pr_closed_without_merge" issue_key=${buildIssueDeliveryKey(input.repo, input.issueIdentifier, input.issueId)} pr_url=${issuePrLookup.pr.url}\n`);
+    return {
+      delivered: false,
+      prUrl: issuePrLookup.pr.url,
+      reason: "delivery_blocked: prior issue PR closed without merge",
+    };
+  }
   if (issuePrLookup.pr?.state === "MERGED") {
     const mergeIsOnBase = await verifyMergedPrOnBase({
       repo: input.repo,
@@ -947,6 +959,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
   }
 
   const canonicalIssueBranch = autonomousDelivery
+
     ? buildCanonicalIssueDeliveryBranch(input.issueIdentifier, input.issueId)
     : null;
   if (canonicalIssueBranch && branch !== canonicalIssueBranch) {
