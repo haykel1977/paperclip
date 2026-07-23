@@ -277,10 +277,12 @@ describe("executeDeliveryHook", () => {
 
     const body = bodyIndex >= 0 ? createCall?.[bodyIndex + 1] ?? "" : "";
     expect(body).toContain("## Description");
+    expect(body).toContain("- Repository: Beyn-SOLIDUS/quantum");
     expect(body).toContain("ADR: ADR-GOV-007");
     expect(body).toContain("TRUTHFULNESS: BACKEND-WIRED");
     expect(body).toContain("## Truthfulness Boundary");
     expect(body).toContain("| Claim | Evidence | Boundary |");
+
     expect(body).toContain("## Quality Gate Evidence");
     expect(body).toContain("## Type de changement");
     expect(body).toContain("VERIFIED: autonomous delivery requires a signed git commit before push");

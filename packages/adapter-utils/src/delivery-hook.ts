@@ -973,11 +973,13 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
   const body = buildQuantumPrBody({
     issueIdentifier: input.issueIdentifier,
     issueId: input.issueId,
+    repo: input.repo,
     runId: input.runId,
     adapterType: input.adapterType,
     agentId: input.agentId,
     model: input.model,
     branch,
+
     baseBranch: input.baseBranch,
     lane,
     adrRef,
@@ -1076,11 +1078,11 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     "create",
     "--repo",
     input.repo,
-
     "--head",
     branch,
     "--base",
     input.baseBranch,
+
     "--title",
     title,
     "--body",
