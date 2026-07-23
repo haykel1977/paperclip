@@ -529,7 +529,9 @@ async function fetchGitHubTree(
 ): Promise<GitHubTreeEntry[]> {
   const url = `${githubApiBase(source.hostname)}/repos/${source.owner}/${source.repo}/git/trees/${source.commit}?recursive=1`;
   try {
-    const response = await fetch(url, { headers: { accept: "application/vnd.github+json" } });
+    const response = await fetch(url, {
+      headers: githubRequestHeaders(source.hostname, { accept: "application/vnd.github+json" }),
+    });
     if (!response.ok) {
       errors.push(`${prefix} failed to fetch GitHub tree: HTTP ${response.status}.`);
       return [];
@@ -566,7 +568,7 @@ async function fetchReferencedFileBytes(
   }
   const url = rawGitHubUrl(source, normalizedPath);
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, { headers: githubRequestHeaders(source.hostname) });
     if (!response.ok) {
       errors.push(`${prefix}/${normalizedPath} failed to fetch pinned GitHub file: HTTP ${response.status}.`);
       return null;
@@ -763,7 +765,7 @@ function referencedPathMatches(relativePath: string, pattern: string) {
 
 function githubApiBase(hostname: string) {
   const normalized = hostname.toLowerCase();
-  return normalized === "github.com" || normalized === "www.github.com"
+  return isDotComGitHubHost(normalized)
     ? "https://api.github.com"
     : `https://${hostname}/api/v3`;
 }
@@ -772,9 +774,26 @@ function rawGitHubUrl(source: CatalogSkillSource, relativePath: string) {
   const fullPath = source.path ? `${source.path}/${relativePath}` : relativePath;
   const encodedPath = fullPath.split("/").map((segment) => encodeURIComponent(segment)).join("/");
   const normalized = source.hostname.toLowerCase();
-  return normalized === "github.com" || normalized === "www.github.com"
+  return isDotComGitHubHost(normalized)
     ? `https://raw.githubusercontent.com/${source.owner}/${source.repo}/${source.commit}/${encodedPath}`
     : `https://${source.hostname}/raw/${source.owner}/${source.repo}/${source.commit}/${encodedPath}`;
+}
+
+function githubRequestHeaders(hostname: string, base: Record<string, string> = {}) {
+  const headers: Record<string, string> = {
+    ...base,
+    "user-agent": "paperclip-skills-catalog-builder",
+  };
+  const token = process.env.PAPERCLIP_GITHUB_TOKEN ?? process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
+  if (token) headers.authorization = "Bearer " + token;
+  if (isDotComGitHubHost(hostname.toLowerCase())) {
+    headers["x-github-api-version"] = "2022-11-28";
+  }
+  return headers;
+}
+
+function isDotComGitHubHost(normalizedHostname: string) {
+  return normalizedHostname === "github.com" || normalizedHostname === "www.github.com";
 }
 
 function isPathInside(parent: string, child: string) {
