@@ -23,8 +23,11 @@ name: paperclip-checker (App gate)
 # performed with a separately-minted least-privilege App installation token.
 
 on:
+  # `edited` fires on title/body/base-branch changes, which feed the risk-lane
+  # classifier; including it lets a metadata edit invalidate a prior approval
+  # (see STALE_INDUCING_ACTIONS in paperclip-checker.mjs).
   pull_request_target:
-    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, labeled, unlabeled]
+    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, labeled, unlabeled, edited]
   workflow_run:
     # The base-branch CI workflows that produce the required checks (verify from
     # "PR", gitleaks from "Secret Scan"). On completion the checker re-evaluates
@@ -44,9 +47,12 @@ permissions:
   statuses: read
 
 concurrency:
-  # Serialize per PR (pull_request_target) or per head SHA (workflow_run, which
-  # has no PR number), cancelling superseded runs to bound the TOCTOU window.
-  group: paperclip-checker-${{ github.event.pull_request.number || github.event.workflow_run.head_sha }}
+  # Serialize per HEAD SHA across BOTH triggers. pull_request_target and
+  # workflow_run for the same commit must share one group, or two jobs could run
+  # in parallel and interleave dismiss/approve API calls. Keying on the head SHA
+  # (available on both event payloads) unifies them; superseded runs are
+  # cancelled to bound the TOCTOU window.
+  group: paperclip-checker-${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha }}
   cancel-in-progress: true
 
 jobs:

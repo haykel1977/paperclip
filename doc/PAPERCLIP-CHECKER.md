@@ -153,10 +153,13 @@ for an approval, and a not-yet-complete run waits rather than failing the PR.
 ## Stale-approval handling
 
 On `synchronize`, `reopened`, `ready_for_review`, `converted_to_draft`,
-`labeled`, and `unlabeled` — or whenever a prior App approval points at an older
-commit — the checker **dismisses/supersedes** its stale approval before
-re-deciding. If the dismissal API call fails, the checker **fails closed**
-(no approval) and relies on the documented branch-protection backstop below.
+`labeled`, `unlabeled`, and `edited` (title/body/base-branch changes feed the
+risk-lane classifier) — or whenever a prior App approval points at an older
+commit, or whenever the current re-evaluation does **not** re-approve (e.g. a
+`workflow_run` CI re-run that now fails at the same head SHA) — the checker
+**dismisses/supersedes** its stale approval before re-deciding. If the dismissal
+API call fails, the checker **fails closed** (no approval) and relies on the
+documented branch-protection backstop below.
 
 ### Required branch-protection backstop
 

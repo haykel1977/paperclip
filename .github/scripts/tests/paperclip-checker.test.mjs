@@ -232,6 +232,15 @@ test('summarizeRequiredChecks: status-typed requirement is satisfied only by exp
   assert.equal(spoof.state, 'failed');
 });
 
+test('summarizeRequiredChecks: status-typed requirement with NO appSlug → fail closed (producer unprovable)', () => {
+  // Parity with check_run/appMatches: a status whose expected producer is not
+  // pinned must never be accepted regardless of creator.
+  const statusPolicy = [{ name: 'legacy-ci', type: 'status' }];
+  const r = summarizeRequiredChecks([], [{ context: 'legacy-ci', state: 'success', creator: { login: 'anyone' } }], statusPolicy);
+  assert.equal(r.state, 'failed');
+  assert.match(r.failures.join(' '), /unexpected creator/i);
+});
+
 // ── evaluateChecker: activation gate (blocked, never a pass) ────────────────
 
 test('evaluateChecker: inactive config → blocked (not rejected/approved)', () => {
@@ -441,6 +450,35 @@ test('evaluateChecker: labeled event with prior approval → dismissStale true',
 
 test('evaluateChecker: no prior approval → dismissStale false', () => {
   const r = evalGreen({ eventAction: 'synchronize', existingAppReview: null });
+  assert.equal(r.dismissStale, false);
+});
+
+test('evaluateChecker: edited event with prior approval → dismissStale true', () => {
+  const r = evalGreen({ eventAction: 'edited', existingAppReview: { id: 11, commit_id: HEAD, state: 'APPROVED' } });
+  assert.equal(r.dismissStale, true);
+});
+
+test('evaluateChecker: workflow_run re-run now failing at same SHA → rejected AND dismissStale true', () => {
+  // A completed workflow_run re-trigger at the SAME head SHA where a required
+  // check now fails must dismiss the prior approval, not leave it standing.
+  const r = evalGreen({
+    eventAction: 'workflow_run',
+    existingAppReview: { id: 13, commit_id: HEAD, state: 'APPROVED' },
+    checkRuns: [
+      { name: 'verify', status: 'completed', conclusion: 'failure', app: { ...GH_ACTIONS } },
+      { name: 'gitleaks', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
+    ],
+  });
+  assert.equal(r.decision, 'rejected');
+  assert.equal(r.dismissStale, true);
+});
+
+test('evaluateChecker: workflow_run still-passing at same SHA with prior approval → approved, dismissStale false', () => {
+  const r = evalGreen({
+    eventAction: 'workflow_run',
+    existingAppReview: { id: 14, commit_id: HEAD, state: 'APPROVED' },
+  });
+  assert.equal(r.decision, 'approved');
   assert.equal(r.dismissStale, false);
 });
 

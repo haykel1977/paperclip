@@ -61,7 +61,7 @@ export const DEFAULT_REQUIRED_CHECK_POLICY = Object.freeze([
 ]);
 
 export const STALE_INDUCING_ACTIONS = Object.freeze(
-  new Set(['synchronize', 'reopened', 'ready_for_review', 'converted_to_draft', 'labeled', 'unlabeled']),
+  new Set(['synchronize', 'reopened', 'ready_for_review', 'converted_to_draft', 'labeled', 'unlabeled', 'edited']),
 );
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
@@ -193,9 +193,13 @@ export function summarizeRequiredChecks(checkRuns, statuses, requiredChecks = DE
   for (const cfg of requiredChecks) {
     if (cfg.type === 'status') {
       const named = sts.filter(s => String(s?.context ?? '').trim() === cfg.name);
-      const matching = named.filter(s => !cfg.appSlug || normalizeLogin(s?.creator?.login) === normalizeLogin(cfg.appSlug));
+      // Producer binding, fail-closed: a status matches only when the policy
+      // pins an expected creator (appSlug) AND the status's creator matches it.
+      // With no appSlug configured, nothing matches — a status with no provable
+      // producer can never satisfy the gate (parity with check_run/appMatches).
+      const matching = named.filter(s => cfg.appSlug && normalizeLogin(s?.creator?.login) === normalizeLogin(cfg.appSlug));
       if (named.length > 0 && matching.length === 0) {
-        failures.push(`Required status \`${cfg.name}\` exists only from an unexpected creator; expected \`${cfg.appSlug}\`. Blocking.`);
+        failures.push(`Required status \`${cfg.name}\` exists only from an unexpected creator; expected \`${cfg.appSlug ?? '(no producer configured)'}\`. Blocking.`);
         evidence.push({ name: cfg.name, conclusion: 'unexpected_producer' });
         continue;
       }
@@ -266,12 +270,23 @@ export function evaluateChecker({
   const app = normalizeLogin(appSlug);
   const currentHead = String(pr?.head?.sha ?? '').trim();
 
+  // A prior approval is stale by CHANGE when the PR advanced (head SHA differs)
+  // or a stale-inducing lifecycle action fired (push, label, metadata edit, …).
   const priorApprovalSha = String(existingAppReview?.commit_id ?? '').trim();
-  const dismissStale = Boolean(
+  const staleByChange = Boolean(
     existingAppReview &&
       (STALE_INDUCING_ACTIONS.has(eventAction) ||
         (priorApprovalSha && priorApprovalSha.toLowerCase() !== currentHead.toLowerCase())),
   );
+  // Any prior approval must also be dismissed whenever this evaluation does NOT
+  // re-approve — otherwise a re-run that now fails at the same head SHA (e.g. a
+  // workflow_run re-trigger) would leave a now-invalid approval standing. The
+  // final value is resolved per decision below.
+  const finalize = (decision, extra) => ({
+    decision,
+    dismissStale: Boolean(existingAppReview) && (staleByChange || decision !== 'approved'),
+    ...extra,
+  });
 
   const reasons = [];
 
@@ -320,22 +335,18 @@ export function evaluateChecker({
   if (checkSummary.state === 'failed') reasons.push(...checkSummary.failures);
 
   if (reasons.length > 0) {
-    return { decision: 'rejected', reasons, riskLane: classification.lane, dismissStale };
+    return finalize('rejected', { reasons, riskLane: classification.lane });
   }
   if (checkSummary.state === 'pending') {
-    return {
-      decision: 'pending',
+    return finalize('pending', {
       reasons: [`Awaiting terminal state of required check(s): ${checkSummary.pendingNames.map(n => `\`${n}\``).join(', ')}.`],
       riskLane: classification.lane,
-      dismissStale,
-    };
+    });
   }
-  return {
-    decision: 'approved',
+  return finalize('approved', {
     reasons: ['GREEN PR, fresh exact head SHA, all required checks SUCCESS from expected producers, distinct approver identity.'],
     riskLane: classification.lane,
-    dismissStale,
-  };
+  });
 }
 
 // ── Integration layer (network I/O; wired by main and integration tests) ─────
@@ -346,6 +357,21 @@ async function fetchAllPages(ghFetch, path, token) {
     const sep = path.includes('?') ? '&' : '?';
     const batch = await ghFetch(`${path}${sep}per_page=100&page=${page}`, token);
     const list = Array.isArray(batch) ? batch : [];
+    items.push(...list);
+    if (list.length < 100) return items;
+  }
+}
+
+// Object-shaped list endpoints (check-runs: { check_runs }, combined status:
+// { statuses }) are paginated too. A single page can silently drop a required
+// check on commits with large build matrices, degrading the gate into a false
+// negative. Page until a short page proves the list is exhausted.
+async function fetchAllPagesFromKey(ghFetch, path, token, key) {
+  const items = [];
+  for (let page = 1; ; page += 1) {
+    const sep = path.includes('?') ? '&' : '?';
+    const batch = await ghFetch(`${path}${sep}per_page=100&page=${page}`, token);
+    const list = Array.isArray(batch?.[key]) ? batch[key] : [];
     items.push(...list);
     if (list.length < 100) return items;
   }
@@ -385,18 +411,18 @@ async function gatherInputs(ghFetch, token, repo, prNumber) {
   if (!SHA_RE.test(String(headSha ?? ''))) {
     throw new Error('PR head SHA is missing or malformed.');
   }
-  const [files, checkRunsRaw, statusesRaw, reviews, headCommit] = await Promise.all([
+  const [files, checkRuns, statuses, reviews, headCommit] = await Promise.all([
     fetchAllPages(ghFetch, `/repos/${repo}/pulls/${prNumber}/files`, token),
-    ghFetch(`/repos/${repo}/commits/${headSha}/check-runs?per_page=100`, token),
-    ghFetch(`/repos/${repo}/commits/${headSha}/status`, token),
+    fetchAllPagesFromKey(ghFetch, `/repos/${repo}/commits/${headSha}/check-runs`, token, 'check_runs'),
+    fetchAllPagesFromKey(ghFetch, `/repos/${repo}/commits/${headSha}/status`, token, 'statuses'),
     fetchAllPages(ghFetch, `/repos/${repo}/pulls/${prNumber}/reviews`, token),
     ghFetch(`/repos/${repo}/commits/${headSha}`, token),
   ]);
   return {
     pr,
     files,
-    checkRuns: Array.isArray(checkRunsRaw?.check_runs) ? checkRunsRaw.check_runs : [],
-    statuses: Array.isArray(statusesRaw?.statuses) ? statusesRaw.statuses : [],
+    checkRuns,
+    statuses,
     reviews,
     headCommitAuthorLogin: headCommit?.author?.login ?? '',
     lastPusherLogin: headCommit?.committer?.login ?? headCommit?.author?.login ?? '',
