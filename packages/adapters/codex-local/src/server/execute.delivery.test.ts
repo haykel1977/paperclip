@@ -564,6 +564,29 @@ describe("executeDeliveryHook", () => {
     expect(log).toHaveBeenCalledWith("stderr", "[paperclip] delivery: skipped reason=branch_checkout_failed detail=fatal: cannot lock ref\n");
   });
 
+  it("configured delivery disables native PR creation when the delivery lane is disabled", async () => {
+    const worktreeCwd = mkWorktree();
+    const log = vi.fn(async () => {});
+    const runProc = vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" }));
+
+    const result = await executeConfiguredDeliveryHook({
+      ...base,
+      worktreeCwd,
+      branch: base.branch,
+      env: { PAPERCLIP_DELIVERY_LANE: "disabled" },
+      config: {},
+      context: {},
+      executionTargetIsRemote: false,
+      exitCode: 0,
+      runProc,
+      log,
+    });
+
+    expect(result).toBeNull();
+    expect(runProc).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith("stdout", "[paperclip] delivery: skipped reason=delivery_lane_disabled\n");
+  });
+
   it("configured delivery reports remote skip unless remote delivery is explicitly enabled", async () => {
     const worktreeCwd = mkWorktree();
     const log = vi.fn(async () => {});

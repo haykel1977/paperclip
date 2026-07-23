@@ -1235,6 +1235,13 @@ export async function executeConfiguredDeliveryHook(
     await input.log("stdout", "[paperclip] delivery: skipped reason=delivery_hook_disabled\n");
     return null;
   }
+  const deliveryLane = (
+    input.env.PAPERCLIP_DELIVERY_LANE ?? process.env.PAPERCLIP_DELIVERY_LANE ?? "production"
+  ).trim().toLowerCase();
+  if (deliveryLane === "disabled") {
+    await input.log("stdout", "[paperclip] delivery: skipped reason=delivery_lane_disabled\n");
+    return null;
+  }
   const remoteDeliveryEnabled =
     input.config.deliveryHookRemoteEnabled === true ||
     asString(input.config.deliveryHookRemoteEnabled).trim().toLowerCase() === "true" ||
@@ -1243,6 +1250,7 @@ export async function executeConfiguredDeliveryHook(
     await input.log("stdout", "[paperclip] delivery: skipped reason=remote_delivery_not_enabled\n");
     return null;
   }
+
   if ((input.exitCode ?? 1) !== 0) {
     await input.log("stdout", "[paperclip] delivery: skipped reason=adapter_exit_nonzero\n");
     return null;

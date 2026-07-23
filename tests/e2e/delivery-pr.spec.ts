@@ -468,18 +468,13 @@ test.describe("Delivery hook → PR creation", () => {
 
   test.skip("delivery blocked: PAPERCLIP_DELIVERY_LANE=disabled → no PR created, issue still done", async () => {
     /**
-     * SKIP REASON: Same as above — the PAPERCLIP_DELIVERY_LANE env var is
-     * consumed by the adapter process, not by the Paperclip server API.
+     * SKIP REASON: PAPERCLIP_DELIVERY_LANE=disabled is enforced by the adapter-side
+     * executeConfiguredDeliveryHook and covered by its unit tests. This browser test
+     * still cannot observe the adapter process or its outbound GitHub calls through
+     * the Paperclip server API harness.
      *
-     * When PAPERCLIP_DELIVERY_LANE=disabled, executeConfiguredDeliveryHook is
-     * NOT skipped (there is no such lane value in the current implementation).
-     * The lane value affects which labels are applied to the PR.
-     *
-     * Note: There is no "disabled" lane in delivery-hook.ts. The server's
-     * webServer env in playwright-delivery.config.ts sets this variable as a
-     * documentation signal; adapters running in tests would still attempt delivery.
-     *
-     * Activation path: same as the test above.
+     * Activation path: wire an adapter process to the mock GitHub server used above,
+     * then assert that the issue completes without any pull-request request.
      */
   });
 });
