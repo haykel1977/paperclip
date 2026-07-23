@@ -125,6 +125,11 @@ function buildFallbackDeliveryBranch(input: {
   return sanitizeDeliveryBranchName(`paperclip/${issueRef}-${runSuffix}`);
 }
 
+function buildCanonicalIssueDeliveryBranch(issueIdentifier: string | null, issueId: string | null): string | null {
+  const immutableIssueRef = issueId ?? issueIdentifier;
+  return immutableIssueRef ? sanitizeDeliveryBranchName(`paperclip/${immutableIssueRef}-delivery`) : null;
+}
+
 function isGitBranchAlreadyExistsError(stderr: string): boolean {
   const normalized = stderr.toLowerCase();
   return normalized.includes("already exists") || normalized.includes("a branch named") || normalized.includes("cannot create branch");
@@ -316,6 +321,145 @@ async function findExistingPr(input: {
   return null;
 }
 
+export function buildIssueDeliveryKey(repo: string, issueIdentifier: string | null, issueId: string | null): string {
+  return `${repo.trim().toLowerCase()}:${issueId ?? issueIdentifier ?? "unknown"}`;
+}
+
+type ExistingIssuePr = {
+  url: string;
+  state: "OPEN" | "MERGED";
+  mergeCommitOid: string | null;
+};
+
+type ExistingIssuePrLookup =
+  | { ok: true; pr: ExistingIssuePr | null }
+  | { ok: false; reason: string };
+
+function hasExactIssueReference(input: {
+  body: string;
+  title: string;
+  idempotencyKey: string;
+  issueIdentifier: string | null;
+  issueId: string | null;
+}) {
+  const bodyLines = input.body.split(/\r?\n/).map((line) => line.trim().toLowerCase());
+  if (bodyLines.includes(`- idempotency key: ${input.idempotencyKey}`.toLowerCase())) return true;
+  if (input.issueId && input.body.includes(`(${input.issueId})`)) return true;
+  if (!input.issueIdentifier) return false;
+  const escaped = input.issueIdentifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const exactIdentifier = new RegExp(`(^|[^A-Za-z0-9-])${escaped}([^A-Za-z0-9-]|$)`, "i");
+  return exactIdentifier.test(input.title) || exactIdentifier.test(input.body);
+}
+
+async function findExistingPrForIssue(input: {
+  repo: string;
+  issueIdentifier: string | null;
+  issueId: string | null;
+  worktreeCwd: string;
+  env: Record<string, string>;
+  runProc: DeliveryHookRunProcess;
+}): Promise<ExistingIssuePrLookup> {
+  const searchTerm = input.issueIdentifier ?? input.issueId;
+  if (!searchTerm) return { ok: true, pr: null };
+
+  const result = await input.runProc(
+    "gh",
+    [
+      "pr",
+      "list",
+      "--repo",
+      input.repo,
+      "--state",
+      "all",
+      "--search",
+      searchTerm,
+      "--limit",
+      "100",
+      "--json",
+      "url,state,mergedAt,mergeCommit,title,body",
+    ],
+    input.worktreeCwd,
+    input.env,
+  );
+  if (result.exitCode !== 0) {
+    return { ok: false, reason: firstNonEmptyLine(result.stderr) || "GitHub PR lookup failed" };
+  }
+  if (!result.stdout.trim()) return { ok: true, pr: null };
+
+  let rows: Array<{
+    url?: unknown;
+    state?: unknown;
+    mergedAt?: unknown;
+    mergeCommit?: { oid?: unknown } | null;
+    title?: unknown;
+    body?: unknown;
+  }>;
+  try {
+    const parsed = JSON.parse(result.stdout) as unknown;
+    if (!Array.isArray(parsed)) return { ok: false, reason: "GitHub PR lookup returned a non-array payload" };
+    rows = parsed;
+  } catch {
+    return { ok: false, reason: "GitHub PR lookup returned invalid JSON" };
+  }
+
+  const idempotencyKey = buildIssueDeliveryKey(input.repo, input.issueIdentifier, input.issueId);
+  const matches = rows.flatMap((row): ExistingIssuePr[] => {
+    const url = typeof row.url === "string" ? row.url.trim() : "";
+    const title = typeof row.title === "string" ? row.title : "";
+    const body = typeof row.body === "string" ? row.body : "";
+    const merged = typeof row.mergedAt === "string" && row.mergedAt.length > 0;
+    const open = row.state === "OPEN";
+    if (!url || (!open && !merged)) return [];
+    if (!hasExactIssueReference({
+      body,
+      title,
+      idempotencyKey,
+      issueIdentifier: input.issueIdentifier,
+      issueId: input.issueId,
+    })) return [];
+    return [{
+      url,
+      state: merged ? "MERGED" : "OPEN",
+      mergeCommitOid:
+        merged && row.mergeCommit && typeof row.mergeCommit.oid === "string"
+          ? row.mergeCommit.oid
+          : null,
+    }];
+  });
+
+  return {
+    ok: true,
+    pr: matches.find((candidate) => candidate.state === "OPEN")
+      ?? matches.find((candidate) => candidate.state === "MERGED")
+      ?? null,
+  };
+}
+
+async function verifyMergedPrOnBase(input: {
+  repo: string;
+  baseBranch: string;
+  pr: ExistingIssuePr;
+  worktreeCwd: string;
+  env: Record<string, string>;
+  runProc: DeliveryHookRunProcess;
+}): Promise<boolean> {
+  if (input.pr.state !== "MERGED" || !input.pr.mergeCommitOid) return false;
+  const compare = await input.runProc(
+    "gh",
+    [
+      "api",
+      `repos/${input.repo}/compare/${input.pr.mergeCommitOid}...${encodeURIComponent(input.baseBranch)}`,
+      "--jq",
+      ".status",
+    ],
+    input.worktreeCwd,
+    input.env,
+  );
+  if (compare.exitCode !== 0) return false;
+  const status = compare.stdout.trim().toLowerCase();
+  return status === "ahead" || status === "identical";
+}
+
 async function remoteBranchExists(input: {
   branch: string;
   worktreeCwd: string;
@@ -395,7 +539,7 @@ async function checkoutFreshRemoteCollisionBranch(input: {
  * Fetch repo label names, returns [] on failure (non-fatal).
  */
 async function fetchRepoLabels(input: {
-  repo:
+  repo: string;
   worktreeCwd: string;
   env: Record<string, string>;
   log: DeliveryHookLog;
@@ -541,6 +685,7 @@ function buildQuantumPrBody(input: {
   issueIdentifier: string | null;
   issueId: string | null;
   runId: string;
+  repo: string;
   adapterType?: string | null;
   agentId?: string | null;
   model?: string | null;
@@ -555,6 +700,7 @@ function buildQuantumPrBody(input: {
   signingPlan: DeliveryCommitSigningPlan;
 }): string {
   const issue = formatPrValue(input.issueIdentifier);
+  const idempotencyKey = buildIssueDeliveryKey(input.repo, input.issueIdentifier, input.issueId);
   const changedFiles = formatChangedFiles(input.statusStdout);
   const changedFileRows = changedFiles.length > 0 ? changedFiles.map((file) => `- \`${file}\``) : ["- No changed path reported"];
   const gateRows = input.qualityGateCommands.map(
@@ -567,6 +713,27 @@ function buildQuantumPrBody(input: {
       : "Human-gated production delivery: this PR requires human review and must not self-merge.";
 
   return [
+    "## Thinking Path",
+    "> - Paperclip manages sovereign agents and their delivery lifecycle.",
+    `> - The linked task is ${issue}, executed through the ${formatPrValue(input.adapterType)} adapter.`,
+    "> - The agent produced a focused worktree diff that now requires repository review.",
+    "> - The deterministic delivery hook verified local gates before creating this PR.",
+    "> - This pull request exposes the resulting changes without claiming hosted CI success.",
+    "",
+    "## Linked Issues or Issue Description",
+    "### What happened",
+    `Paperclip task ${issue} produced the changed paths listed below and requires delivery to the configured repository.`,
+    "",
+    "### Expected behavior",
+    "The focused agent output is reviewed and merged only after repository governance and required checks succeed.",
+    "",
+    "### Steps to reproduce",
+    `Inspect Paperclip task ${issue}, compare the changed paths, and run the verification commands recorded below.`,
+    "",
+    "## What Changed",
+    `- Delivered the focused worktree changes produced for Paperclip task ${issue}.`,
+    "- Preserved deterministic delivery metadata, quality-gate evidence, and truthfulness boundaries.",
+    "",
     "## Description",
     `Paperclip deterministic delivery for ${issue}.`,
     "",
@@ -574,10 +741,13 @@ function buildQuantumPrBody(input: {
     `ADR: ${input.adrRef}`,
     "",
     "## Type de changement",
+
     "- Automated agent delivery PR",
     "",
     "## Delivery Metadata",
     `- Paperclip issue: ${issue} (${formatPrValue(input.issueId)})`,
+    `- Repository: ${input.repo}`,
+    `- Idempotency key: ${idempotencyKey}`,
     `- Run: ${input.runId}`,
     `- Adapter: ${formatPrValue(input.adapterType)}`,
     `- Agent: ${formatPrValue(input.agentId)}`,
@@ -603,10 +773,21 @@ function buildQuantumPrBody(input: {
     "| --- | --- | --- |",
     ...gateRows,
     "",
+    "## Verification",
+    "- The local commands in Quality Gate Evidence exited successfully before commit and push.",
+    "- Review the changed paths and rely on GitHub required checks for hosted verification.",
+    "",
+    "## PR Readiness Gate",
+    `- Diff scope: limited to the changed paths reported for Paperclip task ${issue}.`,
+    "- Template status: completed deterministically by the delivery hook.",
+    "- Verification evidence: local command results are recorded in Quality Gate Evidence.",
+    "- CI status: Pending — GitHub required checks are the source of truth.",
+    "",
     "## Preuves",
     "- See Quality Gate Evidence and Delivery Metadata above.",
     "",
     "## Sécurité",
+
     "- Secret-like environment variables are stripped from local quality-gate commands.",
     "- Bot tokens are used only for git/gh delivery commands and are redacted from logs.",
     "- Autonomous delivery is blocked unless commit signing is configured and the latest commit is signed before push.",
@@ -617,10 +798,21 @@ function buildQuantumPrBody(input: {
     "## Plan de rollback",
     "- Revert this PR or close it before merge; no deployment side effect is performed by the delivery hook itself.",
     "",
+    "## Risks",
+    "- Hosted CI, branch protection, and reviewer findings may still block merge after this local delivery succeeds.",
+    "- Revert or close this PR if the delivered behavior does not match the linked Paperclip task.",
+    "",
+    "## Model Used",
+    `- ${formatPrValue(input.model)} via ${formatPrValue(input.adapterType)}; deterministic delivery and repository tooling were used after agent execution.`,
+    "",
+    "## Checklist",
+    "- [x] I searched GitHub for similar or duplicate PRs by Paperclip issue metadata before creating this PR.",
+    "",
     "## Truthfulness Boundary",
     "| Claim | Evidence | Boundary |",
     "| --- | --- | --- |",
     `| Delivery metadata above is accurate | Values were supplied to this deterministic hook at run time | Does not claim the diff is semantically complete beyond these inputs |`,
+
     `| Quality gates passed locally before push | Commands listed in the Quality Gate Evidence table exited 0 | Does not claim GitHub-hosted checks or deployment checks have passed |`,
     `| Changed paths are listed | Derived from \`git status --porcelain\` before commit | Does not summarize the intent of each code change |`,
     `| ${mergePolicy} | Derived from PAPERCLIP_AUTONOMOUS_DELIVERY and PAPERCLIP_DELIVERY_LANE | Repository governance remains authoritative |`,
@@ -669,8 +861,22 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     return { delivered: false, prUrl: null, reason: "no_diff" };
   }
   if (/^(UU|AA|DD) /m.test(status.stdout)) {
-    await log("stderr", `[delivery ${ts()}] result=conflict reason="merge conflict markers — abort, no force"\n`);
+    await log("stderr", `[delivery ${ts()}] result=conflict reason="unresolved git index conflict — abort, no force"\n`);
     return { delivered: false, prUrl: null, reason: "conflict" };
+  }
+  const conflictMarkerScan = await runProc(
+    "git",
+    ["grep", "--untracked", "-n", "-E", "^(<{7} |>{7} )", "--", "."],
+    worktreeCwd,
+    env,
+  );
+  if (conflictMarkerScan.exitCode === 0 && conflictMarkerScan.stdout.trim()) {
+    await log("stderr", `[delivery ${ts()}] result=conflict reason="conflict marker in tracked or untracked file — abort, no force"\n`);
+    return { delivered: false, prUrl: null, reason: "conflict" };
+  }
+  if (conflictMarkerScan.exitCode > 1) {
+    await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="conflict marker scan failed" detail="${firstNonEmptyLine(conflictMarkerScan.stderr)}"\n`);
+    return { delivered: false, prUrl: null, reason: "delivery_blocked: conflict marker scan failed" };
   }
 
   // ── 2. bot token check (autonomous lane only) ────────────────────────────
@@ -701,7 +907,67 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     await log("stdout", `[delivery ${ts()}] result=pr_exists pr_url=${existingPrUrl}\n`);
     return { delivered: true, prUrl: existingPrUrl, reason: "pr_exists" };
   }
+
+  const issuePrLookup = await findExistingPrForIssue({
+    repo: input.repo,
+    issueIdentifier: input.issueIdentifier,
+    issueId: input.issueId,
+    worktreeCwd,
+    env: deliveryCommandEnv,
+    runProc,
+  });
+  if (!issuePrLookup.ok) {
+    await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="issue_pr_lookup_failed" detail="${issuePrLookup.reason}"\n`);
+    return { delivered: false, prUrl: null, reason: "delivery_blocked: issue PR lookup failed" };
+  }
+  if (issuePrLookup.pr?.state === "OPEN") {
+    await log("stdout", `[delivery ${ts()}] result=pr_exists issue_key=${buildIssueDeliveryKey(input.repo, input.issueIdentifier, input.issueId)} pr_url=${issuePrLookup.pr.url}\n`);
+    return { delivered: true, prUrl: issuePrLookup.pr.url, reason: "pr_exists" };
+  }
+  if (issuePrLookup.pr?.state === "MERGED") {
+    const mergeIsOnBase = await verifyMergedPrOnBase({
+      repo: input.repo,
+      baseBranch: input.baseBranch,
+      pr: issuePrLookup.pr,
+      worktreeCwd,
+      env: deliveryCommandEnv,
+      runProc,
+    });
+    if (!mergeIsOnBase) {
+      await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="merged_issue_result_not_on_base" pr_url=${issuePrLookup.pr.url}\n`);
+      return {
+        delivered: false,
+        prUrl: issuePrLookup.pr.url,
+        reason: "delivery_blocked: merged issue result not on base",
+      };
+    }
+    await log("stdout", `[delivery ${ts()}] result=issue_already_merged issue_key=${buildIssueDeliveryKey(input.repo, input.issueIdentifier, input.issueId)} pr_url=${issuePrLookup.pr.url}\n`);
+    return { delivered: false, prUrl: issuePrLookup.pr.url, reason: "issue_already_merged" };
+  }
+
+  const canonicalIssueBranch = autonomousDelivery
+    ? buildCanonicalIssueDeliveryBranch(input.issueIdentifier, input.issueId)
+    : null;
+  if (canonicalIssueBranch && branch !== canonicalIssueBranch) {
+    const canonicalCheckout = await checkoutNewOrExistingBranch({
+      branch: canonicalIssueBranch,
+      worktreeCwd,
+      env,
+      runProc,
+    });
+    if (!canonicalCheckout.ok) {
+      await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="canonical_issue_branch_checkout_failed" detail="${firstNonEmptyLine(canonicalCheckout.stderr) || firstNonEmptyLine(canonicalCheckout.stdout) || "checkout failed"}"\n`);
+      return { delivered: false, prUrl: null, reason: "delivery_blocked: canonical issue branch checkout failed" };
+    }
+    branch = canonicalIssueBranch;
+    await log("stdout", `[delivery ${ts()}] canonical_issue_branch=${branch}${canonicalCheckout.reused ? " reused_local=true" : ""}\n`);
+  }
+
   if (await remoteBranchExists({ branch, worktreeCwd, env: deliveryCommandEnv, runProc })) {
+    if (canonicalIssueBranch && branch === canonicalIssueBranch) {
+      await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="canonical_issue_branch_exists_without_pr" branch=${branch}\n`);
+      return { delivered: false, prUrl: null, reason: "delivery_blocked: canonical issue branch exists without PR" };
+    }
     const collisionBranch = await resolveRemoteCollisionBranch({
       branch,
       runId: input.runId,
@@ -733,6 +999,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     env,
     runProc,
   });
+
   if (signingPlan.required && !signingPlan.signCommit) {
     await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="signed commits not configured"\n`);
     return { delivered: false, prUrl: null, reason: "delivery_blocked: signed commits not configured" };
@@ -750,11 +1017,13 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
   const body = buildQuantumPrBody({
     issueIdentifier: input.issueIdentifier,
     issueId: input.issueId,
+    repo: input.repo,
     runId: input.runId,
     adapterType: input.adapterType,
     agentId: input.agentId,
     model: input.model,
     branch,
+
     baseBranch: input.baseBranch,
     lane,
     adrRef,
@@ -788,7 +1057,11 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
 
   // ── 7. push (with retry on transient errors) ──────────────────────────────
   let push = await pushWithRetry({ branch, worktreeCwd, env: deliveryCommandEnv, log, ts, runProc });
-  if (push.exitCode !== 0 && isNonFastForwardPushError(push.stderr)) {
+  if (
+    push.exitCode !== 0 &&
+    isNonFastForwardPushError(push.stderr) &&
+    !(canonicalIssueBranch && branch === canonicalIssueBranch)
+  ) {
     const recoveryBranch = await checkoutFreshRemoteCollisionBranch({
       branch,
       runId: input.runId,
@@ -804,12 +1077,36 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
       await log("stderr", `[delivery ${ts()}] push_non_fast_forward_recovery_failed: ${firstNonEmptyLine(recoveryBranch.stderr) || firstNonEmptyLine(recoveryBranch.stdout) || "checkout failed"}\n`);
     }
   }
+
   if (push.exitCode !== 0) {
     const s = (push.stderr || "").toLowerCase();
     const reason =
       s.includes("401") || s.includes("403") || s.includes("denied") ? "push_auth_failed" : "push_failed";
     await log("stderr", `[delivery ${ts()}] result=${reason}: ${push.stderr}\n`);
     return { delivered: false, prUrl: null, reason };
+  }
+
+  // Close the lookup/create race as far as GitHub's API permits: another agent
+  // may have created the issue PR while this run was committing and pushing.
+  const issuePrAfterPush = await findExistingPrForIssue({
+    repo: input.repo,
+    issueIdentifier: input.issueIdentifier,
+    issueId: input.issueId,
+    worktreeCwd,
+    env: deliveryCommandEnv,
+    runProc,
+  });
+  if (!issuePrAfterPush.ok) {
+    await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="post_push_issue_pr_lookup_failed" detail="${issuePrAfterPush.reason}"\n`);
+    return { delivered: false, prUrl: null, reason: "delivery_blocked: issue PR lookup failed" };
+  }
+  if (issuePrAfterPush.pr) {
+    await log("stdout", `[delivery ${ts()}] result=pr_exists_after_push issue_key=${buildIssueDeliveryKey(input.repo, input.issueIdentifier, input.issueId)} pr_url=${issuePrAfterPush.pr.url}\n`);
+    return {
+      delivered: issuePrAfterPush.pr.state === "OPEN",
+      prUrl: issuePrAfterPush.pr.url,
+      reason: issuePrAfterPush.pr.state === "OPEN" ? "pr_exists" : "issue_already_merged",
+    };
   }
 
   // ── 8. create PR ──────────────────────────────────────────────────────────
@@ -829,6 +1126,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     branch,
     "--base",
     input.baseBranch,
+
     "--title",
     title,
     "--body",
@@ -848,6 +1146,22 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     if (existingAfterCreateFailure) {
       await log("stdout", `[delivery ${ts()}] result=pr_exists_after_create_failure pr_url=${existingAfterCreateFailure}\n`);
       return { delivered: true, prUrl: existingAfterCreateFailure, reason: "pr_exists" };
+    }
+    const issuePrAfterCreateFailure = await findExistingPrForIssue({
+      repo: input.repo,
+      issueIdentifier: input.issueIdentifier,
+      issueId: input.issueId,
+      worktreeCwd,
+      env: deliveryCommandEnv,
+      runProc,
+    });
+    if (issuePrAfterCreateFailure.ok && issuePrAfterCreateFailure.pr) {
+      await log("stdout", `[delivery ${ts()}] result=pr_exists_after_create_failure issue_key=${buildIssueDeliveryKey(input.repo, input.issueIdentifier, input.issueId)} pr_url=${issuePrAfterCreateFailure.pr.url}\n`);
+      return {
+        delivered: issuePrAfterCreateFailure.pr.state === "OPEN",
+        prUrl: issuePrAfterCreateFailure.pr.url,
+        reason: issuePrAfterCreateFailure.pr.state === "OPEN" ? "pr_exists" : "issue_already_merged",
+      };
     }
     await log("stderr", `[delivery ${ts()}] gh_pr_create_failed: ${pr.stderr}\n`);
     return { delivered: false, prUrl: null, reason: "pr_create_failed" };

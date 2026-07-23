@@ -29,10 +29,14 @@ const DEFAULT_AGENT_JWT_AUDIENCE = "paperclip-api";
 const DEFAULT_HEARTBEAT_SCHEDULER_INTERVAL_MS = "30000";
 const DEFAULT_SECRETS_PROVIDER = "local_encrypted";
 const DEFAULT_STORAGE_PROVIDER = "local_disk";
+const SENSITIVE_ENV_KEY_RE = /(?:^|_)(?:TOKEN|KEY|SECRET|PASSWORD|PASS)(?:_|$)/i;
+
 function defaultSecretsKeyFilePath(): string {
   return resolveDefaultSecretsKeyFilePath(resolvePaperclipInstanceId());
 }
+
 function defaultStorageBaseDir(): string {
+
   return resolveDefaultStorageDir(resolvePaperclipInstanceId());
 }
 
@@ -75,8 +79,9 @@ export async function envCommand(opts: { config?: string }): Promise<void> {
         default: "default",
         missing: "missing",
       }[entry.source];
+      const displayValue = SENSITIVE_ENV_KEY_RE.test(entry.key) ? "<redacted>" : entry.value;
       p.log.message(
-        `${pc.cyan(entry.key)} ${status.padEnd(7)} ${pc.dim(`[${sourceNote}] ${entry.note}`)}${entry.source === "missing" ? "" : ` ${pc.dim("=>")} ${pc.white(quoteShellValue(entry.value))}`}`,
+        `${pc.cyan(entry.key)} ${status.padEnd(7)} ${pc.dim(`[${sourceNote}] ${entry.note}`)}${entry.source === "missing" ? "" : ` ${pc.dim("=>")} ${pc.white(quoteShellValue(displayValue))}`}`,
       );
     }
   };
@@ -84,8 +89,13 @@ export async function envCommand(opts: { config?: string }): Promise<void> {
   formatSection("Required environment variables", requiredRows);
   formatSection("Optional environment variables", optionalRows);
 
-  const exportRows = rows.map((row) => (row.source === "missing" ? { ...row, value: "<set-this-value>" } : row));
+  const exportRows = rows.map((row) => (
+    row.source === "missing" || SENSITIVE_ENV_KEY_RE.test(row.key)
+      ? { ...row, value: "<set-this-value>" }
+      : row
+  ));
   const uniqueRows = uniqueByKey(exportRows);
+
   const exportBlock = uniqueRows.map((row) => `export ${row.key}=${quoteShellValue(row.value)}`).join("\n");
 
   if (configReadError) {
@@ -269,10 +279,18 @@ function collectDeploymentEnvRows(config: PaperclipConfig | null, configPath: st
       note: "Set to `false` to disable timer scheduling",
     },
     {
+      key: "PAPERCLIP_GITHUB_WEBHOOK_SECRET",
+      value: process.env.PAPERCLIP_GITHUB_WEBHOOK_SECRET ?? "",
+      source: process.env.PAPERCLIP_GITHUB_WEBHOOK_SECRET ? "env" : "missing",
+      required: false,
+      note: "HMAC secret for GitHub delivery reconciliation; rotate immediately if exposed",
+    },
+    {
       key: "PAPERCLIP_SECRETS_PROVIDER",
       value: secretsProvider,
       source: process.env.PAPERCLIP_SECRETS_PROVIDER
         ? "env"
+
         : config?.secrets?.provider
           ? "config"
           : "default",
