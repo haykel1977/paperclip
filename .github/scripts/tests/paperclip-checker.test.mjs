@@ -765,3 +765,11 @@ test('workflow: checkout pins the repository default branch, never the PR-select
   assert.doesNotMatch(wf, /ref:.*pull_request\.base\.sha/);
   assert.doesNotMatch(wf, /ref:.*head\.sha/);
 });
+
+test('workflow: checker job pins the check name to the documented paperclip-checker label', () => {
+  const wfPath = fileURLToPath(new URL('../../workflows/paperclip-checker.yml', import.meta.url));
+  const wf = readFileSync(wfPath, 'utf8');
+  // The emitted check-run name must be `paperclip-checker` (the label the
+  // runbook/branch-protection reference), not the bare job id `checker`.
+  assert.match(wf, /^\s{4}name:\s*paperclip-checker\s*$/m);
+});

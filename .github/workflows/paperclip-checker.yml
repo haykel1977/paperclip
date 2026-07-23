@@ -60,6 +60,11 @@ concurrency:
 
 jobs:
   checker:
+    # Emitted check-run name. Without this the check would surface under the job
+    # id `checker`, but the runbook and branch-protection guidance reference
+    # `paperclip-checker`; pin the display name so the documented required-check
+    # label matches the check GitHub actually reports.
+    name: paperclip-checker
     # Kill switch / activation gate: the entire job is skipped unless the
     # repository variable is explicitly "true". This is the disabled-by-default
     # state and the fast rollback (flip the variable to disable). For
