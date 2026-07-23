@@ -276,13 +276,27 @@ describe("executeDeliveryHook", () => {
     const bodyIndex = createCall?.indexOf("--body") ?? -1;
 
     const body = bodyIndex >= 0 ? createCall?.[bodyIndex + 1] ?? "" : "";
+    expect(body).toContain("## Thinking Path");
+    expect(body).toContain("## Linked Issues or Issue Description");
+    expect(body).toContain("### What happened");
+    expect(body).toContain("### Expected behavior");
+    expect(body).toContain("### Steps to reproduce");
+    expect(body).toContain("## What Changed");
     expect(body).toContain("## Description");
+    expect(body).toContain("- Repository: Beyn-SOLIDUS/quantum");
     expect(body).toContain("ADR: ADR-GOV-007");
     expect(body).toContain("TRUTHFULNESS: BACKEND-WIRED");
     expect(body).toContain("## Truthfulness Boundary");
     expect(body).toContain("| Claim | Evidence | Boundary |");
     expect(body).toContain("## Quality Gate Evidence");
+    expect(body).toContain("## Verification");
+    expect(body).toContain("## PR Readiness Gate");
+    expect(body).toContain("- CI status: Pending — GitHub required checks are the source of truth.");
+    expect(body).toContain("## Risks");
+    expect(body).toContain("## Model Used");
+    expect(body).toContain("- [x] I searched GitHub for similar or duplicate PRs");
     expect(body).toContain("## Type de changement");
+
     expect(body).toContain("VERIFIED: autonomous delivery requires a signed git commit before push");
     expect(body).toContain("## Sécurité");
     expect(body).toContain("## Dev/test merge policy");
