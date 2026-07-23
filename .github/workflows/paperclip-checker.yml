@@ -22,8 +22,13 @@ name: paperclip-checker (App gate)
 #
 # It only reads PR metadata/files/labels, the current head SHA, required
 # check-runs/statuses, and runs the base-branch risk-lane classifier — all with
-# the DEFAULT GITHUB_TOKEN. Its single privileged action is the App's own review,
-# performed with a separately-minted least-privilege App installation token.
+# the DEFAULT GITHUB_TOKEN. Its privileged action is publishing the AUTHORITATIVE
+# App-authored check run `paperclip-checker/app` on the exact PR head
+# (checks:write) — the context branch protection requires, since a GitHub App
+# review has author-association NONE and can never satisfy
+# required_approving_review_count. It also submits an audit-only PR review
+# (pull_requests:write), NOT relied on for merge. Both use a separately-minted
+# least-privilege App installation token; the default GITHUB_TOKEN stays read-only.
 
 on:
   # `edited` fires on title/body/base-branch changes, which feed the risk-lane
@@ -60,11 +65,14 @@ concurrency:
 
 jobs:
   checker:
-    # Emitted check-run name. Without this the check would surface under the job
-    # id `checker`, but the runbook and branch-protection guidance reference
-    # `paperclip-checker`; pin the display name so the documented required-check
-    # label matches the check GitHub actually reports.
-    name: paperclip-checker
+    # Runner job display name. This is the Actions check-run for the JOB itself
+    # and is DELIBERATELY DISTINCT from the App-authored required check
+    # `paperclip-checker/app`. Branch protection must require the App check (which
+    # is pinned to the App's app_id and only the write-privileged App can publish),
+    # never this runner job — whose success merely means "the script ran", not
+    # "the gate approved". Keeping the names distinct prevents an operator from
+    # accidentally requiring the spoofable runner context instead of the gate.
+    name: paperclip-checker (runner)
     # Kill switch / activation gate: the entire job is skipped unless the
     # repository variable is explicitly "true". This is the disabled-by-default
     # state and the fast rollback (flip the variable to disable). For
