@@ -69,7 +69,7 @@ export function computeAutomationReadiness(input: {
   const erroredAgents = summary?.agents?.error ?? 0;
   const pausedAgents = summary?.agents?.paused ?? 0;
   const liveRunCount = input.liveRunCount ?? 0;
-  const openTaskCount = summary?.tasks?.open ?? summary?.tasks?.inProgress ?? 0;
+  const openTaskCount = (summary?.tasks?.open ?? 0) + (summary?.tasks?.inProgress ?? 0);
   const blockedTaskCount = summary?.tasks?.blocked ?? 0;
   const blockedOperatorAttentionCount = input.blockedOperatorAttentionCount ?? blockedTaskCount;
   const blockedAgentWorkflowCount = input.blockedAgentWorkflowCount ?? 0;
@@ -119,7 +119,9 @@ export function computeAutomationReadiness(input: {
       title: "Human intervention queue",
       description:
         totalHumanQueue === 0
-          ? "No hidden human work: approvals, budget incidents, blocked tasks, and agent errors are clear."
+          ? blockedAgentWorkflowCount > 0
+            ? `${blockedAgentWorkflowCount} blocked item${blockedAgentWorkflowCount === 1 ? " is" : "s are"} owned by agent workflows; no operator decision is pending.`
+            : "No hidden human work: approvals, budget incidents, blocked tasks, and agent errors are clear."
           : `${totalHumanQueue} item${totalHumanQueue === 1 ? "" : "s"} require visible human attention before full autonomy.`,
       state: totalHumanQueue === 0 ? "ready" : "attention",
       href: totalHumanQueue === 0 ? "/activity" : "/approvals",
@@ -143,8 +145,8 @@ export function computeAutomationReadiness(input: {
       },
       {
         kind: "blocked_tasks",
-        label: "Blocked tasks",
-        count: blockedTaskCount,
+        label: "Blocked tasks needing operator triage",
+        count: blockedOperatorAttentionCount,
         href: "/issues",
       },
       {
@@ -179,6 +181,8 @@ export function computeAutomationReadiness(input: {
     liveRunCount,
     openTaskCount,
     blockedTaskCount,
+    blockedOperatorAttentionCount,
+    blockedAgentWorkflowCount,
     totalHumanQueue,
     interventionItems,
   };

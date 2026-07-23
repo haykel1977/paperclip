@@ -94,7 +94,7 @@ describe("computeAutomationReadiness", () => {
       },
       {
         kind: "blocked_tasks",
-        label: "Blocked tasks",
+        label: "Blocked tasks needing operator triage",
         count: 3,
         href: "/issues",
       },
@@ -105,6 +105,26 @@ describe("computeAutomationReadiness", () => {
         href: "/agents/error",
       },
     ]);
+  });
+
+  it("keeps agent-owned blockers out of the human queue", () => {
+    const readiness = computeAutomationReadiness({
+      summary: makeSummary({ tasks: { blocked: 373 } }),
+      agentCount: 21,
+      blockedOperatorAttentionCount: 12,
+      blockedAgentWorkflowCount: 361,
+    });
+
+    expect(readiness.blockedTaskCount).toBe(373);
+    expect(readiness.blockedOperatorAttentionCount).toBe(12);
+    expect(readiness.blockedAgentWorkflowCount).toBe(361);
+    expect(readiness.totalHumanQueue).toBe(12);
+    expect(readiness.interventionItems).toContainEqual({
+      kind: "blocked_tasks",
+      label: "Blocked tasks needing operator triage",
+      count: 12,
+      href: "/issues",
+    });
   });
 
   it("uses dashboard pending approvals when the dedicated approval count is unavailable", () => {

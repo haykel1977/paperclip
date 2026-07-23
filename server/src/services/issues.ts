@@ -2478,17 +2478,19 @@ function compareBlockedInboxRows(
 }
 
 function blockedTriageHandling(
-  reason: IssueBlockedInboxAttention["reason"],
+  attention: IssueBlockedInboxAttention,
 ): IssueBlockedTriageHandling {
-  switch (reason) {
-    case "open_recovery_issue":
-    case "missing_successful_run_disposition":
-    case "blocked_by_assigned_backlog_issue":
-      return "agent";
+  switch (attention.reason) {
     case "pending_board_decision":
     case "pending_user_decision":
     case "external_owner_action":
       return "human";
+    case "open_recovery_issue":
+    case "missing_successful_run_disposition":
+    case "blocked_by_assigned_backlog_issue":
+      if (attention.owner.type === "agent") return "agent";
+      if (["user", "board", "external"].includes(attention.owner.type)) return "human";
+      return "triage";
     default:
       return "triage";
   }
@@ -2498,7 +2500,8 @@ export function summarizeBlockedInboxIssues(
   rows: ReadonlyArray<{ blockedInboxAttention?: IssueBlockedInboxAttention | null }>,
   now: Date = new Date(),
 ): IssueBlockedTriageSummary {
-  const buckets = new Map<IssueBlockedInboxAttention["reason"], {
+  const buckets = new Map<string, {
+    reason: IssueBlockedInboxAttention["reason"];
     count: number;
     stoppedHours: number[];
     handling: IssueBlockedTriageHandling;
@@ -2508,10 +2511,13 @@ export function summarizeBlockedInboxIssues(
   for (const row of rows) {
     const attention = row.blockedInboxAttention;
     if (!attention) continue;
-    const bucket = buckets.get(attention.reason) ?? {
+    const handling = blockedTriageHandling(attention);
+    const bucketKey = `${attention.reason}:${handling}`;
+    const bucket = buckets.get(bucketKey) ?? {
+      reason: attention.reason,
       count: 0,
       stoppedHours: [],
-      handling: blockedTriageHandling(attention.reason),
+      handling,
       actionLabel: attention.action.label || "Inspect blocked work",
     };
     bucket.count += 1;
@@ -2521,11 +2527,11 @@ export function summarizeBlockedInboxIssues(
         bucket.stoppedHours.push(Math.max(0, (now.getTime() - stoppedAt) / 3_600_000));
       }
     }
-    buckets.set(attention.reason, bucket);
+    buckets.set(bucketKey, bucket);
   }
 
-  const categories = [...buckets.entries()]
-    .map(([reason, bucket]) => {
+  const categories = [...buckets.values()]
+    .map((bucket) => {
       const sortedHours = [...bucket.stoppedHours].sort((left, right) => left - right);
       const middle = Math.floor(sortedHours.length / 2);
       const median = sortedHours.length === 0
@@ -2534,7 +2540,7 @@ export function summarizeBlockedInboxIssues(
           ? sortedHours[middle]!
           : (sortedHours[middle - 1]! + sortedHours[middle]!) / 2;
       return {
-        reason,
+        reason: bucket.reason,
         count: bucket.count,
         medianStoppedHours: median === null ? null : Math.round(median * 10) / 10,
         handling: bucket.handling,

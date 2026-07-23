@@ -53,7 +53,7 @@ function RecoveryPreviewDialog({
           <DialogTitle>Confirm auto-recovery</DialogTitle>
           <DialogDescription>
             {preview
-              ? `${count} recovery ${count === 1 ? "task" : "tasks"} match the last ${preview.lookbackHours} hours.`
+              ? `${count} of ${preview.findings} current issue-graph ${preview.findings === 1 ? "finding" : "findings"} match the last ${preview.lookbackHours} hours.`
               : "Checking recovery candidates before enabling."}
           </DialogDescription>
         </DialogHeader>
@@ -61,8 +61,9 @@ function RecoveryPreviewDialog({
         <div className="max-h-[min(28rem,65vh)] space-y-3 overflow-y-auto pr-1">
           {preview && preview.items.length === 0 ? (
             <div className="rounded-md border border-border bg-muted/30 px-3 py-4 text-sm text-muted-foreground">
-              No recovery tasks would be created right now. Auto-recovery can still run for future liveness incidents in
-              this window.
+              {preview.findings === 0
+                ? "No current issue-graph liveness finding was detected. This result is not caused by the lookback window."
+                : `${preview.skippedOutsideLookback} current ${preview.skippedOutsideLookback === 1 ? "finding is" : "findings are"} outside the lookback window; no recovery task would be created.`}
             </div>
           ) : null}
 

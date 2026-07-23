@@ -19,6 +19,7 @@ import { agentsApi } from "../api/agents";
 import { approvalsApi } from "../api/approvals";
 import { dashboardApi } from "../api/dashboard";
 import { heartbeatsApi } from "../api/heartbeats";
+import { issuesApi } from "../api/issues";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useCompany } from "../context/CompanyContext";
 import {
@@ -51,6 +52,19 @@ function stateClassName(state: AutomationCheckState) {
   if (state === "ready") return "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
   if (state === "attention") return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";
   return "border-border bg-muted text-muted-foreground";
+}
+
+function blockedReasonLabel(reason: string) {
+  return reason
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function stoppedDurationLabel(hours: number | null) {
+  if (hours === null) return "Unknown";
+  if (hours < 24) return `${hours}h`;
+  return `${Math.round((hours / 24) * 10) / 10}d`;
 }
 
 export function Automation() {
@@ -86,14 +100,32 @@ export function Automation() {
     refetchInterval: 10_000,
   });
 
-  const loading = summaryLoading || agentsLoading || approvalsLoading || liveRunsLoading;
+  const { data: blockedTriage, isLoading: blockedTriageLoading } = useQuery({
+    queryKey: selectedCompanyId
+      ? queryKeys.issues.blockedTriageSummary(selectedCompanyId)
+      : ["issues", "automation", "blocked-triage", "none"],
+    queryFn: () => issuesApi.blockedTriageSummary(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+    refetchInterval: 30_000,
+  });
+
+  const loading = summaryLoading || agentsLoading || approvalsLoading || liveRunsLoading || blockedTriageLoading;
 
   const automation = useMemo(() => computeAutomationReadiness({
     summary,
     agentCount: agents?.length ?? 0,
     pendingApprovalCount: pendingApprovals?.length,
     liveRunCount: liveRuns?.length ?? 0,
-  }), [agents?.length, liveRuns?.length, pendingApprovals?.length, summary]);
+    blockedOperatorAttentionCount: blockedTriage?.operatorAttentionCount,
+    blockedAgentWorkflowCount: blockedTriage?.agentWorkflowCount,
+  }), [
+    agents?.length,
+    blockedTriage?.agentWorkflowCount,
+    blockedTriage?.operatorAttentionCount,
+    liveRuns?.length,
+    pendingApprovals?.length,
+    summary,
+  ]);
 
   if (!selectedCompanyId) {
     return companies.length === 0 ? (
@@ -141,10 +173,61 @@ export function Automation() {
         <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard icon={Bot} label="Agents" value={automation.agentCount} detail={`${automation.runningAgents} running`} />
           <StatCard icon={PlayCircle} label="Live runs" value={automation.liveRunCount} detail="Refreshed every 10s" />
-          <StatCard icon={CircleDot} label="Open tasks" value={automation.openTaskCount} detail={`${automation.blockedTaskCount} blocked`} />
-          <StatCard icon={UserCheck} label="Human queue" value={automation.totalHumanQueue} detail="Visible review only" />
+          <StatCard
+            icon={CircleDot}
+            label="Blocked work"
+            value={automation.blockedTaskCount}
+            detail={`${automation.blockedAgentWorkflowCount} agent-owned`}
+          />
+          <StatCard
+            icon={UserCheck}
+            label="Human queue"
+            value={automation.totalHumanQueue}
+            detail={`${automation.blockedOperatorAttentionCount} blocked items need triage`}
+          />
         </div>
       </section>
+
+      {blockedTriage && blockedTriage.categories.length > 0 ? (
+        <section className="rounded-xl border border-border bg-card p-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="font-semibold">Blocked work triage</h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Causes are separated by responsible owner so agent recovery is not counted as human review.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2 text-xs">
+              <Badge variant="outline">{blockedTriage.total} total</Badge>
+              <Badge variant="outline" className="border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
+                {blockedTriage.agentWorkflowCount} agent-owned
+              </Badge>
+              <Badge variant="outline" className="border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300">
+                {blockedTriage.operatorAttentionCount} operator/triage
+              </Badge>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-2">
+            {blockedTriage.categories.map((category) => (
+              <div
+                key={`${category.reason}:${category.handling}`}
+                className="grid gap-2 rounded-lg border border-border bg-background p-3 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{blockedReasonLabel(category.reason)}</p>
+                  <p className="mt-0.5 truncate text-xs text-muted-foreground">Next: {category.actionLabel}</p>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Badge variant="outline">{category.handling}</Badge>
+                  <span>median {stoppedDurationLabel(category.medianStoppedHours)}</span>
+                </div>
+                <span className="text-right text-sm font-semibold tabular-nums">{category.count}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <section className="grid gap-4 lg:grid-cols-[1fr_1.4fr]">
         <div className="rounded-xl border border-border bg-card p-4">
