@@ -150,7 +150,7 @@ async function fetchProtection(repo, branch, token) {
   if (token) {
     const res = await fetch(`https://api.github.com${path}`, {
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: 'Bearer ' + token,
         Accept: 'application/vnd.github+json',
         'User-Agent': 'paperclip-branch-protection-check',
       },
