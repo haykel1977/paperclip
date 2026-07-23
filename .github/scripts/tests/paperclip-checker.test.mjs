@@ -1396,6 +1396,137 @@ test('executeDecision: rejected/blocked/pending publish failure is swallowed (ab
   assert.equal(pending.exitCode, 0);
 });
 
+// ── Single source of truth: the PUBLISHED check summary must reflect the ACTUAL
+// terminal reason, never a stale snapshot of result.reasons (Copilot review
+// discussion_r3637836391). For every late-failing branch the published
+// `paperclip-checker/app` summary and the returned outcome.reasons must carry
+// the SAME terminal reason, and the misleading upstream result.reasons must NOT
+// leak into the published check. Fail-closed conclusion (failure) and exact-head
+// binding are re-asserted alongside.
+
+test('finalize SSOT: TOCTOU head advance publishes a FAILURE whose summary states the advance, not the stale approved reasons', async () => {
+  const { calls, deps } = recordingDeps();
+  const outcome = await executeDecision(baseArgs({
+    ghFetch: async () => ({ head: { sha: OTHER } }),
+    // result.reasons here are the (now-stale) approved reasons; they must NOT be
+    // what the published FAILURE check advertises.
+    result: { decision: 'approved', dismissStale: false, riskLane: 'GREEN', reasons: ['GREEN lane; all checks passed'] },
+    deps,
+  }));
+  assert.equal(outcome.status, 'rejected');
+  assert.equal(outcome.exitCode, 1);
+  assert.equal(calls.upsert.length, 1);
+  assert.equal(calls.upsert[0].conclusion, 'failure'); // never neutral / never success
+  assert.equal(calls.upsert[0].headSha, HEAD); // bound to the exact (stale) event head
+  // Published summary reflects the terminal reason …
+  assert.match(calls.upsert[0].summary, /Head advanced during evaluation/);
+  // … and does NOT leak the stale approved reasons.
+  assert.doesNotMatch(calls.upsert[0].summary, /all checks passed/);
+  // Returned outcome and published check agree.
+  assert.match(outcome.reasons.join(' '), /Head advanced during evaluation/);
+});
+
+test('finalize SSOT: dismiss-stale failure publishes a FAILURE whose summary states the dismiss failure', async () => {
+  const calls = { upsert: [] };
+  const deps = {
+    mintAppToken: async () => 'app-token',
+    dismissReview: async () => { const e = new Error('secret body {token:...}'); e.statusCode = 403; throw e; },
+    submitApproval: async () => { throw new Error('should not approve'); },
+    upsertCheckRun: async (_g, _t, _r, headSha, opts) => { calls.upsert.push({ headSha, ...opts }); return { id: opts.existingId ?? 1 }; },
+  };
+  const outcome = await executeDecision(baseArgs({
+    result: { decision: 'approved', dismissStale: true, riskLane: 'GREEN', reasons: ['GREEN lane; all checks passed'] },
+    existingAppReview: { id: 9, commit_id: HEAD, state: 'APPROVED' },
+    deps,
+  }));
+  assert.equal(outcome.status, 'blocked');
+  assert.equal(outcome.exitCode, 1);
+  assert.equal(calls.upsert.length, 1);
+  assert.equal(calls.upsert[0].conclusion, 'failure');
+  assert.match(calls.upsert[0].summary, /Failed to dismiss stale approval/);
+  assert.match(calls.upsert[0].summary, /HTTP 403/); // sanitized status only
+  assert.doesNotMatch(calls.upsert[0].summary, /all checks passed/);
+  assert.doesNotMatch(calls.upsert[0].summary, /secret body|token/); // no raw body
+  assert.match(outcome.reasons.join(' '), /Failed to dismiss stale approval/);
+});
+
+test('finalize SSOT: freshness re-read failure publishes a FAILURE whose summary states the re-read failure', async () => {
+  const calls = { upsert: [] };
+  const deps = {
+    mintAppToken: async () => 'app-token',
+    dismissReview: async () => {},
+    submitApproval: async () => { throw new Error('should not approve'); },
+    upsertCheckRun: async (_g, _t, _r, headSha, opts) => { calls.upsert.push({ headSha, ...opts }); return { id: opts.existingId ?? 1 }; },
+  };
+  const outcome = await executeDecision(baseArgs({
+    ghFetch: async () => { const e = new Error('secret pulls body'); e.statusCode = 500; throw e; }, // freshness re-read fails
+    result: { decision: 'approved', dismissStale: false, riskLane: 'GREEN', reasons: ['GREEN lane; all checks passed'] },
+    deps,
+  }));
+  assert.equal(outcome.status, 'blocked');
+  assert.equal(outcome.exitCode, 1);
+  assert.equal(calls.upsert.length, 1);
+  assert.equal(calls.upsert[0].conclusion, 'failure');
+  assert.match(calls.upsert[0].summary, /Freshness re-read failed/);
+  assert.match(calls.upsert[0].summary, /HTTP 500/);
+  assert.doesNotMatch(calls.upsert[0].summary, /all checks passed/);
+  assert.match(outcome.reasons.join(' '), /Freshness re-read failed/);
+});
+
+test('finalize SSOT: TOCTOU + dismiss failure publishes a FAILURE whose summary states the stale-dismiss failure', async () => {
+  const calls = { upsert: [], dismiss: 0 };
+  const deps = {
+    mintAppToken: async () => 'app-token',
+    dismissReview: async () => { calls.dismiss += 1; throw new Error('DELETE review → 403'); },
+    submitApproval: async () => { throw new Error('should not approve'); },
+    upsertCheckRun: async (_g, _t, _r, headSha, opts) => { calls.upsert.push({ headSha, ...opts }); return { id: opts.existingId ?? 1 }; },
+  };
+  const outcome = await executeDecision(baseArgs({
+    ghFetch: async () => ({ head: { sha: OTHER } }), // head advanced mid-run
+    result: { decision: 'approved', dismissStale: false, riskLane: 'GREEN', reasons: ['GREEN lane; all checks passed'] },
+    existingAppReview: { id: 9, commit_id: HEAD, state: 'APPROVED' },
+    deps,
+  }));
+  assert.equal(outcome.status, 'blocked');
+  assert.equal(outcome.exitCode, 1);
+  assert.equal(calls.dismiss, 1);
+  assert.equal(calls.upsert.length, 1);
+  assert.equal(calls.upsert[0].conclusion, 'failure');
+  assert.equal(calls.upsert[0].headSha, HEAD);
+  assert.match(calls.upsert[0].summary, /dismissing the now-stale approval failed/);
+  assert.doesNotMatch(calls.upsert[0].summary, /all checks passed/);
+  assert.match(outcome.reasons.join(' '), /dismissing the now-stale approval failed/);
+});
+
+test('finalize SSOT: pending publishes an in_progress check whose summary reflects the pending reasons', async () => {
+  const { calls, deps } = recordingDeps();
+  const outcome = await executeDecision(baseArgs({
+    result: { decision: 'pending', dismissStale: false, riskLane: 'GREEN', reasons: ['awaiting verify + gitleaks'] },
+    deps,
+  }));
+  assert.equal(outcome.status, 'pending');
+  assert.equal(calls.upsert.length, 1);
+  assert.equal(calls.upsert[0].status, 'in_progress');
+  assert.equal(calls.upsert[0].conclusion, undefined);
+  assert.match(calls.upsert[0].summary, /awaiting verify \+ gitleaks/);
+  assert.match(outcome.reasons.join(' '), /awaiting verify \+ gitleaks/);
+});
+
+test('finalize SSOT: rejected/blocked default publishes a FAILURE whose summary reflects the decision reasons', async () => {
+  for (const decision of ['rejected', 'blocked']) {
+    const { calls, deps } = recordingDeps();
+    const outcome = await executeDecision(baseArgs({
+      result: { decision, dismissStale: false, riskLane: 'RED', reasons: [`terminal:${decision}`] },
+      deps,
+    }));
+    assert.equal(outcome.status, decision);
+    assert.equal(calls.upsert.length, 1);
+    assert.equal(calls.upsert[0].conclusion, 'failure');
+    assert.match(calls.upsert[0].summary, new RegExp(`terminal:${decision}`));
+    assert.match(outcome.reasons.join(' '), new RegExp(`terminal:${decision}`));
+  }
+});
+
 test('upsertCheckRun: no existingId → POST creates a run bound to head_sha with name+status+output', async () => {
   let captured = null;
   const ghFetch = async (path, token, opts) => {

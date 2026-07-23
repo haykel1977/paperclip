@@ -658,10 +658,12 @@ export async function executeDecision({
 
   let dismissed = false;
 
-  // Publish (create or idempotently update) the App check run for `status`.
-  // Throws on API failure so callers can choose fail-closed vs best-effort.
-  const publishCheck = async status => {
-    const params = checkRunParamsForDecision(status, result.reasons);
+  // Publish (create or idempotently update) the App check run for `status`,
+  // rendering the human-readable summary from the ACTUAL terminal `reasons`
+  // (never a stale snapshot). Throws on API failure so callers can choose
+  // fail-closed vs best-effort.
+  const publishCheck = async (status, reasons) => {
+    const params = checkRunParamsForDecision(status, reasons);
     const token = await getToken();
     await upsert(ghFetch, token, repo, eventHeadSha, {
       existingId: existingAppCheckRun?.id,
@@ -672,7 +674,21 @@ export async function executeDecision({
       summary: params.summary,
     });
   };
-  const publishBestEffort = async status => { try { await publishCheck(status); } catch { /* absence already fails closed */ } };
+  const publishBestEffort = async (status, reasons) => { try { await publishCheck(status, reasons); } catch { /* absence already fails closed */ } };
+
+  // Single source of truth for every NON-approved terminal path: publish the
+  // check and return the outcome from the SAME `reasons`, so the published
+  // `paperclip-checker/app` summary/conclusion can never diverge from the
+  // decision main() emits and exits on. The published status equals the
+  // returned status in all of these paths (blocked→failure, rejected→failure,
+  // pending→in_progress), preserving fail-closed + never-neutral semantics; the
+  // publish is best-effort because the ABSENCE of a success check already fails
+  // closed. Exact-head binding (eventHeadSha) and App-id binding (existingId via
+  // findAppCheckRun) are inherited from publishCheck.
+  const finalize = async (status, exitCode, reasons) => {
+    await publishBestEffort(status, reasons);
+    return { status, exitCode, dismissed, riskLane: result.riskLane, reasons };
+  };
 
   // Dismiss/supersede a stale prior approval. The App token is minted here
   // (write needed). If dismissal fails, fail closed and rely on the documented
@@ -683,8 +699,7 @@ export async function executeDecision({
       await dismiss(ghFetch, token, repo, prNumber, existingAppReview.id);
       dismissed = true;
     } catch (error) {
-      await publishBestEffort('blocked');
-      return { status: 'blocked', exitCode: 1, dismissed, reasons: [`Failed to dismiss stale approval: ${sanitizeError(error)}`] };
+      return finalize('blocked', 1, [`Failed to dismiss stale approval: ${sanitizeError(error)}`]);
     }
   }
 
@@ -694,8 +709,7 @@ export async function executeDecision({
     try {
       fresh = await ghFetch(`/repos/${repo}/pulls/${prNumber}`, readToken);
     } catch (error) {
-      await publishBestEffort('blocked');
-      return { status: 'blocked', exitCode: 1, dismissed, reasons: [`Freshness re-read failed: ${sanitizeError(error)}`] };
+      return finalize('blocked', 1, [`Freshness re-read failed: ${sanitizeError(error)}`]);
     }
     const freshSha = String(fresh?.head?.sha ?? '').trim();
     if (!SHA_RE.test(freshSha) || freshSha.toLowerCase() !== String(eventHeadSha).toLowerCase()) {
@@ -709,12 +723,10 @@ export async function executeDecision({
           await dismiss(ghFetch, token, repo, prNumber, existingAppReview.id);
           dismissed = true;
         } catch (error) {
-          await publishBestEffort('blocked');
-          return { status: 'blocked', exitCode: 1, dismissed, reasons: [`Head advanced during evaluation and dismissing the now-stale approval failed: ${sanitizeError(error)}`] };
+          return finalize('blocked', 1, [`Head advanced during evaluation and dismissing the now-stale approval failed: ${sanitizeError(error)}`]);
         }
       }
-      await publishBestEffort('rejected');
-      return { status: 'rejected', exitCode: 1, dismissed, riskLane: result.riskLane, reasons: [`Head advanced during evaluation (now ${freshSha || 'unknown'}); refusing to approve a stale commit.`] };
+      return finalize('rejected', 1, [`Head advanced during evaluation (now ${freshSha || 'unknown'}); refusing to approve a stale commit.`]);
     }
     // Idempotency: THIS App's own check run may already report success for this
     // exact, freshness-confirmed head (typical on a second workflow_run at the
@@ -741,7 +753,7 @@ export async function executeDecision({
     // Authoritative merge signal FIRST — the success check MUST land or we fail
     // closed (there would be no green required check otherwise).
     try {
-      await publishCheck('approved');
+      await publishCheck('approved', result.reasons);
     } catch (error) {
       return { status: 'blocked', exitCode: 1, dismissed, riskLane: result.riskLane, reasons: [`Publishing the success check run failed: ${sanitizeError(error)}`] };
     }
@@ -768,12 +780,10 @@ export async function executeDecision({
     // Not a pass: publish an in_progress check (keeps the required context present
     // but unsatisfied) and exit 0 so the completing CI workflow_run can re-invoke
     // us cleanly when the last required check turns green.
-    await publishBestEffort('pending');
-    return { status: 'pending', exitCode: 0, dismissed, riskLane: result.riskLane, reasons: result.reasons };
+    return finalize('pending', 0, result.reasons);
   }
 
-  await publishBestEffort(result.decision);
-  return { status: result.decision, exitCode: 1, dismissed, riskLane: result.riskLane, reasons: result.reasons };
+  return finalize(result.decision, 1, result.reasons);
 }
 
 async function main() {
