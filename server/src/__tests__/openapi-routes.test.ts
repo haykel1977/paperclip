@@ -25,7 +25,6 @@ const apiPrefixes: Record<string, string> = {
   "dashboard.ts": "/api",
   "environments.ts": "/api",
   "execution-workspaces.ts": "/api",
-  "github-webhooks.ts": "/api/webhooks/github",
   "goals.ts": "/api",
   "health.ts": "/api/health",
   "inbox-dismissals.ts": "/api",
@@ -46,6 +45,9 @@ const apiPrefixes: Record<string, string> = {
   "teams-catalog.ts": "/api",
   "user-profiles.ts": "/api",
 };
+
+// Internal routes intentionally excluded from the public OpenAPI spec.
+const internalRouteFiles = new Set(["github-webhooks.ts"]);
 
 const ROUTE_LITERAL_PATTERN = /router\.(get|post|put|patch|delete)\(\s*["'`]([^"'`]+)["'`]/g;
 const ROUTER_METHOD_PATTERN = /router\.(get|post|put|patch|delete)\(/;
@@ -86,7 +88,7 @@ function loadActualRoutes() {
     const prefix = apiPrefixes[file];
     const source = fs.readFileSync(path.join(ROUTES_DIR, file), "utf8");
     if (!prefix) {
-      if (ROUTER_METHOD_PATTERN.test(source)) {
+      if (!internalRouteFiles.has(file) && ROUTER_METHOD_PATTERN.test(source)) {
         unknownRouteFiles.push(file);
       }
       continue;
