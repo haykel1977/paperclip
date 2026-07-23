@@ -3029,7 +3029,7 @@ describeEmbeddedPostgres("workspace runtime startup reconciliation", () => {
       role: "engineer",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: { model: "sovereign-test-codex" },
+      adapterConfig: {},
       runtimeConfig: {},
       permissions: {},
     });
@@ -3224,7 +3224,7 @@ describeEmbeddedPostgres("workspace runtime startup reconciliation", () => {
       role: "engineer",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: { model: "sovereign-test-codex" },
+      adapterConfig: {},
       runtimeConfig: {},
       permissions: {},
     });
@@ -3344,7 +3344,7 @@ describeEmbeddedPostgres("workspace runtime startup reconciliation", () => {
       role: "engineer",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: { model: "sovereign-test-codex" },
+      adapterConfig: {},
       runtimeConfig: {},
       permissions: {},
     });

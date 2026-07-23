@@ -118,27 +118,20 @@ describe("POST /companies/:companyId/invites", () => {
   });
 
   it("returns an absolute invite URL using the request base URL", async () => {
-    const origTrust = process.env.PAPERCLIP_TRUST_PROXY_HEADERS;
-    process.env.PAPERCLIP_TRUST_PROXY_HEADERS = "true";
-    try {
-      const app = await createApp();
+    const app = await createApp();
 
-      const res = await request(app)
-        .post("/api/companies/company-1/invites")
-        .set("host", "paperclip.example")
-        .set("x-forwarded-proto", "https")
-        .send({
-          allowedJoinTypes: "human",
-          humanRole: "viewer",
-        });
+    const res = await request(app)
+      .post("/api/companies/company-1/invites")
+      .set("host", "paperclip.example")
+      .set("x-forwarded-proto", "https")
+      .send({
+        allowedJoinTypes: "human",
+        humanRole: "viewer",
+      });
 
-      expect(res.status).toBe(201);
-      expect(res.body.companyName).toBe("Acme Robotics");
-      expect(res.body.invitePath).toMatch(/^\/invite\/pcp_invite_/);
-      expect(res.body.inviteUrl).toMatch(/^https:\/\/paperclip\.example\/invite\/pcp_invite_/);
-    } finally {
-      if (origTrust === undefined) delete process.env.PAPERCLIP_TRUST_PROXY_HEADERS;
-      else process.env.PAPERCLIP_TRUST_PROXY_HEADERS = origTrust;
-    }
+    expect(res.status).toBe(201);
+    expect(res.body.companyName).toBe("Acme Robotics");
+    expect(res.body.invitePath).toMatch(/^\/invite\/pcp_invite_/);
+    expect(res.body.inviteUrl).toMatch(/^https:\/\/paperclip\.example\/invite\/pcp_invite_/);
   });
 });

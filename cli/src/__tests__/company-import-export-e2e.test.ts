@@ -376,7 +376,7 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
           name: "Export Engineer",
           role: "engineer",
           adapterType: "claude_local",
-          adapterConfig: { model: "sovereign-test-claude" },
+          adapterConfig: {},
           instructionsBundle: {
             files: {
               "AGENTS.md": "You verify company portability.",

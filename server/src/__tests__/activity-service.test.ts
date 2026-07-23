@@ -137,7 +137,7 @@ describeEmbeddedPostgres("activity service", () => {
       role: "engineer",
       status: "running",
       adapterType: "codex_local",
-      adapterConfig: { model: "sovereign-test-codex" },
+      adapterConfig: {},
       runtimeConfig: {},
       permissions: {},
     });
@@ -235,7 +235,7 @@ describeEmbeddedPostgres("activity service", () => {
       role: "engineer",
       status: "idle",
       adapterType: "codex_local",
-      adapterConfig: { model: "sovereign-test-codex" },
+      adapterConfig: {},
       runtimeConfig: {},
       permissions: {},
     });
@@ -329,7 +329,7 @@ describeEmbeddedPostgres("activity service", () => {
       role: "engineer",
       status: "idle",
       adapterType: "codex_local",
-      adapterConfig: { model: "sovereign-test-codex" },
+      adapterConfig: {},
       runtimeConfig: {},
       permissions: {},
     });
@@ -452,7 +452,7 @@ describeEmbeddedPostgres("activity service", () => {
       role: "engineer",
       status: "idle",
       adapterType: "codex_local",
-      adapterConfig: { model: "sovereign-test-codex" },
+      adapterConfig: {},
       runtimeConfig: {},
       permissions: {},
     });

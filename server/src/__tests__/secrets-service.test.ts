@@ -142,7 +142,7 @@ describeEmbeddedPostgres("secretService", () => {
         name: "CodexCoder",
         role: "engineer",
         adapterType: "codex_local",
-        adapterConfig: { model: "sovereign-test-codex" },
+        adapterConfig: {},
       })
       .returning();
 

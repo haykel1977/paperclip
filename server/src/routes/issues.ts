@@ -4101,11 +4101,8 @@ export function issueRoutes(
       return;
     }
     assertCompanyAccess(req, issue.companyId);
-    // Low-trust boundary conflict must be checked first so that the specific
-    // "root issue scopes do not overlap" message surfaces before the generic
-    // "Issue is outside this actor's authorization boundary" guard.
-    if (await assertLowTrustControlPlaneDenied(req, res, issue.companyId, issue)) return;
     if (!(await assertIssueReadAllowed(req, res, issue))) return;
+    if (await assertLowTrustControlPlaneDenied(req, res, issue.companyId, issue)) return;
     const approvals = await issueApprovalsSvc.listApprovalsForIssue(id);
     res.json(approvals);
   });

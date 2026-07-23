@@ -2,8 +2,8 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { Request, RequestHandler } from "express";
 import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { agentApiKeys, agents, authUsers, companies, companyMemberships, heartbeatRuns, instanceUserRoles } from "@paperclipai/db";
-import { isLocalAgentJwtBindingValid, verifyLocalAgentJwt } from "../agent-auth-jwt.js";
+import { agentApiKeys, agents, authUsers, companies, companyMemberships, instanceUserRoles } from "@paperclipai/db";
+import { verifyLocalAgentJwt } from "../agent-auth-jwt.js";
 import type { DeploymentMode } from "@paperclipai/shared";
 import type { BetterAuthSessionResult } from "../auth/better-auth.js";
 import { logger } from "./logger.js";
@@ -142,29 +142,18 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
         return;
       }
 
-      const [agentRecord, runRecord] = await Promise.all([
-        db
-          .select()
-          .from(agents)
-          .where(eq(agents.id, claims.sub))
-          .then((rows) => rows[0] ?? null),
-        db
-          .select({
-            id: heartbeatRuns.id,
-            companyId: heartbeatRuns.companyId,
-            agentId: heartbeatRuns.agentId,
-            status: heartbeatRuns.status,
-          })
-          .from(heartbeatRuns)
-          .where(eq(heartbeatRuns.id, claims.run_id))
-          .then((rows) => rows[0] ?? null),
-      ]);
+      const agentRecord = await db
+        .select()
+        .from(agents)
+        .where(eq(agents.id, claims.sub))
+        .then((rows) => rows[0] ?? null);
 
-      if (!isLocalAgentJwtBindingValid(claims, {
-        agent: agentRecord,
-        run: runRecord,
-        runIdHeader,
-      })) {
+      if (!agentRecord || agentRecord.companyId !== claims.company_id) {
+        next();
+        return;
+      }
+
+      if (agentRecord.status === "terminated" || agentRecord.status === "pending_approval") {
         next();
         return;
       }
@@ -174,10 +163,9 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
         agentId: claims.sub,
         companyId: claims.company_id,
         keyId: undefined,
-        runId: claims.run_id,
+        runId: runIdHeader || claims.run_id || undefined,
         source: "agent_jwt",
       };
-
       next();
       return;
     }

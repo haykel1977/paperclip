@@ -161,7 +161,7 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
       role: "engineer",
       status: "active",
       adapterType: "claude_local",
-      adapterConfig: { model: "sovereign-test-claude" },
+      adapterConfig: {},
       runtimeConfig: input?.runtimeConfig ?? {
         heartbeat: {
           wakeOnDemand: true,
@@ -236,7 +236,7 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
       role: "engineer",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: { model: "sovereign-test-codex" },
+      adapterConfig: {},
       runtimeConfig: {
         heartbeat: {
           wakeOnDemand: true,
@@ -744,7 +744,7 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
         role: "engineer",
         status: "active",
         adapterType: "claude_local",
-        adapterConfig: { model: "sovereign-test-claude" },
+        adapterConfig: {},
         runtimeConfig: {
           heartbeat: {
             wakeOnDemand: true,
@@ -760,7 +760,7 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
         role: "engineer",
         status: "active",
         adapterType: "codex_local",
-        adapterConfig: { model: "sovereign-test-codex" },
+        adapterConfig: {},
         runtimeConfig: {
           heartbeat: {
             wakeOnDemand: true,
@@ -897,7 +897,7 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
         role: "engineer",
         status: "active",
         adapterType: "claude_local",
-        adapterConfig: { model: "sovereign-test-claude" },
+        adapterConfig: {},
         runtimeConfig: {
           heartbeat: {
             wakeOnDemand: true,
@@ -913,7 +913,7 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
         role: "engineer",
         status: "active",
         adapterType: "codex_local",
-        adapterConfig: { model: "sovereign-test-codex" },
+        adapterConfig: {},
         runtimeConfig: {
           heartbeat: {
             wakeOnDemand: true,
@@ -1013,7 +1013,7 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
       role: "engineer",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: { model: "sovereign-test-codex" },
+      adapterConfig: {},
       runtimeConfig: {
         heartbeat: {
           wakeOnDemand: true,
@@ -1111,7 +1111,7 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
       role: "engineer",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: { model: "sovereign-test-codex" },
+      adapterConfig: {},
       runtimeConfig: {
         heartbeat: {
           wakeOnDemand: true,

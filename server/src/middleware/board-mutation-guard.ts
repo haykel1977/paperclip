@@ -1,5 +1,4 @@
 import type { Request, RequestHandler } from "express";
-import { requestHost } from "./proxy-headers.js";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const DEFAULT_DEV_ORIGINS = [
@@ -19,12 +18,12 @@ function parseOrigin(value: string | undefined) {
 
 function trustedOriginsForRequest(req: Request) {
   const origins = new Set(DEFAULT_DEV_ORIGINS.map((value) => value.toLowerCase()));
-  const host = requestHost(req);
+  const forwardedHost = req.header("x-forwarded-host")?.split(",")[0]?.trim();
+  const host = forwardedHost || req.header("host")?.trim();
   if (host) {
     origins.add(`http://${host}`.toLowerCase());
     origins.add(`https://${host}`.toLowerCase());
   }
-
   // Behind some reverse proxies the Host / X-Forwarded-Host header may
   // not match the public URL (for example when TLS terminates at the
   // edge and the inbound Host is an internal service name). Trust the

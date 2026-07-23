@@ -54,7 +54,7 @@ describeEmbeddedPostgres("heartbeat list", () => {
       role: "engineer",
       status: "running",
       adapterType: "codex_local",
-      adapterConfig: { model: "sovereign-test-codex" },
+      adapterConfig: {},
       runtimeConfig: {},
       permissions: {},
     });
@@ -120,7 +120,7 @@ describeEmbeddedPostgres("heartbeat list", () => {
       role: "engineer",
       status: "running",
       adapterType: "codex_local",
-      adapterConfig: { model: "sovereign-test-codex" },
+      adapterConfig: {},
       runtimeConfig: {},
       permissions: {},
     });
@@ -170,7 +170,7 @@ describeEmbeddedPostgres("heartbeat list", () => {
       role: "engineer",
       status: "running",
       adapterType: "codex_local",
-      adapterConfig: { model: "sovereign-test-codex" },
+      adapterConfig: {},
       runtimeConfig: {},
       permissions: {},
     });

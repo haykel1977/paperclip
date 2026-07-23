@@ -383,7 +383,7 @@ describe("cursor cli formatter", () => {
 
       expect(lines).toEqual(
         expect.arrayContaining([
-          "Cursor init (session: chat_abc, model: sovereign-gpt-5)",
+          "Cursor init (session: chat_abc, model: gpt-5)",
           "user: run tests",
           "assistant: hello",
           "thinking: looking at package.json",

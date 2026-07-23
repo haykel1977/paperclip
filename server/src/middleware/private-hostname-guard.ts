@@ -1,5 +1,4 @@
 import type { Request, RequestHandler } from "express";
-import { requestHost } from "./proxy-headers.js";
 
 function isLoopbackHostname(hostname: string): boolean {
   const normalized = hostname.trim().toLowerCase();
@@ -7,7 +6,9 @@ function isLoopbackHostname(hostname: string): boolean {
 }
 
 function extractHostname(req: Request): string | null {
-  const raw = requestHost(req);
+  const forwardedHost = req.header("x-forwarded-host")?.split(",")[0]?.trim();
+  const hostHeader = req.header("host")?.trim();
+  const raw = forwardedHost || hostHeader;
   if (!raw) return null;
 
   try {

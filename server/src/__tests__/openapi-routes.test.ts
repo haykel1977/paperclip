@@ -49,7 +49,6 @@ const apiPrefixes: Record<string, string> = {
 const ROUTE_LITERAL_PATTERN = /router\.(get|post|put|patch|delete)\(\s*["'`]([^"'`]+)["'`]/g;
 const ROUTER_METHOD_PATTERN = /router\.(get|post|put|patch|delete)\(/;
 const HTTP_METHODS = new Set(["get", "put", "post", "delete", "options", "head", "patch", "trace"]);
-const INTERNAL_CALLBACK_ROUTE_FILES = new Set(["github-webhooks.ts"]);
 
 function createApp() {
   const app = express();
@@ -83,7 +82,6 @@ function loadActualRoutes() {
   const unknownRouteFiles: string[] = [];
 
   for (const file of fs.readdirSync(ROUTES_DIR).filter((entry) => entry.endsWith(".ts"))) {
-    if (INTERNAL_CALLBACK_ROUTE_FILES.has(file)) continue;
     const prefix = apiPrefixes[file];
     const source = fs.readFileSync(path.join(ROUTES_DIR, file), "utf8");
     if (!prefix) {
@@ -94,7 +92,6 @@ function loadActualRoutes() {
     }
 
     for (const match of source.matchAll(ROUTE_LITERAL_PATTERN)) {
-
       const method = match[1].toUpperCase();
       const routePath = match[2];
       routes.add(`${method} ${normalizeExpressPath(resolveMountedPath(file, prefix, routePath))}`);

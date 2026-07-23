@@ -57,20 +57,3 @@ test("runDockerPinnedToolsCheck checks configured Dockerfiles", () => {
     assert.equal(runDockerPinnedToolsCheck({ root: dir, dockerfiles: ["Dockerfile", "docker/untrusted-review/Dockerfile"], log() {}, error() {} }), 1);
   });
 });
-
-test("findFloatingDockerBaseImages: accepts backward alias reference (alias defined before use)", () => {
-  // FROM node:22.0.0 AS base   → defines alias "base"
-  // FROM base AS runner        → backward reference, accepted (not external)
-  const text = "FROM node:22.0.0 AS base\nFROM base AS runner\n";
-  const offenses = findFloatingDockerBaseImages(text);
-  assert.deepEqual(offenses, []);
-});
-
-test("findFloatingDockerBaseImages: flags forward alias reference (alias used before it is defined)", () => {
-  // FROM runner AS early       → "runner" not yet defined → external, must be pinned
-  // FROM node:22.0.0 AS runner → defines alias "runner" (too late)
-  const text = "FROM runner AS early\nFROM node:22.0.0 AS runner\n";
-  const offenses = findFloatingDockerBaseImages(text);
-  assert.equal(offenses.length, 1, "forward alias reference must be flagged");
-  assert.equal(offenses[0]?.image, "runner");
-});

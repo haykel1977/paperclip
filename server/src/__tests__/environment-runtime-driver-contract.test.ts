@@ -106,7 +106,7 @@ describeEmbeddedPostgres("environment runtime driver contract", () => {
       role: "engineer",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: { model: "sovereign-test-codex" },
+      adapterConfig: {},
       runtimeConfig: {},
       permissions: {},
       createdAt: now,

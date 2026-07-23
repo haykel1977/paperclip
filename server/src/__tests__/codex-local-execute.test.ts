@@ -142,7 +142,7 @@ describe("codex execute", () => {
           companyId: "company-1",
           name: "Codex Coder",
           adapterType: "codex_local",
-          adapterConfig: { model: "sovereign-test-codex" },
+          adapterConfig: {},
         },
         runtime: {
           sessionId: null,
@@ -236,7 +236,7 @@ describe("codex execute", () => {
             companyId: "company-1",
             name: "Codex Coder",
             adapterType: "codex_local",
-            adapterConfig: { model: "sovereign-test-codex" },
+            adapterConfig: {},
           },
           runtime: {
             sessionId: null,
@@ -314,7 +314,7 @@ describe("codex execute", () => {
           companyId: "company-1",
           name: "Codex Coder",
           adapterType: "codex_local",
-          adapterConfig: { model: "sovereign-test-codex" },
+          adapterConfig: {},
         },
         runtime: {
           sessionId: null,
@@ -375,7 +375,7 @@ describe("codex execute", () => {
           companyId: "company-1",
           name: "Codex Coder",
           adapterType: "codex_local",
-          adapterConfig: { model: "sovereign-test-codex" },
+          adapterConfig: {},
         },
         runtime: {
           sessionId: null,
@@ -440,7 +440,7 @@ describe("codex execute", () => {
           companyId: "company-1",
           name: "Codex Coder",
           adapterType: "codex_local",
-          adapterConfig: { model: "sovereign-test-codex" },
+          adapterConfig: {},
         },
         runtime: {
           sessionId: null,
@@ -507,7 +507,7 @@ describe("codex execute", () => {
           companyId: "company-1",
           name: "Codex Coder",
           adapterType: "codex_local",
-          adapterConfig: { model: "sovereign-test-codex" },
+          adapterConfig: {},
         },
         runtime: {
           sessionId: null,
@@ -617,7 +617,7 @@ describe("codex execute", () => {
           companyId: "company-1",
           name: "Codex Coder",
           adapterType: "codex_local",
-          adapterConfig: { model: "sovereign-test-codex" },
+          adapterConfig: {},
         },
         runtime: {
           sessionId: null,
@@ -669,7 +669,7 @@ describe("codex execute", () => {
           companyId: "company-1",
           name: "Codex Coder",
           adapterType: "codex_local",
-          adapterConfig: { model: "sovereign-test-codex" },
+          adapterConfig: {},
         },
         runtime: {
           sessionId: "codex-session-usage-limit",
@@ -728,7 +728,7 @@ describe("codex execute", () => {
           companyId: "company-1",
           name: "Codex Coder",
           adapterType: "codex_local",
-          adapterConfig: { model: "sovereign-test-codex" },
+          adapterConfig: {},
         },
         runtime: {
           sessionId: null,
@@ -803,7 +803,7 @@ describe("codex execute", () => {
           companyId: "company-1",
           name: "Codex Coder",
           adapterType: "codex_local",
-          adapterConfig: { model: "sovereign-test-codex" },
+          adapterConfig: {},
         },
         runtime: {
           sessionId: null,
@@ -872,7 +872,7 @@ describe("codex execute", () => {
           companyId: "company-1",
           name: "Codex Coder",
           adapterType: "codex_local",
-          adapterConfig: { model: "sovereign-test-codex" },
+          adapterConfig: {},
         },
         runtime: {
           sessionId: null,
@@ -957,7 +957,7 @@ describe("codex execute", () => {
           companyId: "company-1",
           name: "Codex Coder",
           adapterType: "codex_local",
-          adapterConfig: { model: "sovereign-test-codex" },
+          adapterConfig: {},
         },
         runtime: {
           sessionId: null,
@@ -1058,7 +1058,7 @@ describe("codex execute", () => {
           companyId: "company-1",
           name: "Codex Coder",
           adapterType: "codex_local",
-          adapterConfig: { model: "sovereign-test-codex" },
+          adapterConfig: {},
         },
         runtime: {
           sessionId: null,
@@ -1189,7 +1189,7 @@ describe("codex execute", () => {
           companyId: "company-1",
           name: "Codex Coder",
           adapterType: "codex_local",
-          adapterConfig: { model: "sovereign-test-codex" },
+          adapterConfig: {},
         },
         runtime: {
           sessionId: null,
@@ -1296,7 +1296,7 @@ describe("codex execute", () => {
           companyId: "company-1",
           name: "Codex Coder",
           adapterType: "codex_local",
-          adapterConfig: { model: "sovereign-test-codex" },
+          adapterConfig: {},
         },
         runtime: {
           sessionId: null,

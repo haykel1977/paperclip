@@ -158,7 +158,7 @@ function makeAgent() {
     reportsTo: null,
     capabilities: null,
     adapterType: "codex_local",
-    adapterConfig: { model: "sovereign-test-codex" },
+    adapterConfig: {},
     runtimeConfig: {},
     defaultEnvironmentId: null,
     permissions: null,

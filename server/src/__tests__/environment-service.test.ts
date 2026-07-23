@@ -61,7 +61,7 @@ describeEmbeddedPostgres("environmentService leases", () => {
       role: "engineer",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: { model: "sovereign-test-codex" },
+      adapterConfig: {},
       runtimeConfig: {},
       permissions: {},
       createdAt: new Date(),

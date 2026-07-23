@@ -91,7 +91,6 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          registry-url: https://registry.npmjs.org
 
       - name: Validate release package manifest
         run: node ./scripts/release-package-map.mjs check
@@ -230,7 +229,6 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile

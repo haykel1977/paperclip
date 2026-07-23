@@ -106,7 +106,7 @@ describe("claude remote execution", () => {
         companyId: "company-1",
         name: "Claude Coder",
         adapterType: "claude_local",
-        adapterConfig: { model: "sovereign-test-claude" },
+        adapterConfig: {},
       },
       runtime: {
         sessionId: null,
@@ -226,7 +226,7 @@ describe("claude remote execution", () => {
         companyId: "company-1",
         name: "Claude Coder",
         adapterType: "claude_local",
-        adapterConfig: { model: "sovereign-test-claude" },
+        adapterConfig: {},
       },
       runtime: {
         sessionId: "session-123",
@@ -280,7 +280,7 @@ describe("claude remote execution", () => {
         companyId: "company-1",
         name: "Claude Coder",
         adapterType: "claude_local",
-        adapterConfig: { model: "sovereign-test-claude" },
+        adapterConfig: {},
       },
       runtime: {
         sessionId: "session-123",

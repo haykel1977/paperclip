@@ -141,7 +141,6 @@ function parseStdoutLogs(logs: LogEntry[]) {
   return logs
     .filter((entry) => entry.stream === "stdout")
     .flatMap((entry) => entry.chunk.trim().split(/\n+/).filter(Boolean))
-    .filter((line) => line.startsWith("{")) // ACPX events are JSON objects; [paperclip]-prefixed lines also start with '[' so we must filter to '{' only
     .map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 

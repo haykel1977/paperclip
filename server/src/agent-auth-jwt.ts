@@ -1,4 +1,4 @@
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 
 interface JwtHeader {
   alg: string;
@@ -17,24 +17,7 @@ export interface LocalAgentJwtClaims {
   jti?: string;
 }
 
-export interface LocalAgentJwtBinding {
-  agent: {
-    id: string;
-    companyId: string;
-    adapterType: string;
-    status: string;
-  } | null;
-  run: {
-    id: string;
-    companyId: string;
-    agentId: string;
-    status: string;
-  } | null;
-  runIdHeader?: string | null;
-}
-
 const JWT_ALGORITHM = "HS256";
-const MAX_FUTURE_IAT_SKEW_SECONDS = 60;
 
 function parseNumber(value: string | undefined, fallback: number) {
   const parsed = Number(value);
@@ -96,7 +79,6 @@ export function createLocalAgentJwt(agentId: string, companyId: string, adapterT
     exp: now + config.ttlSeconds,
     iss: config.issuer,
     aud: config.audience,
-    jti: randomUUID(),
   };
 
   const header = {
@@ -138,11 +120,12 @@ export function verifyLocalAgentJwt(token: string): LocalAgentJwtClaims | null {
   if (!sub || !companyId || !adapterType || !runId || !iat || !exp) return null;
 
   const now = Math.floor(Date.now() / 1000);
-  if (exp < now || iat > now + MAX_FUTURE_IAT_SKEW_SECONDS || exp <= iat) return null;
+  if (exp < now) return null;
 
   const issuer = typeof claims.iss === "string" ? claims.iss : undefined;
   const audience = typeof claims.aud === "string" ? claims.aud : undefined;
-  if (issuer !== config.issuer || audience !== config.audience) return null;
+  if (issuer && issuer !== config.issuer) return null;
+  if (audience && audience !== config.audience) return null;
 
   return {
     sub,
@@ -151,28 +134,8 @@ export function verifyLocalAgentJwt(token: string): LocalAgentJwtClaims | null {
     run_id: runId,
     iat,
     exp,
-    iss: issuer,
-    aud: audience,
+    ...(issuer ? { iss: issuer } : {}),
+    ...(audience ? { aud: audience } : {}),
     jti: typeof claims.jti === "string" ? claims.jti : undefined,
   };
-}
-
-export function isLocalAgentJwtBindingValid(
-  claims: LocalAgentJwtClaims,
-  binding: LocalAgentJwtBinding,
-): boolean {
-  const runIdHeader = binding.runIdHeader?.trim();
-  if (runIdHeader && runIdHeader !== claims.run_id) return false;
-
-  const { agent, run } = binding;
-  if (!agent || !run) return false;
-  if (agent.status === "terminated" || agent.status === "pending_approval") return false;
-
-  return agent.id === claims.sub
-    && agent.companyId === claims.company_id
-    && agent.adapterType === claims.adapter_type
-    && run.id === claims.run_id
-    && run.agentId === claims.sub
-    && run.companyId === claims.company_id
-    && run.status === "running";
 }

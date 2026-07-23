@@ -90,29 +90,6 @@
 
 -
 
-## Agent Autonomy & Risk Lane
-
-<!--
-  Required for agent-authored PRs (delete this section for purely human PRs if
-  your project allows). These fields map to the deterministic risk-lane
-  classifier (.github/scripts/classify-pr-risk-lane.mjs) and doc/PR-RISK-LANES.md.
-  Only GREEN is auto-merge eligible; ORANGE never auto-merges; RED requires a
-  human. Touching .github/**, CODEOWNERS, governance/checker code, auth/authz,
-  secrets, migrations/schema, infrastructure/release/production, or dependency
-  manifests/lockfiles is RED. Missing/invalid inputs, contradictory labels, a
-  stale head SHA, or neutral/skipped required evidence fail closed to RED.
--->
-
-- Scope:
-- Allowed paths:
-- Forbidden paths:
-- Definition of Done:
-- Tests (and command):
-- Rollback plan:
-- Agent / model / runtime / attempt:
-- Risk lane (GREEN / ORANGE / RED):
-- Required evidence (checks that must be green):
-
 ## Checklist
 
 - [ ] I have included a thinking path that traces from project context to this change
@@ -125,7 +102,6 @@
 - [ ] If this change affects the UI, I have included before/after screenshots
 - [ ] I have updated relevant documentation to reflect my changes
 - [ ] I have considered and documented any risks above
-- [ ] For agent-authored PRs: I have filled the Agent Autonomy & Risk Lane section, and the declared lane matches the diff (RED for any sacred surface)
 - [ ] The PR readiness gate is satisfied: focused diff, completed template, verification evidence, and CI status grounded in GitHub check-runs or a documented external blocker
 - [ ] I will not claim CI is green until GitHub check-runs show it; required checks are the source of truth
 

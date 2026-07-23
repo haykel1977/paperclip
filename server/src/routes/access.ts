@@ -56,14 +56,12 @@ import {
   badRequest
 } from "../errors.js";
 import { logger } from "../middleware/logger.js";
-import { requestHost, requestProtocol } from "../middleware/proxy-headers.js";
 import { validate } from "../middleware/validate.js";
 import { collectReachableInterfaceHosts } from "../runtime-api.js";
 import {
   accessService,
   agentService,
   boardAuthService,
-
   deduplicateAgentName,
   logActivity,
   notifyHireApproved
@@ -130,23 +128,12 @@ function tokenHashesMatch(left: string, right: string) {
 }
 
 function requestBaseUrl(req: Request) {
-  const configuredPublicUrl = (
-    process.env.PAPERCLIP_PUBLIC_URL
-    ?? process.env.PAPERCLIP_AUTH_PUBLIC_BASE_URL
-    ?? process.env.BETTER_AUTH_URL
-    ?? process.env.BETTER_AUTH_BASE_URL
-  )?.trim();
-  if (configuredPublicUrl) {
-    try {
-      return new URL(configuredPublicUrl).origin;
-    } catch {
-      // Startup configuration validation reports malformed public URLs.
-    }
-  }
-
-  const host = requestHost(req);
+  const forwardedProto = req.header("x-forwarded-proto");
+  const proto = forwardedProto?.split(",")[0]?.trim() || req.protocol || "http";
+  const host =
+    req.header("x-forwarded-host")?.split(",")[0]?.trim() || req.header("host");
   if (!host) return "";
-  return `${requestProtocol(req)}://${host}`;
+  return `${proto}://${host}`;
 }
 
 function buildCliAuthApprovalPath(challengeId: string, token: string) {

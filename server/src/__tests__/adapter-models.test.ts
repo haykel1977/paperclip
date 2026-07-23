@@ -57,7 +57,7 @@ describe("adapter model listing", () => {
     const models = await listAdapterModels("claude_local");
 
     expect(models).toEqual(claudeFallbackModels);
-    expect(models.some((model) => model.id === "sovereign-claude-opus-4-8")).toBe(true);
+    expect(models.some((model) => model.id === "claude-opus-4-8")).toBe(true);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -79,7 +79,7 @@ describe("adapter model listing", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(first).toEqual(second);
     expect(first.some((model) => model.id === "claude-opus-4-8-20260529")).toBe(true);
-    expect(first.some((model) => model.id === "sovereign-claude-opus-4-8")).toBe(true);
+    expect(first.some((model) => model.id === "claude-opus-4-8")).toBe(true);
   });
 
   it("refreshes cached claude models on demand", async () => {
@@ -136,7 +136,7 @@ describe("adapter model listing", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(first).toEqual(second);
     expect(first.some((model) => model.id === "gpt-5-pro")).toBe(true);
-    expect(first.some((model) => model.id === "sovereign-codex-mini-latest")).toBe(true);
+    expect(first.some((model) => model.id === "codex-mini-latest")).toBe(true);
   });
 
   it("refreshes cached codex models on demand", async () => {
@@ -212,7 +212,7 @@ describe("adapter model listing", () => {
     expect(first).toEqual(second);
     expect(first.some((model) => model.id === "auto")).toBe(true);
     expect(first.some((model) => model.id === "gpt-5.3-codex-high")).toBe(true);
-    expect(first.some((model) => model.id === "sovereign-composer-1")).toBe(true);
+    expect(first.some((model) => model.id === "composer-1")).toBe(true);
   });
 
 });

@@ -194,14 +194,6 @@ async function requestApp(
 }
 
 function makeAgent(adapterType: string) {
-  // Local adapters require an explicit sovereign model in adapterConfig.
-  // Provide a test-appropriate value that passes isSovereignAgentModelValue().
-  const adapterConfig: Record<string, unknown> =
-    adapterType === "claude_local"
-      ? { model: "sovereign-test-claude" }
-      : adapterType === "codex_local"
-        ? { model: "sovereign-test-codex" }
-        : {};
   return {
     id: "11111111-1111-4111-8111-111111111111",
     companyId: "company-1",
@@ -212,7 +204,7 @@ function makeAgent(adapterType: string) {
     reportsTo: null,
     capabilities: null,
     adapterType,
-    adapterConfig,
+    adapterConfig: {},
     runtimeConfig: {},
     defaultEnvironmentId: null,
     permissions: null,
@@ -538,7 +530,7 @@ describe.sequential("agent skill routes", () => {
         role: "engineer",
         adapterType: "claude_local",
         desiredSkills: ["paperclip"],
-        adapterConfig: { model: "sovereign-test-claude" },
+        adapterConfig: {},
       }));
 
     expect([200, 201], JSON.stringify(res.body)).toContain(res.status);
@@ -568,7 +560,7 @@ describe.sequential("agent skill routes", () => {
         name: "Security Engineer",
         role: "security",
         adapterType: "claude_local",
-        adapterConfig: { model: "sovereign-test-claude" },
+        adapterConfig: {},
       }));
 
     expect([200, 201], JSON.stringify(res.body)).toContain(res.status);
@@ -597,7 +589,7 @@ describe.sequential("agent skill routes", () => {
         name: "QA Agent",
         role: "engineer",
         adapterType: "claude_local",
-        adapterConfig: { model: "sovereign-test-claude" },
+        adapterConfig: {},
         instructionsBundle: {
           files: {
             "AGENTS.md": "You are QA.",
@@ -650,7 +642,7 @@ describe.sequential("agent skill routes", () => {
         name: "CEO",
         role: "ceo",
         adapterType: "claude_local",
-        adapterConfig: { model: "sovereign-test-claude" },
+        adapterConfig: {},
       }));
 
     expect([200, 201], JSON.stringify(res.body)).toContain(res.status);
@@ -677,7 +669,7 @@ describe.sequential("agent skill routes", () => {
         name: "Engineer",
         role: "engineer",
         adapterType: "claude_local",
-        adapterConfig: { model: "sovereign-test-claude" },
+        adapterConfig: {},
       }));
 
     expect([200, 201], JSON.stringify(res.body)).toContain(res.status);
@@ -727,7 +719,7 @@ describe.sequential("agent skill routes", () => {
         role: "engineer",
         adapterType: "claude_local",
         desiredSkills: ["paperclip"],
-        adapterConfig: { model: "sovereign-test-claude" },
+        adapterConfig: {},
       });
 
     expect(res.status, JSON.stringify(res.body)).toBe(201);
@@ -756,7 +748,7 @@ describe.sequential("agent skill routes", () => {
         icon: "crown",
         adapterType: "claude_local",
         desiredSkills: ["paperclip"],
-        adapterConfig: { model: "sovereign-test-claude" },
+        adapterConfig: {},
         sourceIssueId,
       });
 
@@ -798,7 +790,7 @@ describe.sequential("agent skill routes", () => {
         name: "QA Agent",
         role: "engineer",
         adapterType: "claude_local",
-        adapterConfig: { model: "sovereign-test-claude" },
+        adapterConfig: {},
         instructionsBundle: {
           files: {
             "AGENTS.md": "You are QA.",

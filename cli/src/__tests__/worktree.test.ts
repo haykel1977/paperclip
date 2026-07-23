@@ -344,7 +344,7 @@ describe("worktree helpers", () => {
           role: "engineer",
           status: "running",
           adapterType: "codex_local",
-          adapterConfig: { model: "sovereign-test-codex" },
+          adapterConfig: {},
           runtimeConfig: {
             heartbeat: { enabled: true, intervalSec: 60 },
             wakeOnDemand: true,
@@ -358,7 +358,7 @@ describe("worktree helpers", () => {
           role: "reviewer",
           status: "idle",
           adapterType: "codex_local",
-          adapterConfig: { model: "sovereign-test-codex" },
+          adapterConfig: {},
           runtimeConfig: { heartbeat: { enabled: false, intervalSec: 300 } },
           permissions: {},
         },

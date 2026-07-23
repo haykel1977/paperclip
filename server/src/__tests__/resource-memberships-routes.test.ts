@@ -106,7 +106,7 @@ describeEmbeddedPostgres("resource membership routes", () => {
         role: "engineer",
         status: "active",
         adapterType: "codex_local",
-        adapterConfig: { model: "sovereign-test-codex" },
+        adapterConfig: {},
         runtimeConfig: {},
         permissions: {},
       },
@@ -117,7 +117,7 @@ describeEmbeddedPostgres("resource membership routes", () => {
         role: "engineer",
         status: "active",
         adapterType: "codex_local",
-        adapterConfig: { model: "sovereign-test-codex" },
+        adapterConfig: {},
         runtimeConfig: {},
         permissions: {},
       },
@@ -139,11 +139,9 @@ describeEmbeddedPostgres("resource membership routes", () => {
     });
   });
 
-  it("allows operator self-service mutations, logs changes, and keeps repeats idempotent", async () => {
-    // assertCompanyAccess now blocks viewer-role actors on mutations (PUT).
-    // Use operator role to verify the feature still works end-to-end.
+  it("allows viewer self-service mutations, logs changes, and keeps repeats idempotent", async () => {
     const { companyId, projectId } = await seed();
-    const app = createApp(db, boardActor(companyId, "operator"));
+    const app = createApp(db, boardActor(companyId, "viewer"));
 
     const first = await request(app)
       .put(`/api/companies/${companyId}/resource-memberships/me/projects/${projectId}`)
@@ -187,12 +185,8 @@ describeEmbeddedPostgres("resource membership routes", () => {
   });
 
   it("rejects cross-company target resources", async () => {
-    // assertCompanyAccess now fires before the resource lookup.
-    // A viewer actor (default) attempting a mutation (PUT) gets 403 from the company
-    // access guard rather than 404 from the resource lookup.
-    // Use operator to exercise the resource-level rejection path.
     const { companyId, otherAgentId, otherProjectId } = await seed();
-    const app = createApp(db, boardActor(companyId, "operator"));
+    const app = createApp(db, boardActor(companyId));
 
     const projectRes = await request(app)
       .put(`/api/companies/${companyId}/resource-memberships/me/projects/${otherProjectId}`)

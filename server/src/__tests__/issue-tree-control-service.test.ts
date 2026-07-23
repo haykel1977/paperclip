@@ -84,7 +84,7 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
       role: "engineer",
       status: "running",
       adapterType: "codex_local",
-      adapterConfig: { model: "sovereign-test-codex" },
+      adapterConfig: {},
       runtimeConfig: {},
       permissions: {},
     });
@@ -365,7 +365,7 @@ describeEmbeddedPostgres("issueTreeControlService", () => {
       role: "engineer",
       status: "active",
       adapterType: "codex_local",
-      adapterConfig: { model: "sovereign-test-codex" },
+      adapterConfig: {},
       runtimeConfig: {},
       permissions: {},
     });

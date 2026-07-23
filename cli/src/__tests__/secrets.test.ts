@@ -25,7 +25,7 @@ function agent(partial: Partial<Agent>): Agent {
     reportsTo: null,
     capabilities: null,
     adapterType: "codex_local",
-    adapterConfig: { model: "sovereign-test-codex" },
+    adapterConfig: {},
     runtimeConfig: {},
     budgetMonthlyCents: 0,
     spentMonthlyCents: 0,

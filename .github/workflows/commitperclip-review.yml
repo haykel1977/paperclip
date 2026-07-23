@@ -89,6 +89,3 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           DEFAULT_BRANCH: main
           REQUIRED_CHECKS: verify,gitleaks
-          # Independent SHA source: the event payload's head SHA, compared
-          # against the freshly re-read API SHA to detect a mid-run head advance.
-          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}

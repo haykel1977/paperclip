@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   buildPaperclipTaskMarkdown,
   mergeCoalescedContextSnapshot,
-  shouldEnforceIssueAutomationWakeCooldown,
   summarizeHeartbeatRunContextSnapshot,
   summarizeHeartbeatRunListResultJson,
 } from "../services/heartbeat.js";
@@ -249,55 +248,5 @@ describe("summarizeHeartbeatRunListResultJson", () => {
         totalCostUsd: "abc",
       }),
     ).toBeNull();
-  });
-});
-
-describe("shouldEnforceIssueAutomationWakeCooldown", () => {
-  it("throttles ordinary timer and automation wakes", () => {
-    expect(shouldEnforceIssueAutomationWakeCooldown({
-      source: "timer",
-      contextSnapshot: { wakeReason: "scheduled_tick" },
-      wakeCommentId: null,
-    })).toBe(true);
-    expect(shouldEnforceIssueAutomationWakeCooldown({
-      source: "automation",
-      contextSnapshot: {},
-      wakeCommentId: null,
-    })).toBe(true);
-  });
-
-  it("preserves human interactions and bounded recovery paths", () => {
-    expect(shouldEnforceIssueAutomationWakeCooldown({
-      source: "automation",
-      contextSnapshot: { wakeReason: "scheduled_tick" },
-      wakeCommentId: "comment-1",
-    })).toBe(false);
-    expect(shouldEnforceIssueAutomationWakeCooldown({
-      source: "timer",
-      contextSnapshot: { wakeReason: "scheduled_tick" },
-      wakeCommentId: null,
-      requestedByActorType: "user",
-    })).toBe(false);
-    expect(shouldEnforceIssueAutomationWakeCooldown({
-      source: "automation",
-      contextSnapshot: { wakeReason: "transient_failure_retry" },
-      wakeCommentId: null,
-    })).toBe(false);
-    expect(shouldEnforceIssueAutomationWakeCooldown({
-      source: "automation",
-      contextSnapshot: { wakeReason: "finish_successful_run_handoff" },
-      wakeCommentId: null,
-    })).toBe(false);
-    expect(shouldEnforceIssueAutomationWakeCooldown({
-      source: "automation",
-      contextSnapshot: { wakeReason: "recovery_workspace_validation" },
-      wakeCommentId: null,
-    })).toBe(false);
-
-    expect(shouldEnforceIssueAutomationWakeCooldown({
-      source: "on_demand",
-      contextSnapshot: { wakeReason: "manual" },
-      wakeCommentId: null,
-    })).toBe(false);
   });
 });

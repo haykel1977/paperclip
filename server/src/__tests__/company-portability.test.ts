@@ -1635,7 +1635,7 @@ describe("company portability", () => {
         status: "idle",
         role: "ceo",
         adapterType: "claude_local",
-        adapterConfig: { model: "sovereign-test-claude" },
+        adapterConfig: {},
         runtimeConfig: {},
         budgetMonthlyCents: 0,
         permissions: {},
@@ -1695,13 +1695,9 @@ describe("company portability", () => {
             '    reportsToExistingAgentSlug: "ceo"',
             "    adapter:",
             '      type: "claude_local"',
-            "      config:",
-            '        model: "sovereign-test-claude"',
             "  qa:",
             "    adapter:",
             '      type: "claude_local"',
-            "      config:",
-            '        model: "sovereign-test-claude"',
             "",
           ].join("\n"),
         },
@@ -3592,7 +3588,7 @@ describe("company portability", () => {
 
     // Simulate existing agents so collision detection triggers rename
     agentSvc.list.mockResolvedValue([
-      { id: "existing-1", name: "ClaudeCoder", status: "idle", role: "engineer", adapterType: "claude_local", adapterConfig: { model: "sovereign-test-claude" }, runtimeConfig: {}, budgetMonthlyCents: 0, permissions: {}, metadata: null },
+      { id: "existing-1", name: "ClaudeCoder", status: "idle", role: "engineer", adapterType: "claude_local", adapterConfig: {}, runtimeConfig: {}, budgetMonthlyCents: 0, permissions: {}, metadata: null },
     ]);
 
     const preview = await portability.previewImport({
@@ -3619,12 +3615,12 @@ describe("company portability", () => {
       {
         id: "agent-a", name: "AgentA", status: "idle", role: "engineer", title: null, icon: null,
         reportsTo: "agent-b", capabilities: null, adapterType: "claude_local",
-        adapterConfig: { model: "sovereign-test-claude" }, runtimeConfig: {}, budgetMonthlyCents: 0, permissions: {}, metadata: null,
+        adapterConfig: {}, runtimeConfig: {}, budgetMonthlyCents: 0, permissions: {}, metadata: null,
       },
       {
         id: "agent-b", name: "AgentB", status: "idle", role: "manager", title: null, icon: null,
         reportsTo: "agent-a", capabilities: null, adapterType: "claude_local",
-        adapterConfig: { model: "sovereign-test-claude" }, runtimeConfig: {}, budgetMonthlyCents: 0, permissions: {}, metadata: null,
+        adapterConfig: {}, runtimeConfig: {}, budgetMonthlyCents: 0, permissions: {}, metadata: null,
       },
     ]);
     agentInstructionsSvc.exportFiles.mockResolvedValue({
@@ -3666,8 +3662,8 @@ describe("company portability", () => {
     // Re-import into same company with skip collision strategy
     // Both agents exist so both will be skipped; the existing agent should resolve for issue assignment
     agentSvc.list.mockResolvedValue([
-      { id: "agent-1", name: "ClaudeCoder", status: "idle", role: "engineer", adapterType: "claude_local", adapterConfig: { model: "sovereign-test-claude" }, runtimeConfig: {}, budgetMonthlyCents: 0, permissions: {}, metadata: null },
-      { id: "agent-2", name: "CMO", status: "idle", role: "cmo", adapterType: "claude_local", adapterConfig: { model: "sovereign-test-claude" }, runtimeConfig: {}, budgetMonthlyCents: 0, permissions: {}, metadata: null },
+      { id: "agent-1", name: "ClaudeCoder", status: "idle", role: "engineer", adapterType: "claude_local", adapterConfig: {}, runtimeConfig: {}, budgetMonthlyCents: 0, permissions: {}, metadata: null },
+      { id: "agent-2", name: "CMO", status: "idle", role: "cmo", adapterType: "claude_local", adapterConfig: {}, runtimeConfig: {}, budgetMonthlyCents: 0, permissions: {}, metadata: null },
     ]);
     projectSvc.list.mockResolvedValue([]);
     issueSvc.list.mockResolvedValue([]);

@@ -1,15 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
 import { boardMutationGuard } from "../middleware/board-mutation-guard.js";
-
-const trustProxyEnv = "PAPERCLIP_TRUST_PROXY_HEADERS";
-const originalTrustProxy = process.env[trustProxyEnv];
-
-afterEach(() => {
-  if (originalTrustProxy === undefined) delete process.env[trustProxyEnv];
-  else process.env[trustProxyEnv] = originalTrustProxy;
-});
 
 function createApp(
   actorType: "board" | "agent",
@@ -18,7 +10,6 @@ function createApp(
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-
     req.actor = actorType === "board"
       ? { type: "board", userId: "board", source: boardSource }
       : { type: "agent", agentId: "agent-1" };
@@ -99,19 +90,7 @@ describe("boardMutationGuard", () => {
     expect([200, 204]).toContain(res.status);
   });
 
-  it("ignores x-forwarded-host unless proxy headers are explicitly trusted", async () => {
-    const app = createApp("board");
-    const res = await request(app)
-      .post("/mutate")
-      .set("Host", "127.0.0.1")
-      .set("X-Forwarded-Host", "10.90.10.20:3443")
-      .set("Origin", "https://10.90.10.20:3443")
-      .send({ ok: true });
-    expect(res.status).toBe(403);
-  });
-
-  it("allows board mutations from x-forwarded-host for an explicitly trusted proxy", async () => {
-    process.env[trustProxyEnv] = "true";
+  it("allows board mutations when x-forwarded-host matches origin", async () => {
     const app = createApp("board");
     const res = await request(app)
       .post("/mutate")
@@ -123,13 +102,11 @@ describe("boardMutationGuard", () => {
   });
 
   it("blocks board mutations when x-forwarded-host does not match origin", async () => {
-    process.env[trustProxyEnv] = "true";
     const middleware = boardMutationGuard();
     const req = {
       method: "POST",
       actor: { type: "board", userId: "board", source: "session" },
       header: (name: string) => {
-
         if (name === "host") return "127.0.0.1";
         if (name === "x-forwarded-host") return "10.90.10.20:3443";
         if (name === "origin") return "https://evil.example.com";
