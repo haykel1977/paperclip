@@ -125,6 +125,11 @@ function buildFallbackDeliveryBranch(input: {
   return sanitizeDeliveryBranchName(`paperclip/${issueRef}-${runSuffix}`);
 }
 
+function buildCanonicalIssueDeliveryBranch(issueIdentifier: string | null, issueId: string | null): string | null {
+  const immutableIssueRef = issueId ?? issueIdentifier;
+  return immutableIssueRef ? sanitizeDeliveryBranchName(`paperclip/${immutableIssueRef}-delivery`) : null;
+}
+
 function isGitBranchAlreadyExistsError(stderr: string): boolean {
   const normalized = stderr.toLowerCase();
   return normalized.includes("already exists") || normalized.includes("a branch named") || normalized.includes("cannot create branch");
@@ -896,7 +901,29 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     return { delivered: false, prUrl: issuePrLookup.pr.url, reason: "issue_already_merged" };
   }
 
+  const canonicalIssueBranch = autonomousDelivery
+    ? buildCanonicalIssueDeliveryBranch(input.issueIdentifier, input.issueId)
+    : null;
+  if (canonicalIssueBranch && branch !== canonicalIssueBranch) {
+    const canonicalCheckout = await checkoutNewOrExistingBranch({
+      branch: canonicalIssueBranch,
+      worktreeCwd,
+      env,
+      runProc,
+    });
+    if (!canonicalCheckout.ok) {
+      await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="canonical_issue_branch_checkout_failed" detail="${firstNonEmptyLine(canonicalCheckout.stderr) || firstNonEmptyLine(canonicalCheckout.stdout) || "checkout failed"}"\n`);
+      return { delivered: false, prUrl: null, reason: "delivery_blocked: canonical issue branch checkout failed" };
+    }
+    branch = canonicalIssueBranch;
+    await log("stdout", `[delivery ${ts()}] canonical_issue_branch=${branch}${canonicalCheckout.reused ? " reused_local=true" : ""}\n`);
+  }
+
   if (await remoteBranchExists({ branch, worktreeCwd, env: deliveryCommandEnv, runProc })) {
+    if (canonicalIssueBranch && branch === canonicalIssueBranch) {
+      await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="canonical_issue_branch_exists_without_pr" branch=${branch}\n`);
+      return { delivered: false, prUrl: null, reason: "delivery_blocked: canonical issue branch exists without PR" };
+    }
     const collisionBranch = await resolveRemoteCollisionBranch({
       branch,
       runId: input.runId,
@@ -928,6 +955,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     env,
     runProc,
   });
+
   if (signingPlan.required && !signingPlan.signCommit) {
     await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="signed commits not configured"\n`);
     return { delivered: false, prUrl: null, reason: "delivery_blocked: signed commits not configured" };
@@ -983,7 +1011,11 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
 
   // ── 7. push (with retry on transient errors) ──────────────────────────────
   let push = await pushWithRetry({ branch, worktreeCwd, env: deliveryCommandEnv, log, ts, runProc });
-  if (push.exitCode !== 0 && isNonFastForwardPushError(push.stderr)) {
+  if (
+    push.exitCode !== 0 &&
+    isNonFastForwardPushError(push.stderr) &&
+    !(canonicalIssueBranch && branch === canonicalIssueBranch)
+  ) {
     const recoveryBranch = await checkoutFreshRemoteCollisionBranch({
       branch,
       runId: input.runId,
@@ -999,6 +1031,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
       await log("stderr", `[delivery ${ts()}] push_non_fast_forward_recovery_failed: ${firstNonEmptyLine(recoveryBranch.stderr) || firstNonEmptyLine(recoveryBranch.stdout) || "checkout failed"}\n`);
     }
   }
+
   if (push.exitCode !== 0) {
     const s = (push.stderr || "").toLowerCase();
     const reason =
@@ -1039,11 +1072,11 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
   }
 
   const prArgs = [
-
     "pr",
     "create",
     "--repo",
     input.repo,
+
     "--head",
     branch,
     "--base",
