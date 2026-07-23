@@ -17,9 +17,16 @@
  * more, the minted token cannot exceed this set. All READS (PR, files, labels,
  * check-runs, statuses, commit) are performed with the workflow's default
  * GITHUB_TOKEN, so this App token needs no read scopes beyond the mandatory
- * `metadata:read`. Its only privileged capability is submitting/dismissing its
- * own PR review (`pull_requests:write`). This token is minted ONLY when the
- * checker is about to approve or dismiss — never for read-only evaluation.
+ * `metadata:read`. Its privileged capabilities are exactly two writes:
+ *   - `checks:write` — the AUTHORITATIVE merge signal. The App creates/updates a
+ *     distinct check run (`paperclip-checker/app`) on the exact PR head; only a
+ *     write-privileged App identity can publish it, and it is what branch
+ *     protection requires (a GitHub App review has author-association NONE and
+ *     therefore can never satisfy required_approving_review_count).
+ *   - `pull_requests:write` — submitting/dismissing the App's own PR review,
+ *     retained only as an audit trail; merge eligibility does NOT depend on it.
+ * This token is minted ONLY when the checker is about to write — never for
+ * read-only evaluation.
  *
  * Exports: generateAppJwt, mintInstallationToken, LEAST_PRIVILEGE_PERMISSIONS,
  * resolveCheckerInstallationId.
@@ -31,13 +38,15 @@ const REPO_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
 
 // The complete permission set the checker token is allowed to hold. Anything
 // not listed is implicitly denied by GitHub. `metadata:read` is mandatory for
-// any token; `pull_requests:write` is the ONLY write scope and the ONLY
-// capability the App actually exercises (submit/dismiss its own review). No
-// code/content/check/status/workflow/admin/issues scope is present: the checker
-// never pushes code, never creates/edits check-runs, never edits workflows, and
-// never touches repo administration. Reads use the default GITHUB_TOKEN.
+// any token. The two write scopes are the only capabilities the App exercises:
+// `checks:write` publishes the authoritative `paperclip-checker/app` check run
+// (the required merge signal), and `pull_requests:write` submits/dismisses the
+// App's own audit review. No code/content/status/workflow/admin/issues scope is
+// present: the checker never pushes code, never edits workflows, and never
+// touches repo administration. Reads use the default GITHUB_TOKEN.
 export const LEAST_PRIVILEGE_PERMISSIONS = Object.freeze({
   metadata: 'read',
+  checks: 'write',
   pull_requests: 'write',
 });
 

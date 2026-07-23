@@ -11,8 +11,12 @@ import {
   resolvePrNumberForSha,
   fetchAllPagesFromKey,
   executeDecision,
+  findAppCheckRun,
+  checkRunParamsForDecision,
+  upsertCheckRun,
   sanitizeError,
   DEFAULT_APP_SLUG,
+  DEFAULT_CHECK_RUN_NAME,
   DEFAULT_REQUIRED_CHECK_POLICY,
 } from '../paperclip-checker.mjs';
 import {
@@ -752,13 +756,15 @@ test('mintInstallationToken: down-scopes to least-privilege permissions + single
   assert.deepEqual(captured.body.repositories, ['paperclip']);
 });
 
-test('LEAST_PRIVILEGE_PERMISSIONS: only pull_requests:write, metadata:read; no unused read scopes', () => {
-  assert.deepEqual({ ...LEAST_PRIVILEGE_PERMISSIONS }, { metadata: 'read', pull_requests: 'write' });
-  const writeScopes = Object.entries(LEAST_PRIVILEGE_PERMISSIONS).filter(([, v]) => v === 'write').map(([k]) => k);
-  assert.deepEqual(writeScopes, ['pull_requests']);
+test('LEAST_PRIVILEGE_PERMISSIONS: only checks:write + pull_requests:write, metadata:read; no unused read scopes', () => {
+  assert.deepEqual({ ...LEAST_PRIVILEGE_PERMISSIONS }, { metadata: 'read', checks: 'write', pull_requests: 'write' });
+  const writeScopes = Object.entries(LEAST_PRIVILEGE_PERMISSIONS).filter(([, v]) => v === 'write').map(([k]) => k).sort();
+  // checks:write publishes the authoritative required check run; pull_requests:write
+  // is the audit-only review. No other write scope is granted.
+  assert.deepEqual(writeScopes, ['checks', 'pull_requests']);
   // The reads-via-default-token design means the App token needs no
-  // contents/issues/actions/checks/statuses scopes at all.
-  for (const scope of ['contents', 'issues', 'actions', 'checks', 'statuses']) {
+  // contents/issues/actions/statuses scopes at all.
+  for (const scope of ['contents', 'issues', 'actions', 'statuses']) {
     assert.equal(LEAST_PRIVILEGE_PERMISSIONS[scope], undefined, `${scope} must not be granted`);
   }
 });
@@ -934,7 +940,7 @@ test('workflow: checkout pins the repository default branch, never the PR-select
   assert.doesNotMatch(wf, /ref:.*head\.sha/);
 });
 
-test('workflow: checker job pins the check name to the documented paperclip-checker label', () => {
+test('workflow: runner job name is DISTINCT from the App-authored required check', () => {
   const wfPath = fileURLToPath(new URL('../../workflows/paperclip-checker.yml', import.meta.url));
   const wf = readFileSync(wfPath, 'utf8');
   const lines = wf.split('\n');
@@ -948,9 +954,15 @@ test('workflow: checker job pins the check name to the documented paperclip-chec
     if (/^ {2}\S/.test(lines[i])) { end = i; break; }
   }
   const checkerBlock = lines.slice(start, end).join('\n');
-  // The emitted check-run name must be `paperclip-checker` (the label the
-  // runbook/branch-protection reference), not the bare job id `checker`.
-  assert.match(checkerBlock, /^ {4}name:\s*paperclip-checker\s*$/m);
+  // The runner job's Actions check-run name must be DELIBERATELY DISTINCT from
+  // the App-authored required check `paperclip-checker/app`. Branch protection
+  // must require the App check (pinned to the App's app_id), never the spoofable
+  // runner job. The runner job name is disambiguated as `paperclip-checker (runner)`.
+  const nameMatch = checkerBlock.match(/^ {4}name:\s*(.+?)\s*$/m);
+  assert.ok(nameMatch, 'jobs.checker must set a display name');
+  const jobName = nameMatch[1].trim();
+  assert.equal(jobName, 'paperclip-checker (runner)');
+  assert.notEqual(jobName, 'paperclip-checker/app', 'runner job name must not collide with the App check');
 });
 
 // ── secret-scan workflow: required "Secret Scan" context must be produced ──
@@ -1000,16 +1012,22 @@ test('secret-scan: a gate job publishes the "Secret Scan" required context, gate
 // side effects, including the anti-TOCTOU + stale-dismiss coupling.
 
 function recordingDeps() {
-  const calls = { mint: 0, dismiss: [], approve: [] };
+  const calls = { mint: 0, dismiss: [], approve: [], upsert: [] };
   return {
     calls,
     deps: {
       mintAppToken: async () => { calls.mint += 1; return 'app-token'; },
       dismissReview: async (_gh, _tok, _repo, _pr, id) => { calls.dismiss.push(id); },
       submitApproval: async (_gh, _tok, _repo, _pr, sha) => { calls.approve.push(sha); },
+      upsertCheckRun: async (_gh, _tok, _repo, headSha, opts) => {
+        calls.upsert.push({ headSha, ...opts });
+        return { id: opts.existingId ?? 55501 };
+      },
     },
   };
 }
+
+const APP_ID = Number(activeConfig().appId);
 
 const baseArgs = (over = {}) => ({
   ghFetch: async () => ({ head: { sha: HEAD } }),
@@ -1019,6 +1037,8 @@ const baseArgs = (over = {}) => ({
   prNumber: 1,
   eventHeadSha: HEAD,
   existingAppReview: null,
+  existingAppCheckRun: null,
+  checkRunName: DEFAULT_CHECK_RUN_NAME,
   ...over,
 });
 
@@ -1033,6 +1053,13 @@ test('executeDecision: approved + fresh head + no prior review → approves at h
   assert.deepEqual(calls.approve, [HEAD]);
   assert.deepEqual(calls.dismiss, []);
   assert.equal(outcome.dismissed, false);
+  // The AUTHORITATIVE merge signal: a success check run at the exact head.
+  assert.equal(calls.upsert.length, 1);
+  assert.equal(calls.upsert[0].headSha, HEAD);
+  assert.equal(calls.upsert[0].name, DEFAULT_CHECK_RUN_NAME);
+  assert.equal(calls.upsert[0].status, 'completed');
+  assert.equal(calls.upsert[0].conclusion, 'success');
+  assert.equal(calls.upsert[0].existingId, undefined); // POST (create), no prior run
 });
 
 test('executeDecision: TOCTOU — head advances mid-run with a prior (non-stale) approval → dismisses it, rejects, no approve', async () => {
@@ -1104,33 +1131,38 @@ test('executeDecision: TOCTOU dismiss failure → blocked (fail closed), still n
 
 // ── executeDecision: idempotent re-run when a valid approval already stands ──
 
-test('executeDecision: approved + valid standing approval at current head → idempotent (no mint/approve/dismiss)', async () => {
+test('executeDecision: approved + THIS App check already success at current head → idempotent (no mint/publish/approve/dismiss)', async () => {
   const { calls, deps } = recordingDeps();
   const outcome = await executeDecision(baseArgs({
     // Typical second workflow_run at the same green SHA: decision approved,
-    // dismissStale false, and the App already approved this exact head.
+    // dismissStale false, and THIS App's own check run already reports success
+    // for this exact head (bound to the App's app_id).
     result: { decision: 'approved', dismissStale: false, riskLane: 'GREEN', reasons: ['ok'] },
-    existingAppReview: { id: 42, commit_id: HEAD, state: 'APPROVED' },
+    existingAppCheckRun: { id: 42, conclusion: 'success', head_sha: HEAD, app: { id: APP_ID } },
     deps,
   }));
   assert.equal(outcome.status, 'approved');
   assert.equal(outcome.exitCode, 0);
-  // No resubmit: a redundant APPROVE is skipped, so a transient POST failure
-  // cannot flip a standing valid approval to blocked.
+  // No resubmit of any kind: a transient PATCH/POST failure must not flip a
+  // standing green check to blocked, so nothing is minted or written.
+  assert.deepEqual(calls.upsert, []);
   assert.deepEqual(calls.approve, []);
   assert.deepEqual(calls.dismiss, []);
   assert.equal(calls.mint, 0);
-  assert.match(outcome.reasons.join(' '), /already targets the current head; not resubmitting \(idempotent\)/);
+  assert.match(outcome.reasons.join(' '), /already reports success for the current head; not resubmitting \(idempotent\)/);
 });
 
-test('executeDecision: idempotency STILL runs anti-TOCTOU — standing approval but head advanced → dismiss + reject', async () => {
+test('executeDecision: idempotency STILL runs anti-TOCTOU — standing success check but head advanced → dismiss review + failure check + reject', async () => {
   const { calls, deps } = recordingDeps();
   const outcome = await executeDecision(baseArgs({
-    // Prior approval is for eventHeadSha, but the freshness re-read shows the
-    // head advanced. Idempotency must NOT short-circuit the freshness check.
+    // THIS App's check already reports success at eventHeadSha, but the freshness
+    // re-read shows the head advanced. Idempotency must NOT short-circuit the
+    // freshness check — the stale review is dismissed and a failure check is
+    // published for the now-stale event head.
     ghFetch: async () => ({ head: { sha: OTHER } }),
     result: { decision: 'approved', dismissStale: false, riskLane: 'GREEN', reasons: ['ok'] },
     existingAppReview: { id: 43, commit_id: HEAD, state: 'APPROVED' },
+    existingAppCheckRun: { id: 430, conclusion: 'success', head_sha: HEAD, app: { id: APP_ID } },
     deps,
   }));
   assert.equal(outcome.status, 'rejected');
@@ -1138,32 +1170,289 @@ test('executeDecision: idempotency STILL runs anti-TOCTOU — standing approval 
   assert.match(outcome.reasons.join(' '), /Head advanced during evaluation/);
   assert.deepEqual(calls.dismiss, [43]);
   assert.deepEqual(calls.approve, []);
+  // A best-effort failure check is published on the stale event head, PATCHing
+  // this App's own prior run in place (existingId), never a fresh success.
+  assert.equal(calls.upsert.length, 1);
+  assert.equal(calls.upsert[0].conclusion, 'failure');
+  assert.equal(calls.upsert[0].existingId, 430);
+  assert.equal(calls.upsert[0].headSha, HEAD);
 });
 
-test('executeDecision: no idempotent skip once the stale approval was dismissed → re-approves fresh', async () => {
+test('executeDecision: no idempotent skip once the stale review was dismissed → re-publishes success', async () => {
   const { calls, deps } = recordingDeps();
   const outcome = await executeDecision(baseArgs({
-    // Stale by action (e.g. `edited`) at the SAME head: dismissed up front, so
-    // the standing approval is gone and a fresh APPROVE must be posted.
+    // Stale by action (e.g. `edited`) at the SAME head: the review is dismissed
+    // up front, so even a standing success check must be re-published (the
+    // idempotency skip requires !dismissed).
     result: { decision: 'approved', dismissStale: true, riskLane: 'GREEN', reasons: ['ok'] },
     existingAppReview: { id: 44, commit_id: HEAD, state: 'APPROVED' },
+    existingAppCheckRun: { id: 440, conclusion: 'success', head_sha: HEAD, app: { id: APP_ID } },
     deps,
   }));
   assert.equal(outcome.status, 'approved');
   assert.deepEqual(calls.dismiss, [44]);
+  // A fresh success check is PATCHed onto this App's own run, and the audit
+  // review is re-submitted.
+  assert.equal(calls.upsert.length, 1);
+  assert.equal(calls.upsert[0].conclusion, 'success');
+  assert.equal(calls.upsert[0].existingId, 440);
   assert.deepEqual(calls.approve, [HEAD]);
 });
 
-test('executeDecision: prior approval targets an OLDER commit → not idempotent, approves at fresh head', async () => {
+test('executeDecision: prior check targets an OLDER commit → not idempotent, publishes success at fresh head', async () => {
   const { calls, deps } = recordingDeps();
   const outcome = await executeDecision(baseArgs({
-    // commit_id !== eventHeadSha → the standing approval is not for this head;
-    // the idempotency guard must not fire. (dismissStale left false to isolate
-    // the SHA comparison in the guard itself.)
+    // head_sha !== eventHeadSha → the standing check is not for this head; the
+    // idempotency guard must not fire. (dismissStale left false to isolate the
+    // SHA comparison in the guard itself.)
     result: { decision: 'approved', dismissStale: false, riskLane: 'GREEN', reasons: ['ok'] },
-    existingAppReview: { id: 45, commit_id: OTHER, state: 'APPROVED' },
+    existingAppCheckRun: { id: 45, conclusion: 'success', head_sha: OTHER, app: { id: APP_ID } },
     deps,
   }));
   assert.equal(outcome.status, 'approved');
+  assert.equal(calls.upsert.length, 1);
+  assert.equal(calls.upsert[0].conclusion, 'success');
+  assert.equal(calls.upsert[0].existingId, 45); // PATCH our own prior run in place
   assert.deepEqual(calls.approve, [HEAD]);
+});
+
+test('executeDecision: prior check exists but is a FAILURE at current head → not idempotent, re-publishes success', async () => {
+  const { calls, deps } = recordingDeps();
+  const outcome = await executeDecision(baseArgs({
+    // Same head, but the standing check is not success (e.g. a prior pending/
+    // failure that has since turned green): the idempotency skip requires the
+    // prior conclusion to be `success`, so this must re-publish.
+    result: { decision: 'approved', dismissStale: false, riskLane: 'GREEN', reasons: ['ok'] },
+    existingAppCheckRun: { id: 46, conclusion: 'failure', head_sha: HEAD, app: { id: APP_ID } },
+    deps,
+  }));
+  assert.equal(outcome.status, 'approved');
+  assert.equal(calls.upsert.length, 1);
+  assert.equal(calls.upsert[0].conclusion, 'success');
+  assert.equal(calls.upsert[0].existingId, 46);
+});
+
+// ── App-authored check run: the authoritative required merge signal ──────────
+
+test('checkRunParamsForDecision: approved→success, pending→in_progress(no conclusion), rejected/blocked→failure, never neutral', () => {
+  const approved = checkRunParamsForDecision('approved', ['a', 'b']);
+  assert.equal(approved.status, 'completed');
+  assert.equal(approved.conclusion, 'success');
+  assert.match(approved.summary, /- a\n- b/);
+
+  const pending = checkRunParamsForDecision('pending', []);
+  assert.equal(pending.status, 'in_progress');
+  assert.equal(pending.conclusion, undefined); // NOT passing; required check stays unsatisfied
+
+  const rejected = checkRunParamsForDecision('rejected', ['nope']);
+  assert.equal(rejected.status, 'completed');
+  assert.equal(rejected.conclusion, 'failure');
+
+  const blocked = checkRunParamsForDecision('blocked', ['boom']);
+  assert.equal(blocked.status, 'completed');
+  assert.equal(blocked.conclusion, 'failure');
+
+  // `neutral` is treated as PASSING by GitHub and must never be emitted.
+  for (const s of ['approved', 'pending', 'rejected', 'blocked', 'anything']) {
+    assert.notEqual(checkRunParamsForDecision(s, []).conclusion, 'neutral');
+  }
+});
+
+test('findAppCheckRun: matches on name AND app id, ignores spoofs, returns most recent', () => {
+  const runs = [
+    { id: 1, name: DEFAULT_CHECK_RUN_NAME, conclusion: 'success', app: { id: 999 }, started_at: '2026-01-01T00:00:00Z' },
+    // spoof: same name, DIFFERENT app id → must be ignored
+    { id: 2, name: DEFAULT_CHECK_RUN_NAME, conclusion: 'success', app: { id: 15368 }, started_at: '2026-06-01T00:00:00Z' },
+    // matching name+app, more recent than #1
+    { id: 3, name: DEFAULT_CHECK_RUN_NAME, conclusion: 'failure', app: { id: 999 }, started_at: '2026-03-01T00:00:00Z' },
+    // different name → ignored
+    { id: 4, name: 'verify', conclusion: 'success', app: { id: 999 }, started_at: '2026-09-01T00:00:00Z' },
+  ];
+  const found = findAppCheckRun(runs, DEFAULT_CHECK_RUN_NAME, 999);
+  assert.equal(found.id, 3);
+  // No app id → nothing is authoritative (guards against unbound matches).
+  assert.equal(findAppCheckRun(runs, DEFAULT_CHECK_RUN_NAME, null), null);
+  // Empty / non-array inputs are safe.
+  assert.equal(findAppCheckRun([], DEFAULT_CHECK_RUN_NAME, 999), null);
+  assert.equal(findAppCheckRun(undefined, DEFAULT_CHECK_RUN_NAME, 999), null);
+});
+
+test('executeDecision: approved with THIS App prior NON-success check at head → PATCH (update) to success', async () => {
+  const { calls, deps } = recordingDeps();
+  const outcome = await executeDecision(baseArgs({
+    // A prior in_progress/failure run for this exact head must be updated in
+    // place (PATCH via existingId), never duplicated with a fresh POST.
+    result: { decision: 'approved', dismissStale: false, riskLane: 'GREEN', reasons: ['ok'] },
+    existingAppCheckRun: { id: 700, conclusion: 'failure', head_sha: HEAD, app: { id: APP_ID } },
+    deps,
+  }));
+  assert.equal(outcome.status, 'approved');
+  assert.equal(calls.upsert.length, 1);
+  assert.equal(calls.upsert[0].existingId, 700); // PATCH the prior run
+  assert.equal(calls.upsert[0].conclusion, 'success');
+  assert.equal(calls.upsert[0].headSha, HEAD);
+});
+
+test('executeDecision: approved but publishing the success check FAILS → blocked (fail-closed), no audit approve', async () => {
+  const calls = { approve: [], upsert: 0 };
+  const deps = {
+    mintAppToken: async () => 'app-token',
+    dismissReview: async () => {},
+    submitApproval: async (_g, _t, _r, _p, sha) => { calls.approve.push(sha); },
+    upsertCheckRun: async () => { calls.upsert += 1; throw new Error('POST /check-runs → 500'); },
+  };
+  const outcome = await executeDecision(baseArgs({
+    result: { decision: 'approved', dismissStale: false, riskLane: 'GREEN', reasons: ['ok'] },
+    deps,
+  }));
+  // Without a green required check there is no merge signal → fail closed.
+  assert.equal(outcome.status, 'blocked');
+  assert.equal(outcome.exitCode, 1);
+  assert.equal(calls.upsert, 1);
+  // The audit review must NOT be posted once the authoritative signal failed.
+  assert.deepEqual(calls.approve, []);
+  assert.match(outcome.reasons.join(' '), /Publishing the success check run failed/);
+});
+
+test('executeDecision: approved, success check lands but audit review FAILS → still approved (review is audit-only)', async () => {
+  const calls = { upsert: [] };
+  const deps = {
+    mintAppToken: async () => 'app-token',
+    dismissReview: async () => {},
+    submitApproval: async () => { throw new Error('POST review → 422'); },
+    upsertCheckRun: async (_g, _t, _r, headSha, opts) => { calls.upsert.push({ headSha, ...opts }); return { id: 1 }; },
+  };
+  const outcome = await executeDecision(baseArgs({
+    result: { decision: 'approved', dismissStale: false, riskLane: 'GREEN', reasons: ['ok'] },
+    deps,
+  }));
+  assert.equal(outcome.status, 'approved');
+  assert.equal(outcome.exitCode, 0);
+  assert.equal(calls.upsert.length, 1);
+  assert.equal(calls.upsert[0].conclusion, 'success');
+  assert.match(outcome.reasons.join(' '), /Audit review submission failed/);
+});
+
+test('executeDecision: rejected decision publishes a FAILURE check bound to the event head (best-effort)', async () => {
+  const { calls, deps } = recordingDeps();
+  const outcome = await executeDecision(baseArgs({
+    result: { decision: 'rejected', dismissStale: false, riskLane: 'RED', reasons: ['red lane'] },
+    deps,
+  }));
+  assert.equal(outcome.status, 'rejected');
+  assert.equal(outcome.exitCode, 1);
+  assert.equal(calls.upsert.length, 1);
+  assert.equal(calls.upsert[0].status, 'completed');
+  assert.equal(calls.upsert[0].conclusion, 'failure');
+  assert.equal(calls.upsert[0].headSha, HEAD);
+  assert.deepEqual(calls.approve, []);
+});
+
+test('executeDecision: blocked decision publishes a FAILURE check (best-effort)', async () => {
+  const { calls, deps } = recordingDeps();
+  const outcome = await executeDecision(baseArgs({
+    result: { decision: 'blocked', dismissStale: false, riskLane: undefined, reasons: ['blocked'] },
+    deps,
+  }));
+  assert.equal(outcome.status, 'blocked');
+  assert.equal(outcome.exitCode, 1);
+  assert.equal(calls.upsert.length, 1);
+  assert.equal(calls.upsert[0].conclusion, 'failure');
+});
+
+test('executeDecision: pending decision publishes an in_progress check (no conclusion) and exits 0', async () => {
+  const { calls, deps } = recordingDeps();
+  const outcome = await executeDecision(baseArgs({
+    result: { decision: 'pending', dismissStale: false, riskLane: 'GREEN', reasons: ['awaiting checks'] },
+    deps,
+  }));
+  assert.equal(outcome.status, 'pending');
+  assert.equal(outcome.exitCode, 0);
+  assert.equal(calls.upsert.length, 1);
+  assert.equal(calls.upsert[0].status, 'in_progress');
+  assert.equal(calls.upsert[0].conclusion, undefined);
+});
+
+test('executeDecision: rejected/blocked/pending publish failure is swallowed (absence already fails closed)', async () => {
+  const deps = {
+    mintAppToken: async () => 'app-token',
+    dismissReview: async () => {},
+    submitApproval: async () => {},
+    upsertCheckRun: async () => { throw new Error('PATCH → 503'); },
+  };
+  for (const decision of ['rejected', 'blocked']) {
+    const outcome = await executeDecision(baseArgs({
+      result: { decision, dismissStale: false, riskLane: 'RED', reasons: [decision] },
+      deps,
+    }));
+    assert.equal(outcome.status, decision);
+    assert.equal(outcome.exitCode, 1); // publish error does not change the (already-failing) outcome
+  }
+  const pending = await executeDecision(baseArgs({
+    result: { decision: 'pending', dismissStale: false, riskLane: 'GREEN', reasons: ['x'] },
+    deps,
+  }));
+  assert.equal(pending.status, 'pending');
+  assert.equal(pending.exitCode, 0);
+});
+
+test('upsertCheckRun: no existingId → POST creates a run bound to head_sha with name+status+output', async () => {
+  let captured = null;
+  const ghFetch = async (path, token, opts) => {
+    captured = { path, token, method: opts.method, body: JSON.parse(opts.body) };
+    return { id: 123 };
+  };
+  await upsertCheckRun(ghFetch, 'app-token', 'o/r', HEAD, {
+    existingId: undefined,
+    name: DEFAULT_CHECK_RUN_NAME,
+    status: 'completed',
+    conclusion: 'success',
+    title: 'T',
+    summary: 'S',
+  });
+  assert.equal(captured.method, 'POST');
+  assert.equal(captured.path, '/repos/o/r/check-runs');
+  assert.equal(captured.body.name, DEFAULT_CHECK_RUN_NAME);
+  assert.equal(captured.body.head_sha, HEAD);
+  assert.equal(captured.body.status, 'completed');
+  assert.equal(captured.body.conclusion, 'success');
+  assert.deepEqual(captured.body.output, { title: 'T', summary: 'S' });
+});
+
+test('upsertCheckRun: existingId → PATCH updates in place, omitting immutable name/head_sha', async () => {
+  let captured = null;
+  const ghFetch = async (path, token, opts) => {
+    captured = { path, method: opts.method, body: JSON.parse(opts.body) };
+    return { id: 700 };
+  };
+  await upsertCheckRun(ghFetch, 'app-token', 'o/r', HEAD, {
+    existingId: 700,
+    name: DEFAULT_CHECK_RUN_NAME,
+    status: 'completed',
+    conclusion: 'success',
+    title: 'T',
+    summary: 'S',
+  });
+  assert.equal(captured.method, 'PATCH');
+  assert.equal(captured.path, '/repos/o/r/check-runs/700');
+  // name/head_sha are immutable on update and must NOT be resent.
+  assert.equal(captured.body.name, undefined);
+  assert.equal(captured.body.head_sha, undefined);
+  assert.equal(captured.body.status, 'completed');
+  assert.equal(captured.body.conclusion, 'success');
+});
+
+test('upsertCheckRun: in_progress (no conclusion) omits the conclusion field entirely', async () => {
+  let captured = null;
+  const ghFetch = async (_path, _token, opts) => { captured = JSON.parse(opts.body); return { id: 1 }; };
+  await upsertCheckRun(ghFetch, 'app-token', 'o/r', HEAD, {
+    existingId: undefined,
+    name: DEFAULT_CHECK_RUN_NAME,
+    status: 'in_progress',
+    conclusion: undefined,
+    title: 'T',
+    summary: 'S',
+  });
+  assert.equal(captured.status, 'in_progress');
+  assert.ok(!('conclusion' in captured), 'conclusion must be omitted for in_progress');
 });
