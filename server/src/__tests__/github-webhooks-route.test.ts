@@ -1,6 +1,8 @@
 import { createHmac } from "node:crypto";
 import express from "express";
 import request from "supertest";
+import type { SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const serviceMocks = vi.hoisted(() => ({
@@ -30,6 +32,7 @@ type DbScenario = {
   issue?: { id: string; companyId: string; status: string; executionState?: unknown } | null;
   activeRuns?: { id: string }[];
   authorizedWorkspace?: { id: string } | null;
+  inspectWorkspaceCondition?: (condition: unknown) => void;
 };
 
 function createDbStub(scenario: DbScenario = {}) {
@@ -43,7 +46,7 @@ function createDbStub(scenario: DbScenario = {}) {
   return {
     select: vi.fn(() => ({
       from: vi.fn(() => ({
-        where: vi.fn(() => {
+        where: vi.fn((condition: unknown) => {
           selectCall += 1;
           if (selectCall === 1) {
             // issues lookup
@@ -51,6 +54,7 @@ function createDbStub(scenario: DbScenario = {}) {
           }
           if (selectCall === 2) {
             // projectWorkspaces lookup (company-repo trust)
+            scenario.inspectWorkspaceCondition?.(condition);
             return {
               limit: vi.fn(() => Promise.resolve(authorizedWorkspace ? [authorizedWorkspace] : [])),
             };
@@ -241,6 +245,27 @@ describe("GitHub delivery webhook", () => {
     expect(response.status).toBe(403);
     expect(response.body.error).toMatch(/not authorized/i);
     expect(serviceMocks.updateIssue).not.toHaveBeenCalled();
+  });
+
+  it("matches workspace repository URLs exactly", async () => {
+    let workspaceCondition: unknown;
+    const response = await sendWebhook(
+      createApp({
+        inspectWorkspaceCondition: (condition) => {
+          workspaceCondition = condition;
+        },
+      }),
+      mergedPullRequestPayload(),
+    );
+
+    expect(response.status).toBe(200);
+    const query = new PgDialect().sqlToQuery(workspaceCondition as SQL);
+    expect(query.sql.toLowerCase()).not.toContain(" like ");
+    expect(query.params).toEqual([
+      COMPANY_ID,
+      "https://github.com/beyn-solidus/quantum",
+      "https://github.com/beyn-solidus/quantum.git",
+    ]);
   });
 
   // ── happy path ─────────────────────────────────────────────────────────────

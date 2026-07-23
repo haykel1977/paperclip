@@ -107,9 +107,9 @@ export function githubWebhookRoutes(db: Db) {
 
     // Verify the webhook repository belongs to the issue's company
     const repoFullName = metadata.repository.toLowerCase();
-    const repoUrlPatterns = [
-      `%github.com/${repoFullName}%`,
-      `%github.com/${repoFullName}.git%`,
+    const repoUrls = [
+      `https://github.com/${repoFullName}`,
+      `https://github.com/${repoFullName}.git`,
     ];
     const authorizedWorkspace = await db
       .select({ id: projectWorkspaces.id })
@@ -118,8 +118,8 @@ export function githubWebhookRoutes(db: Db) {
         and(
           eq(projectWorkspaces.companyId, issue.companyId),
           or(
-            sql`LOWER(${projectWorkspaces.repoUrl}) LIKE ${repoUrlPatterns[0]}`,
-            sql`LOWER(${projectWorkspaces.repoUrl}) LIKE ${repoUrlPatterns[1]}`,
+            sql`LOWER(TRIM(TRAILING '/' FROM ${projectWorkspaces.repoUrl})) = ${repoUrls[0]}`,
+            sql`LOWER(TRIM(TRAILING '/' FROM ${projectWorkspaces.repoUrl})) = ${repoUrls[1]}`,
           ),
         ),
       )
