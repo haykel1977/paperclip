@@ -504,13 +504,48 @@ test('findApprovedAppReview: ignores non-approved App reviews', () => {
 
 // ── resolvePrNumberForSha: workflow_run PR resolution by head SHA ────────────
 
+// Serve `/commits/{sha}/pulls` as GitHub does: one page of up to 100 items per
+// `page=N` query param. `pages` is an array of arrays (page 1 first). Any page
+// beyond the supplied list returns [] so fetchAllPages terminates. Asserts the
+// caller actually paginates (per_page + page params present).
+const pulor = (pr) => ({
+  number: pr.number,
+  state: pr.state ?? 'open',
+  head: { sha: pr.sha ?? HEAD, repo: { full_name: pr.headRepo ?? 'paperclipai/paperclip' } },
+  base: { repo: { full_name: 'paperclipai/paperclip' } },
+});
+const pagedPulls = (pages, sha = HEAD) => async (path) => {
+  assert.ok(path.startsWith(`/repos/paperclipai/paperclip/commits/${sha}/pulls`), `unexpected path: ${path}`);
+  const m = /[?&]page=(\d+)/.exec(path);
+  assert.ok(m, `resolvePrNumberForSha must paginate (page param missing): ${path}`);
+  assert.match(path, /[?&]per_page=100\b/);
+  return pages[Number(m[1]) - 1] ?? [];
+};
+
 test('resolvePrNumberForSha: returns open same-repo PR whose head matches sha', async () => {
-  const gh = async (path) => {
-    assert.equal(path, `/repos/paperclipai/paperclip/commits/${HEAD}/pulls`);
-    return [{ number: 42, state: 'open', head: { sha: HEAD, repo: { full_name: 'paperclipai/paperclip' } }, base: { repo: { full_name: 'paperclipai/paperclip' } } }];
-  };
+  const gh = pagedPulls([[pulor({ number: 42 })]]);
   const n = await resolvePrNumberForSha(gh, 'tok', 'paperclipai/paperclip', HEAD);
   assert.equal(n, 42);
+});
+
+test('resolvePrNumberForSha: sole matching PR on a LATER page is still found (full pagination)', async () => {
+  // Page 1 is a full 100-item page of non-matching (other-SHA) PRs; the single
+  // matching PR sits on page 2. Reading only page 1 would wrongly return null
+  // and the gate would never approve a legitimately green PR.
+  const page1 = Array.from({ length: 100 }, (_, i) => pulor({ number: 1000 + i, sha: OTHER }));
+  const page2 = [pulor({ number: 77 })];
+  const n = await resolvePrNumberForSha(pagedPulls([page1, page2]), 'tok', 'paperclipai/paperclip', HEAD);
+  assert.equal(n, 77);
+});
+
+test('resolvePrNumberForSha: ambiguity SPLIT ACROSS pages → null (fail closed)', async () => {
+  // Two distinct open same-repo PRs share the head SHA, one per page. A page-1
+  // only read would see a single match and wrongly resolve it; full pagination
+  // must surface both and fail closed.
+  const page1 = [pulor({ number: 42 }), ...Array.from({ length: 99 }, (_, i) => pulor({ number: 2000 + i, sha: OTHER }))];
+  const page2 = [pulor({ number: 43 })];
+  const n = await resolvePrNumberForSha(pagedPulls([page1, page2]), 'tok', 'paperclipai/paperclip', HEAD);
+  assert.equal(n, null);
 });
 
 test('resolvePrNumberForSha: ignores fork PRs and closed PRs and SHA mismatches', async () => {

@@ -401,10 +401,17 @@ export function findApprovedAppReview(reviews, appSlug = DEFAULT_APP_SLUG) {
  * the App approval on a different PR. If more than one candidate matches, return
  * null (no-op); each such PR is still evaluated with real context via its own
  * pull_request_target events.
+ *
+ * The listing is paginated: a busy commit can be the head of more than one page
+ * of open PRs. Reading only page 1 would both miss a sole matching PR that
+ * happens to sort onto a later page (false null → gate never approves) AND hide
+ * cross-page ambiguity (two matches split across pages → a single page shows one,
+ * so we'd wrongly pick it). Page fully so exact-SHA matching and the ambiguity
+ * guard see every candidate.
  */
 export async function resolvePrNumberForSha(ghFetch, token, repo, sha) {
   if (!SHA_RE.test(String(sha ?? ''))) return null;
-  const prs = await ghFetch(`/repos/${repo}/commits/${sha}/pulls`, token);
+  const prs = await fetchAllPages(ghFetch, `/repos/${repo}/commits/${sha}/pulls`, token);
   const matches = [];
   for (const pr of Array.isArray(prs) ? prs : []) {
     if (pr?.state !== 'open') continue;
