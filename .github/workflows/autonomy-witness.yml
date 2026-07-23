@@ -2,14 +2,43 @@ name: Autonomy Witness
 
 # Permanent, tightly-bounded operational witness infrastructure.
 #
-# Purpose: prove that the allowlisted autonomous identity `github-actions[bot]`
-# can open a green, docs-only pull request through branch-protected checks —
-# without any human or non-allowlisted identity in the loop. This is the genuine
-# counterpart to a human-authored witness (which correctly fails the autonomy
-# allowlist).
+# Purpose: prove that the allowlisted autonomous identity can open a green,
+# docs-only pull request through branch-protected checks — without any human or
+# non-allowlisted identity in the loop. This is the genuine counterpart to a
+# human-authored witness (which correctly fails the autonomy allowlist).
+#
+# Why an App token (NOT the built-in GITHUB_TOKEN). GitHub deliberately does NOT
+# fire `pull_request` / `pull_request_target` / `push` workflow triggers for
+# events created with the repository's GITHUB_TOKEN — this prevents recursive
+# runs. A witness PR opened with GITHUB_TOKEN (authored by github-actions[bot])
+# therefore starts with ZERO required checks: verify, Typecheck + Release
+# Registry, Build, Secret Scan, and paperclip-checker/app never run, so branch
+# protection blocks it forever. To make the required PR workflows actually run on
+# the exact head, the PR must be OPENED with a non-GITHUB_TOKEN credential. We
+# mint a short-lived installation token for the commitperclip GitHub App
+# (allowlisted identity `commitperclip[bot]`) from the existing COMMITPERCLIP_KEY
+# secret and open the PR with it. Events created by an App installation token DO
+# trigger the normal PR workflows.
+#
+# Least privilege / separation of duties:
+#   - The branch is pushed with the ambient GITHUB_TOKEN (contents:write on this
+#     job's own token) — push events are not required, so no App contents scope
+#     is needed.
+#   - The PR is opened/looked-up with the commitperclip App installation token,
+#     which only needs pull-requests:write (already used in production by
+#     commitperclip-review.yml). The witness AUTHOR (commitperclip[bot]) is a
+#     DIFFERENT identity from the gating identities (paperclip-checker/app app id
+#     4372695, and the runner key github-actions app id 15368), so nothing here
+#     approves or gates its own PR.
+#   - Fail closed: the token mint step is given COMMITPERCLIP_KEY but NOT
+#     GITHUB_TOKEN, so get-bot-token.mjs cannot silently fall back to the
+#     event-suppressing GITHUB_TOKEN — a missing/broken App key aborts the run.
+#     The script additionally refuses any PR that ends up authored by
+#     github-actions[bot], so a check-less witness can never masquerade as green.
 #
 # The bounded logic lives in .github/scripts/autonomy-witness.sh; this workflow
-# only checks out the default branch and runs it with trusted run metadata.
+# only checks out the default branch, mints the App token, and runs it with
+# trusted run metadata.
 #
 # Hard bounds — enforced by:
 #   - .github/scripts/tests/autonomy-witness-workflow.test.mjs   (static policy)
@@ -18,7 +47,7 @@ name: Autonomy Witness
 #   - Writes exactly one generated docs file under doc/autonomy-witness/<run_id>.md.
 #   - Fixed branch prefix `autonomy-witness/`.
 #   - Minimal permissions: contents:write + pull-requests:write only.
-#   - Uses only the built-in GITHUB_TOKEN — no secrets, PAT, or App key.
+#   - Only the COMMITPERCLIP_KEY secret is referenced — no PAT, no other secret.
 #   - Only first-party actions, pinned by commit SHA — no third-party/mutable actions.
 #   - Never merges, never approves, never changes settings.
 #   - Idempotent / re-run safe: resumes the existing run-id branch; one PR per run id.
@@ -51,9 +80,37 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
 
-      - name: Open docs-only witness PR as github-actions[bot]
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20'
+
+      # Mint a short-lived commitperclip App installation token so the PR is
+      # opened by an App identity (events fire). GITHUB_TOKEN is deliberately NOT
+      # in this step's env: get-bot-token.mjs only falls back to GITHUB_TOKEN when
+      # it is present, so withholding it makes a missing/broken App key fail closed
+      # rather than silently producing an event-suppressed github-actions[bot] PR.
+      - name: Mint commitperclip App token (fail closed; no GITHUB_TOKEN fallback)
+        id: apptoken
         env:
-          GH_TOKEN: ${{ github.token }}
+          COMMITPERCLIP_KEY: ${{ secrets.COMMITPERCLIP_KEY }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          TOKEN="$(node .github/scripts/get-bot-token.mjs)"
+          if [ -z "$TOKEN" ]; then
+            echo "ERROR: failed to mint a commitperclip App installation token." >&2
+            exit 1
+          fi
+          echo "::add-mask::$TOKEN"
+          echo "value=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Open docs-only witness PR as the allowlisted App identity
+        env:
+          # The App installation token — used by `gh` to OPEN the PR so
+          # pull_request workflows run. `git push` uses the checkout-persisted
+          # GITHUB_TOKEN (push events are not required), keeping the App scope to
+          # pull-requests:write only.
+          GH_TOKEN: ${{ steps.apptoken.outputs.value }}
           RUN_ID: ${{ github.run_id }}
           HEAD_SHA: ${{ github.sha }}
           REPO: ${{ github.repository }}

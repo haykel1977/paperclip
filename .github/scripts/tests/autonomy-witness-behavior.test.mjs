@@ -57,26 +57,50 @@ function makeRepo() {
   mkdirSync(binDir);
   const listJson = join(root, 'pr-list.json');
   const createLog = join(root, 'gh-create.log');
-  // gh stub: faithfully applies the script's `--jq` via system jq to a fixture,
-  // records `gh pr create`, and echoes a URL for `gh pr view`.
+  // gh stub: faithfully applies the script's `--jq` via system jq to a fixture.
+  //   pr list   → runs the script's owner-scoping jq against the fixture.
+  //   pr create → records the call AND appends an owner-scoped row to the fixture
+  //               so the script's post-create `pr list` resolves the new number
+  //               (mirrors reality: a just-created PR is immediately listable).
+  //   pr view   → for `--json author` echoes GH_PR_AUTHOR (the identity under
+  //               test); otherwise echoes a URL. This is what the fail-closed
+  //               author guard reads.
   const stub = `#!/usr/bin/env bash
 set -euo pipefail
-if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "list" ]; then
-  expr=""
-  args=("\$@")
+jq_expr() {
+  local expr="" args=("\$@") i
   for ((i=0;i<\${#args[@]};i++)); do
     if [ "\${args[\$i]}" = "--jq" ]; then expr="\${args[\$((i+1))]}"; fi
   done
-  jq -r "\$expr" "\$GH_PR_LIST_JSON"
+  printf '%s' "\$expr"
+}
+json_fields() {
+  local val="" args=("\$@") i
+  for ((i=0;i<\${#args[@]};i++)); do
+    if [ "\${args[\$i]}" = "--json" ]; then val="\${args[\$((i+1))]}"; fi
+  done
+  printf '%s' "\$val"
+}
+if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "list" ]; then
+  jq -r "\$(jq_expr "\$@")" "\$GH_PR_LIST_JSON"
   exit 0
 fi
 if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "view" ]; then
-  echo "https://example.test/pr/\${3:-0}"
+  fields="\$(json_fields "\$@")"
+  if [[ "\$fields" == *author* ]]; then
+    echo "\${GH_PR_AUTHOR}"
+  else
+    echo "https://example.test/pr/\${3:-0}"
+  fi
   exit 0
 fi
 if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "create" ]; then
   echo "create $*" >> "\$GH_CREATE_LOG"
-  echo "https://example.test/pr/new"
+  tmp="\$(mktemp)"
+  jq --argjson n "\$GH_CREATED_PR" --arg o "\$GH_STUB_OWNER" \
+    '. + [{number:\$n, headRepositoryOwner:{login:\$o}}]' "\$GH_PR_LIST_JSON" > "\$tmp"
+  mv "\$tmp" "\$GH_PR_LIST_JSON"
+  echo "https://example.test/pr/\${GH_CREATED_PR}"
   exit 0
 fi
 echo "unhandled gh: $*" >&2
@@ -89,8 +113,19 @@ exit 1
   return { root, origin, binDir, listJson, createLog };
 }
 
-/** Run the witness script from a FRESH clone (each dispatch is a fresh checkout). */
-function runWitness(repo, { runId = RUN_ID, headSha = SHA_A, prList = [] } = {}) {
+/** Run the witness script from a FRESH clone (each dispatch is a fresh checkout).
+ * `prAuthor` is the login the gh stub reports for `pr view --json author` — i.e.
+ * the identity the fail-closed guard evaluates. It defaults to the allowlisted
+ * App identity; tests override it with the forbidden github-actions[bot] to
+ * exercise the event-suppression guard. `createdPr` is the number the stub
+ * assigns to a freshly created PR so the post-create lookup can resolve it. */
+function runWitness(repo, {
+  runId = RUN_ID,
+  headSha = SHA_A,
+  prList = [],
+  prAuthor = 'commitperclip[bot]',
+  createdPr = '1000',
+} = {}) {
   writeFileSync(repo.listJson, JSON.stringify(prList));
   const wd = mkdtempSync(join(repo.root, 'wd-'));
   run('git', ['clone', repo.origin, wd]); // checks out main (origin HEAD)
@@ -107,6 +142,9 @@ function runWitness(repo, { runId = RUN_ID, headSha = SHA_A, prList = [] } = {})
       DEFAULT_BRANCH: 'main',
       GH_PR_LIST_JSON: repo.listJson,
       GH_CREATE_LOG: repo.createLog,
+      GH_PR_AUTHOR: prAuthor,
+      GH_STUB_OWNER: OWNER,
+      GH_CREATED_PR: createdPr,
     },
   });
   return r;
@@ -245,6 +283,42 @@ test('owner scoping: ONLY fork-owned PRs → treated as none, so a real PR is op
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stdout, /Reusing existing witness PR/, 'fork-only lookup must not count as existing');
     assert.equal(createCount(repo), before + 1, 'must open a PR when only fork PRs exist');
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('fail closed: a freshly CREATED PR authored by github-actions[bot] is rejected', { skip }, () => {
+  // A witness opened with the built-in GITHUB_TOKEN authors a github-actions[bot]
+  // PR whose pull_request workflows are suppressed → the required checks never
+  // run. Even though the script just created it, it must refuse to treat that
+  // check-less PR as a valid witness.
+  const repo = makeRepo();
+  try {
+    const r = runWitness(repo, { prList: [], prAuthor: 'github-actions[bot]' });
+    assert.notEqual(r.status, 0, 'must fail closed on the event-suppressed identity');
+    assert.match(r.stderr, /authored by github-actions\[bot\]/,
+      'error must name the forbidden, event-suppressed identity');
+    assert.match(r.stderr, /minted App installation token/, 'error must point to the correct fix');
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('fail closed: a REUSED PR authored by github-actions[bot] is rejected', { skip }, () => {
+  // The guard applies to reused PRs too: a pre-existing owner-scoped PR that was
+  // (mis)opened by github-actions[bot] is still check-less and must be refused,
+  // never silently reused as if green.
+  const repo = makeRepo();
+  try {
+    runWitness(repo, { prList: [] }); // seed the branch
+    const r = runWitness(repo, {
+      prList: [{ number: 202, headRepositoryOwner: { login: OWNER } }],
+      prAuthor: 'github-actions[bot]',
+    });
+    assert.notEqual(r.status, 0, 'a reused check-less PR must also fail closed');
+    assert.match(r.stdout, /Reusing existing witness PR #202/, 'it did reuse the existing PR…');
+    assert.match(r.stderr, /authored by github-actions\[bot\]/, '…then refused it on the author guard');
   } finally {
     rmSync(repo.root, { recursive: true, force: true });
   }
