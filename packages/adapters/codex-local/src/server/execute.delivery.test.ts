@@ -98,6 +98,46 @@ describe("executeDeliveryHook", () => {
     expect(runProc).toHaveBeenCalledTimes(1);
   });
 
+  it("blocks tracked and untracked files containing real conflict markers", async () => {
+    const worktreeCwd = mkWorktree();
+    const calls: string[][] = [];
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      if (cmd === "git" && args[0] === "status") return { exitCode: 0, stdout: "?? new-file.ts\n", stderr: "" };
+      if (cmd === "git" && args[0] === "grep") {
+        return { exitCode: 0, stdout: "new-file.ts:1:<<<<<<< HEAD\n", stderr: "" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
+
+    expect(result).toMatchObject({ delivered: false, reason: "conflict" });
+    expect(calls).toContainEqual(["git", "grep", "--untracked", "-n", "-E", "^(<{7} |>{7} )", "--", "."]);
+    expect(calls.some((call) => call[0] === "git" && call[1] === "commit")).toBe(false);
+    expect(calls.some((call) => call[0] === "git" && call[1] === "push")).toBe(false);
+  });
+
+  it("fails closed when the conflict marker scan itself fails", async () => {
+    const worktreeCwd = mkWorktree();
+    const calls: string[][] = [];
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      if (cmd === "git" && args[0] === "status") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      if (cmd === "git" && args[0] === "grep") return { exitCode: 2, stdout: "", stderr: "fatal: grep failed" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
+
+    expect(result).toMatchObject({
+      delivered: false,
+      reason: "delivery_blocked: conflict marker scan failed",
+    });
+    expect(calls.some((call) => call[0] === "git" && call[1] === "commit")).toBe(false);
+    expect(calls.some((call) => call[0] === "git" && call[1] === "push")).toBe(false);
+  });
+
   it("gate rouge -> delivery_blocked et aucun push", async () => {
     const worktreeCwd = mkWorktree();
     const calls: string[][] = [];
@@ -109,6 +149,7 @@ describe("executeDeliveryHook", () => {
       if (key === "pnpm run lint") return { exitCode: 1, stdout: "", stderr: "lint failed" };
       return { exitCode: 0, stdout: "", stderr: "" };
     });
+
     const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
     expect(result.reason).toBe("delivery_blocked");
     expect(calls.some((call) => call[0] === "git" && call[1] === "commit")).toBe(false);
@@ -221,21 +262,43 @@ describe("executeDeliveryHook", () => {
     });
     const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
     expect(createCall).toBeDefined();
+    expect(createCall).toContain("paperclip/uuid-delivery");
+    expect(calls).toContainEqual(["git", "checkout", "-b", "paperclip/uuid-delivery"]);
+    // paperclip:allow-git-push: test assertion — verifies canonical autonomous delivery push (PAPA-432)
+    expect(calls).toContainEqual(["git", "push", "-u", "origin", "paperclip/uuid-delivery"]);
     expect(createCall).toContain("agent-pr");
+
     expect(createCall).toContain("truth-first");
+
     expect(createCall).toContain("bot-merge-ready");
     expect(createCall).toContain("prod-gate-required");
     expect(createCall).not.toContain("human-gate-required");
     const bodyIndex = createCall?.indexOf("--body") ?? -1;
+
     const body = bodyIndex >= 0 ? createCall?.[bodyIndex + 1] ?? "" : "";
+    expect(body).toContain("## Thinking Path");
+    expect(body).toContain("## Linked Issues or Issue Description");
+    expect(body).toContain("### What happened");
+    expect(body).toContain("### Expected behavior");
+    expect(body).toContain("### Steps to reproduce");
+    expect(body).toContain("## What Changed");
     expect(body).toContain("## Description");
+    expect(body).toContain("- Repository: Beyn-SOLIDUS/quantum");
     expect(body).toContain("ADR: ADR-GOV-007");
     expect(body).toContain("TRUTHFULNESS: BACKEND-WIRED");
     expect(body).toContain("## Truthfulness Boundary");
     expect(body).toContain("| Claim | Evidence | Boundary |");
     expect(body).toContain("## Quality Gate Evidence");
+    expect(body).toContain("## Verification");
+    expect(body).toContain("## PR Readiness Gate");
+    expect(body).toContain("- CI status: Pending — GitHub required checks are the source of truth.");
+    expect(body).toContain("## Risks");
+    expect(body).toContain("## Model Used");
+    expect(body).toContain("- [x] I have searched GitHub for duplicate or related PRs and linked them above.");
     expect(body).toContain("## Type de changement");
+
     expect(body).toContain("VERIFIED: autonomous delivery requires a signed git commit before push");
+
     expect(body).toContain("## Sécurité");
     expect(body).toContain("## Dev/test merge policy");
     expect(body).toContain("`pnpm run typecheck`");
@@ -253,7 +316,47 @@ describe("executeDeliveryHook", () => {
     expect(gateEnv?.PAPERCLIP_DELIVERY_BOT_TOKEN).toBeUndefined();
   });
 
+  it("uses the canonical issue branch as a distributed lock and never forks on a non-fast-forward race", async () => {
+    const worktreeCwd = mkWorktree();
+    const calls: string[][] = [];
+    let pushAttempts = 0;
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      if (key === "git log -1") return { exitCode: 0, stdout: "G\n", stderr: "" };
+      if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
+      if (cmd === "git" && args[0] === "push") {
+        pushAttempts++;
+        return {
+          exitCode: 1,
+          stdout: "",
+          stderr: "! [rejected] paperclip/uuid-delivery -> paperclip/uuid-delivery (non-fast-forward)\n",
+        };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const result = await executeDeliveryHook({
+
+      ...base,
+      worktreeCwd,
+      env: {
+        PAPERCLIP_AUTONOMOUS_DELIVERY: "1",
+        PAPERCLIP_DELIVERY_BOT_TOKEN: "bot-token",
+        PAPERCLIP_DELIVERY_SIGN_COMMITS: "1",
+      },
+      runProc,
+    });
+
+    expect(result.reason).toBe("push_failed");
+    expect(pushAttempts).toBe(1);
+    expect(calls.some((call) => call.includes("paperclip/uuid-delivery-remote-r1"))).toBe(false);
+    expect(calls.some((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create")).toBe(false);
+  });
+
   it("autonomous delivery blocks before commit when signing is not configured", async () => {
+
     const worktreeCwd = mkWorktree();
     const calls: string[][] = [];
     const runProc = vi.fn(async (cmd: string, args: string[]) => {
@@ -528,10 +631,114 @@ describe("executeDeliveryHook", () => {
     expect(calls.some((call) => call[0] === "pnpm")).toBe(false);
   });
 
+  it("rechecks issue idempotency after push and skips PR creation when another agent won the race", async () => {
+    const worktreeCwd = mkWorktree();
+    const calls: string[][] = [];
+    let issueLookupCount = 0;
+    const existingBody = [
+      "## Delivery Metadata",
+      "- Paperclip issue: HAS-222 (uuid)",
+      "- Repository: Beyn-SOLIDUS/quantum",
+      "- Idempotency key: beyn-solidus/quantum:uuid",
+    ].join("\n");
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list") {
+        if (args.includes("--head")) return { exitCode: 0, stdout: "", stderr: "" };
+        issueLookupCount++;
+        return issueLookupCount === 1
+          ? { exitCode: 0, stdout: "[]", stderr: "" }
+          : {
+              exitCode: 0,
+              stdout: JSON.stringify([{
+                url: "https://github.com/Beyn-SOLIDUS/quantum/pull/105",
+                state: "OPEN",
+                mergedAt: null,
+                mergeCommit: null,
+                title: "HAS-222: factory delivery",
+                body: existingBody,
+              }]),
+              stderr: "",
+            };
+      }
+      if (key === "gh label list") return { exitCode: 0, stdout: "[]", stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
+
+    expect(result).toEqual({
+      delivered: true,
+      prUrl: "https://github.com/Beyn-SOLIDUS/quantum/pull/105",
+      reason: "pr_exists",
+    });
+    expect(calls.some((call) => call[0] === "git" && call[1] === "push")).toBe(true);
+    expect(calls.some((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create")).toBe(false);
+  });
+
+  it("blocks a concurrently merged issue PR when its merge is not on the configured base", async () => {
+    const worktreeCwd = mkWorktree();
+    const calls: string[][] = [];
+    let issueLookupCount = 0;
+    const existingBody = [
+      "## Delivery Metadata",
+      "- Paperclip issue: HAS-222 (uuid)",
+      "- Repository: Beyn-SOLIDUS/quantum",
+      "- Idempotency key: beyn-solidus/quantum:uuid",
+    ].join("\n");
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list") {
+        if (args.includes("--head")) return { exitCode: 0, stdout: "", stderr: "" };
+        issueLookupCount++;
+        return issueLookupCount === 1
+          ? { exitCode: 0, stdout: "[]", stderr: "" }
+          : {
+              exitCode: 0,
+              stdout: JSON.stringify([{
+                url: "https://github.com/Beyn-SOLIDUS/quantum/pull/105",
+                state: "MERGED",
+                mergedAt: "2026-07-23T10:00:00Z",
+                mergeCommit: { oid: "merge-105" },
+                title: "HAS-222: factory delivery",
+                body: existingBody,
+              }]),
+              stderr: "",
+            };
+      }
+      if (cmd === "gh" && args[0] === "api") {
+        return { exitCode: 0, stdout: "diverged\n", stderr: "" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
+
+    expect(result).toEqual({
+      delivered: false,
+      prUrl: "https://github.com/Beyn-SOLIDUS/quantum/pull/105",
+      reason: "delivery_blocked: merged issue result not on base",
+    });
+    expect(issueLookupCount).toBe(2);
+    expect(calls).toContainEqual([
+      "gh",
+      "api",
+      "repos/Beyn-SOLIDUS/quantum/compare/merge-105...main",
+      "--jq",
+      ".status",
+    ]);
+    expect(calls.some((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create")).toBe(false);
+  });
+
   it("uses a unique branch when the target branch already exists on the remote without an open PR", async () => {
     const worktreeCwd = mkWorktree();
     const calls: string[][] = [];
     const runProc = vi.fn(async (cmd: string, args: string[]) => {
+
       calls.push([cmd, ...args]);
       const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
@@ -541,6 +748,7 @@ describe("executeDeliveryHook", () => {
           ? { exitCode: 0, stdout: "abc123\trefs/heads/codex/HAS-222-x\n", stderr: "" }
           : { exitCode: 2, stdout: "", stderr: "" };
       }
+
       if (key === "git checkout -b") return { exitCode: 0, stdout: "", stderr: "" };
       if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "agent-pr", "truth-first"]), stderr: "" };
       if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/100\n", stderr: "" };
@@ -551,6 +759,7 @@ describe("executeDeliveryHook", () => {
 
     expect(result.reason).toBe("created");
     expect(calls).toContainEqual(["git", "checkout", "-b", "codex/HAS-222-x-remote-r1"]);
+    // paperclip:allow-git-push: test assertion — verifies delivery hook invokes git push for remote branch (PAPA-432)
     expect(calls).toContainEqual(["git", "push", "-u", "origin", "codex/HAS-222-x-remote-r1"]);
     const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
     expect(createCall).toContain("codex/HAS-222-x-remote-r1");
@@ -579,6 +788,7 @@ describe("executeDeliveryHook", () => {
 
     expect(result.reason).toBe("created");
     expect(calls).toContainEqual(["git", "checkout", "-b", "codex/HAS-222-x-remote-r1-2"]);
+    // paperclip:allow-git-push: test assertion — verifies delivery hook invokes git push for collision-resolved branch (PAPA-432)
     expect(calls).toContainEqual(["git", "push", "-u", "origin", "codex/HAS-222-x-remote-r1-2"]);
   });
 
@@ -606,6 +816,7 @@ describe("executeDeliveryHook", () => {
 
     expect(result.reason).toBe("created");
     expect(calls).toContainEqual(["git", "checkout", "codex/HAS-222-x-remote-r1"]);
+    // paperclip:allow-git-push: test assertion — verifies delivery hook pushes reused local collision branch (PAPA-432)
     expect(calls).toContainEqual(["git", "push", "-u", "origin", "codex/HAS-222-x-remote-r1"]);
   });
 
@@ -657,25 +868,30 @@ describe("executeDeliveryHook", () => {
 
     expect(result.reason).toBe("created");
     expect(calls).toContainEqual(["git", "checkout", "-b", "codex/HAS-222-x-remote-r1"]);
+    // paperclip:allow-git-push: test assertion — verifies delivery hook retries git push after non-fast-forward race (PAPA-432)
     expect(calls).toContainEqual(["git", "push", "-u", "origin", "codex/HAS-222-x-remote-r1"]);
+
     const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
     expect(createCall).toContain("codex/HAS-222-x-remote-r1");
     expect(pushAttempts).toBe(2);
   });
 
-  it("treats an existing PR after gh pr create failure as delivered", async () => {
+  it("treats an existing branch PR after gh pr create failure as delivered", async () => {
     const worktreeCwd = mkWorktree();
     const calls: string[][] = [];
-    let prListCalls = 0;
+    let branchLookupCount = 0;
     const runProc = vi.fn(async (cmd: string, args: string[]) => {
       calls.push([cmd, ...args]);
       const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
-      if (key === "gh pr list") {
-        prListCalls++;
-        return prListCalls === 1
-          ? { exitCode: 0, stdout: "", stderr: "" }
-          : { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/104\n", stderr: "" };
+      if (cmd === "gh" && args[0] === "pr" && args[1] === "list") {
+        if (args.includes("--head")) {
+          branchLookupCount++;
+          return branchLookupCount === 1
+            ? { exitCode: 0, stdout: "", stderr: "" }
+            : { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/104\n", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "[]", stderr: "" };
       }
       if (key === "gh pr create") return { exitCode: 1, stdout: "", stderr: "a pull request already exists for codex/HAS-222-x\n" };
       if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "agent-pr", "truth-first"]), stderr: "" };
@@ -689,7 +905,7 @@ describe("executeDeliveryHook", () => {
       prUrl: "https://github.com/Beyn-SOLIDUS/quantum/pull/104",
       reason: "pr_exists",
     });
-    expect(prListCalls).toBe(2);
+    expect(branchLookupCount).toBe(2);
     expect(calls.some((call) => call[0] === "git" && call[1] === "push")).toBe(true);
   });
 
