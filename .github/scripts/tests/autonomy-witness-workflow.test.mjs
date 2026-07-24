@@ -49,15 +49,20 @@ test('workflow: trigger is workflow_dispatch and takes NO inputs', () => {
   assert.doesNotMatch(wf, /^\s{2}push:\s*$/m);
 });
 
-test('workflow: minimal permissions — contents:write + pull-requests:write only', () => {
+test('workflow: minimal workflow-token permissions — contents:write only', () => {
   const block = topLevelPermissionsBlock();
   assert.ok(block, 'must declare a top-level permissions block');
   const perms = block
     .map(l => l.split('#')[0].trim())
     .filter(Boolean)
     .sort();
-  assert.deepEqual(perms, ['contents: write', 'pull-requests: write'],
-    'exactly contents:write and pull-requests:write, nothing broader');
+  assert.deepEqual(perms, ['contents: write'],
+    'GITHUB_TOKEN needs only contents:write (branch push); PR scope comes from the App token');
+  // pull-requests:write must NOT be granted to the workflow token: every `gh`
+  // call uses the App installation token (which carries that scope), so the
+  // ambient GITHUB_TOKEN stays minimal.
+  assert.doesNotMatch(wfCode, /^\s*pull-requests:\s*write\b/m,
+    'workflow token must not be granted pull-requests:write');
   assert.doesNotMatch(wf, /\b(id-token|packages|actions|checks|deployments|security-events|statuses|issues|pages|discussions):\s*write\b/,
     'no additional write scopes may be granted');
 });
@@ -72,13 +77,44 @@ test('workflow: only first-party actions, pinned by full commit SHA', () => {
   }
 });
 
-test('workflow: runs the bounded script with GITHUB_TOKEN and only fixed run metadata env', () => {
+/** Env keys (`KEY: ${{ ... }}`) declared inside the step block that runs cmd.
+ * Splits the comment-stripped workflow so a filename named in a comment cannot
+ * misidentify the step. */
+function stepEnvKeys(cmdMatcher) {
+  const blocks = wfCode.split(/^\s{6}- name:/m);
+  const block = blocks.find(b => cmdMatcher.test(b));
+  assert.ok(block, `no step block matched ${cmdMatcher}`);
+  return [...block.matchAll(/^\s{10}([A-Z_]+):\s*\$\{\{/gm)].map(m => m[1]).sort();
+}
+
+test('workflow: opens the PR with a minted App token — never the built-in GITHUB_TOKEN', () => {
   assert.match(wfCode, /run:\s*bash \.github\/scripts\/autonomy-witness\.sh/, 'must invoke the bounded script');
-  assert.match(wfCode, /GH_TOKEN:\s*\$\{\{\s*github\.token\s*\}\}/, 'authenticates with the built-in token');
+  // gh authenticates with the App installation token output — an App-created PR
+  // fires pull_request workflows. github.token would suppress them.
+  assert.match(wfCode, /GH_TOKEN:\s*\$\{\{\s*steps\.apptoken\.outputs\.value\s*\}\}/,
+    'PR must be opened with the minted App token so the required PR workflows run');
+  assert.doesNotMatch(wfCode, /GH_TOKEN:\s*\$\{\{\s*github\.token\s*\}\}/,
+    'must NOT open the PR with the event-suppressing built-in GITHUB_TOKEN');
   // The env passed to the script is exactly the trusted, non-user-controlled set.
-  const envKeys = [...wfCode.matchAll(/^\s{10}([A-Z_]+):\s*\$\{\{/gm)].map(m => m[1]).sort();
-  assert.deepEqual(envKeys, ['DEFAULT_BRANCH', 'GH_TOKEN', 'HEAD_SHA', 'REPO', 'RUN_ID']);
-  assert.doesNotMatch(wf, /secrets\./, 'workflow must not reference any secret');
+  assert.deepEqual(stepEnvKeys(/autonomy-witness\.sh/),
+    ['DEFAULT_BRANCH', 'GH_TOKEN', 'HEAD_SHA', 'REPO', 'RUN_ID']);
+});
+
+test('workflow: App token minted fail-closed — COMMITPERCLIP_KEY only, no GITHUB_TOKEN fallback', () => {
+  assert.match(wfCode, /node \.github\/scripts\/get-bot-token\.mjs/, 'mints via get-bot-token.mjs');
+  const mintEnv = stepEnvKeys(/get-bot-token\.mjs/);
+  // The App key must be present; GITHUB_TOKEN must be absent so get-bot-token.mjs
+  // cannot silently fall back to the event-suppressing default token.
+  assert.ok(mintEnv.includes('COMMITPERCLIP_KEY'), 'mint step needs the App key');
+  assert.ok(!mintEnv.includes('GITHUB_TOKEN'),
+    'mint step must NOT receive GITHUB_TOKEN, else a mint failure silently falls back to it');
+});
+
+test('workflow: the only secret referenced is COMMITPERCLIP_KEY', () => {
+  const secrets = [...new Set([...wf.matchAll(/secrets\.([A-Za-z0-9_]+)/g)].map(m => m[1]))].sort();
+  assert.deepEqual(secrets, ['COMMITPERCLIP_KEY'], 'exactly one secret — the App key — may be referenced');
+  assert.doesNotMatch(wf, /PAPERCLIP_DELIVERY_BOT_TOKEN|PAPERCLIP_AUTONOMOUS_DELIVERY/, 'no delivery secrets');
+  assert.doesNotMatch(wfCode, /\bPAT\b|personal.access.token/i, 'no PAT');
 });
 
 // ── script bounds ────────────────────────────────────────────────────────────
@@ -106,7 +142,10 @@ test('script: fixed safe branch prefix autonomy-witness/ and numeric RUN_ID guar
   assert.match(shCode, /\[\[ ! "\$RUN_ID" =~ \^\[0-9\]\+\$ \]\]/, 'RUN_ID must be validated as an integer');
 });
 
-test('script: PR authored by the allowlisted github-actions[bot] identity', () => {
+test('script: docs commit uses a fixed bot commit identity', () => {
+  // This is the git COMMIT identity for the docs commit. The PR *author* — the
+  // identity the autonomy allowlist evaluates — is set separately by the App
+  // token when `gh pr create` runs.
   assert.match(sh, /git config user\.name "github-actions\[bot\]"/);
   assert.match(sh, /git config user\.email "41898282\+github-actions\[bot\]@users\.noreply\.github\.com"/);
 });
@@ -120,11 +159,25 @@ test('script: never auto-merges, auto-approves, or changes settings', () => {
   assert.doesNotMatch(shCode, /gh (repo|api) .*(--method (PUT|PATCH|DELETE)|settings)/, 'must not mutate repo settings');
 });
 
-test('script: uses only the built-in GITHUB_TOKEN — no secrets, PAT, or App key', () => {
+test('script: references no secrets, PAT, or App-key minting (token is injected via env)', () => {
+  // The script never touches secrets itself — the workflow mints the App token
+  // and injects it as GH_TOKEN. This keeps the trust boundary in the workflow.
   assert.doesNotMatch(shCode, /secrets\./, 'no secrets context');
   assert.doesNotMatch(shCode, /COMMITPERCLIP_KEY|PAPERCLIP_DELIVERY_BOT_TOKEN|PAPERCLIP_AUTONOMOUS_DELIVERY/, 'no delivery/App secrets');
   assert.doesNotMatch(shCode, /\bPAT\b|personal.access.token/i, 'no PAT');
-  assert.doesNotMatch(shCode, /get-bot-token|generateJWT|installations\/.*access_tokens/, 'no App token minting');
+  assert.doesNotMatch(shCode, /get-bot-token|generateJWT|installations\/.*access_tokens/, 'no App token minting in the script');
+});
+
+test('script: fails closed unless the PR is authored by the allowlisted App identity', () => {
+  // Positive allowlist: the witness author MUST be commitperclip[bot]. This
+  // rejects the github-actions[bot] event-suppression signature (built-in
+  // GITHUB_TOKEN → suppressed pull_request workflows → no required checks) AND
+  // any other unexpected identity (a misconfigured App or wrong installation).
+  assert.match(shCode, /EXPECTED_AUTHOR="commitperclip\[bot\]"/, 'names the expected allowlisted identity');
+  assert.match(shCode, /gh pr view "\$pr_number" --repo "\$REPO" --json author --jq \.author\.login/,
+    'must read the resolved PR author');
+  assert.match(shCode, /if \[ "\$author" != "\$EXPECTED_AUTHOR" \]; then[\s\S]*?exit 1/,
+    'must exit non-zero (fail closed) when the author is not the expected identity');
 });
 
 // ── the two fixes ─────────────────────────────────────────────────────────────
