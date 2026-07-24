@@ -7,41 +7,51 @@ name: Autonomy Witness
 # non-allowlisted identity in the loop. This is the genuine counterpart to a
 # human-authored witness (which correctly fails the autonomy allowlist).
 #
-# Why an App token (NOT the built-in GITHUB_TOKEN). GitHub deliberately does NOT
-# fire `pull_request` / `pull_request_target` / `push` workflow triggers for
-# events created with the repository's GITHUB_TOKEN — this prevents recursive
+# Why a dedicated App token (NOT the built-in GITHUB_TOKEN). GitHub deliberately
+# does NOT fire `pull_request` / `pull_request_target` / `push` workflow triggers
+# for events created with the repository's GITHUB_TOKEN — this prevents recursive
 # runs. A witness PR opened with GITHUB_TOKEN (authored by github-actions[bot])
 # therefore starts with ZERO required checks: verify, Typecheck + Release
 # Registry, Build, Secret Scan, and paperclip-checker/app never run, so branch
 # protection blocks it forever. To make the required PR workflows actually run on
 # the exact head, the PR must be OPENED with a non-GITHUB_TOKEN credential. We
-# mint a short-lived installation token for the commitperclip GitHub App
-# (allowlisted identity `commitperclip[bot]`) from the existing COMMITPERCLIP_KEY
-# secret and open the PR with it. Events created by an App installation token DO
-# trigger the normal PR workflows.
+# mint a short-lived installation token for the dedicated solidus-paperclip-delivery
+# GitHub App (allowlisted identity `solidus-paperclip-delivery[bot]`, App ID
+# 4384863, installed only on this repo) from the PAPERCLIP_DELIVERY_APP_ID /
+# PAPERCLIP_DELIVERY_PRIVATE_KEY secrets and both push the branch and open the PR
+# with it. Events created by an App installation token DO trigger the normal PR
+# workflows.
+#
+# Recursion: the App-token push targets `autonomy-witness/<run_id>`, and every
+# `on: push` workflow in this repo is scoped to `branches: [main]` (or `v*`
+# tags), so no push-triggered workflow fires on the witness branch. This workflow
+# itself is `workflow_dispatch`-only, so it cannot self-retrigger. One push + one
+# PR per manual dispatch.
 #
 # Least privilege / separation of duties:
-#   - The branch is pushed with the ambient GITHUB_TOKEN (contents:write on this
-#     job's own token) — push events are not required, so no App contents scope
-#     is needed.
-#   - The PR is opened/looked-up with the commitperclip App installation token,
-#     which carries pull-requests:write via the App installation (already used in
-#     production by commitperclip-review.yml). The workflow's own GITHUB_TOKEN is
-#     therefore NOT granted pull-requests:write — every `gh` call uses the App
-#     token, so contents:write (for the branch push) is all the ambient token
-#     needs. The witness AUTHOR (commitperclip[bot]) is a DIFFERENT identity from
-#     the gating identities (paperclip-checker/app app id 4372695, and the runner
-#     key github-actions app id 15368), so nothing here approves or gates its own
-#     PR.
-#   - Fail closed: the token mint step is given COMMITPERCLIP_KEY but NOT
-#     GITHUB_TOKEN, so get-bot-token.mjs cannot silently fall back to the
-#     event-suppressing GITHUB_TOKEN — a missing/broken App key aborts the run.
-#     (GitHub does not auto-populate process.env.GITHUB_TOKEN; it is only reachable
-#     via the secrets/github.token contexts, so withholding it from the step env
-#     genuinely denies the minter any fallback.) The script additionally requires
-#     the resolved PR to be authored by the allowlisted commitperclip[bot] — any
-#     other author (notably github-actions[bot]) fails closed, so a check-less
-#     witness can never masquerade as green.
+#   - Both the branch push AND the PR are performed with the solidus-paperclip-delivery
+#     App installation token (down-scoped to metadata:read, contents:write,
+#     pull_requests:write), so authorship and event provenance are coherent: the
+#     branch is pushed and the PR opened by the SAME allowlisted App identity.
+#   - The workflow's own GITHUB_TOKEN is therefore granted only contents:read —
+#     enough for actions/checkout to fetch the default branch. Because the App
+#     token does the push, no ambient contents:write is needed, and the checkout
+#     token is not persisted (persist-credentials: false); the App credential is
+#     wired in by `gh auth setup-git` inside the bounded script.
+#   - The witness AUTHOR (solidus-paperclip-delivery[bot], App id 4384863) is a
+#     DIFFERENT identity from the gating identities (paperclip-checker/app app id
+#     4372695, and the runner key github-actions app id 15368), so nothing here
+#     approves or gates its own PR.
+#   - Fail closed: the token mint step is given the two delivery secrets but NOT
+#     GITHUB_TOKEN, and paperclip-delivery-token.mjs has NO GITHUB_TOKEN/PAT
+#     fallback — a missing/broken App key aborts the run rather than silently
+#     producing an event-suppressed github-actions[bot] PR. (GitHub does not
+#     auto-populate process.env.GITHUB_TOKEN; it is only reachable via the
+#     secrets/github.token contexts, so withholding it from the step env
+#     genuinely denies any fallback.) The script additionally requires the
+#     resolved PR to be authored by the allowlisted solidus-paperclip-delivery[bot]
+#     — any other author (notably github-actions[bot]) fails closed, so a
+#     check-less witness can never masquerade as green.
 #
 # The bounded logic lives in .github/scripts/autonomy-witness.sh; this workflow
 # only checks out the default branch, mints the App token, and runs it with
@@ -53,9 +63,9 @@ name: Autonomy Witness
 #   - Manual dispatch only, and NO inputs (no arbitrary path/content/shell).
 #   - Writes exactly one generated docs file under doc/autonomy-witness/<run_id>.md.
 #   - Fixed branch prefix `autonomy-witness/`.
-#   - Minimal workflow-token permissions: contents:write only (branch push).
-#     pull-requests:write comes from the App installation token, not GITHUB_TOKEN.
-#   - Only the COMMITPERCLIP_KEY secret is referenced — no PAT, no other secret.
+#   - Minimal workflow-token permissions: contents:read only (checkout fetch).
+#     contents:write and pull-requests:write come from the App installation token.
+#   - Only the delivery App secrets are referenced — no PAT, no other secret.
 #   - Only first-party actions, pinned by commit SHA — no third-party/mutable actions.
 #   - Never merges, never approves, never changes settings.
 #   - Idempotent / re-run safe: resumes the existing run-id branch; one PR per run id.
@@ -68,7 +78,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: autonomy-witness-${{ github.run_id }}
@@ -79,32 +89,36 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      contents: write
+      contents: read
     steps:
       - name: Checkout default branch
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ github.event.repository.default_branch }}
+          # The App installation token — not the ambient GITHUB_TOKEN — is used
+          # for the branch push, so the checkout credential must not persist.
+          persist-credentials: false
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
 
-      # Mint a short-lived commitperclip App installation token so the PR is
-      # opened by an App identity (events fire). GITHUB_TOKEN is deliberately NOT
-      # in this step's env: get-bot-token.mjs only falls back to GITHUB_TOKEN when
-      # it is present, so withholding it makes a missing/broken App key fail closed
+      # Mint a short-lived solidus-paperclip-delivery App installation token so
+      # the branch is pushed and the PR opened by an App identity (events fire).
+      # GITHUB_TOKEN is deliberately NOT in this step's env: paperclip-delivery-token.mjs
+      # has no GITHUB_TOKEN/PAT fallback, so a missing/broken App key fails closed
       # rather than silently producing an event-suppressed github-actions[bot] PR.
-      - name: Mint commitperclip App token (fail closed; no GITHUB_TOKEN fallback)
+      - name: Mint solidus-paperclip-delivery App token (fail closed; no GITHUB_TOKEN fallback)
         id: apptoken
         env:
-          COMMITPERCLIP_KEY: ${{ secrets.COMMITPERCLIP_KEY }}
+          PAPERCLIP_DELIVERY_APP_ID: ${{ secrets.PAPERCLIP_DELIVERY_APP_ID }}
+          PAPERCLIP_DELIVERY_PRIVATE_KEY: ${{ secrets.PAPERCLIP_DELIVERY_PRIVATE_KEY }}
           GH_REPO: ${{ github.repository }}
         run: |
-          TOKEN="$(node .github/scripts/get-bot-token.mjs)"
+          TOKEN="$(node .github/scripts/paperclip-delivery-token.mjs)"
           if [ -z "$TOKEN" ]; then
-            echo "ERROR: failed to mint a commitperclip App installation token." >&2
+            echo "ERROR: failed to mint a solidus-paperclip-delivery App installation token." >&2
             exit 1
           fi
           echo "::add-mask::$TOKEN"
@@ -112,10 +126,11 @@ jobs:
 
       - name: Open docs-only witness PR as the allowlisted App identity
         env:
-          # The App installation token — used by `gh` to OPEN the PR so
-          # pull_request workflows run. `git push` uses the checkout-persisted
-          # GITHUB_TOKEN (push events are not required), keeping the App scope to
-          # pull-requests:write only.
+          # The App installation token — used by `gh` to OPEN the PR and, via
+          # `gh auth setup-git` inside the script, by `git push` to push the
+          # branch. Using the SAME App token for both keeps authorship/event
+          # provenance coherent (author = solidus-paperclip-delivery[bot]) and
+          # makes the required pull_request workflows run on the exact head.
           GH_TOKEN: ${{ steps.apptoken.outputs.value }}
           RUN_ID: ${{ github.run_id }}
           HEAD_SHA: ${{ github.sha }}

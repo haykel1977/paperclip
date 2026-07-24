@@ -94,6 +94,11 @@ if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "view" ]; then
   fi
   exit 0
 fi
+if [ "\${1:-}" = "auth" ]; then
+  # \`gh auth setup-git\` wires the token into git's credential helper. In this
+  # sandbox the remote is file:// (no auth needed), so it is a harmless no-op.
+  exit 0
+fi
 if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "create" ]; then
   echo "create $*" >> "\$GH_CREATE_LOG"
   tmp="\$(mktemp)"
@@ -116,14 +121,15 @@ exit 1
 /** Run the witness script from a FRESH clone (each dispatch is a fresh checkout).
  * `prAuthor` is the login the gh stub reports for `pr view --json author` — i.e.
  * the identity the fail-closed guard evaluates. It defaults to the allowlisted
- * App identity; tests override it with the forbidden github-actions[bot] to
- * exercise the event-suppression guard. `createdPr` is the number the stub
+ * App identity (solidus-paperclip-delivery[bot]); tests override it with the
+ * forbidden github-actions[bot] to exercise the event-suppression guard.
+ * `createdPr` is the number the stub
  * assigns to a freshly created PR so the post-create lookup can resolve it. */
 function runWitness(repo, {
   runId = RUN_ID,
   headSha = SHA_A,
   prList = [],
-  prAuthor = 'commitperclip[bot]',
+  prAuthor = 'solidus-paperclip-delivery[bot]',
   createdPr = '1000',
 } = {}) {
   writeFileSync(repo.listJson, JSON.stringify(prList));
@@ -299,7 +305,7 @@ test('fail closed: a freshly CREATED PR authored by github-actions[bot] is rejec
     assert.notEqual(r.status, 0, 'must fail closed on the event-suppressed identity');
     assert.match(r.stderr, /authored by 'github-actions\[bot\]'/,
       'error must name the forbidden, event-suppressed identity');
-    assert.match(r.stderr, /minted commitperclip App installation token/, 'error must point to the correct fix');
+    assert.match(r.stderr, /minted solidus-paperclip-delivery App installation token/, 'error must point to the correct fix');
   } finally {
     rmSync(repo.root, { recursive: true, force: true });
   }
@@ -325,8 +331,9 @@ test('fail closed: a REUSED PR authored by github-actions[bot] is rejected', { s
 });
 
 test('fail closed: any non-allowlisted author is rejected (positive allowlist, not denylist)', { skip }, () => {
-  // The guard is a positive allowlist: the author MUST be commitperclip[bot].
-  // Any other identity — e.g. a misconfigured App or a wrong installation, not
+  // The guard is a positive allowlist: the author MUST be
+  // solidus-paperclip-delivery[bot]. Any other identity — e.g. a misconfigured
+  // App, a wrong installation, or the now-inaccessible commitperclip[bot], not
   // just the github-actions[bot] signature — must be refused. This proves the
   // guard catches more than the single event-suppression case.
   const repo = makeRepo();
@@ -334,20 +341,37 @@ test('fail closed: any non-allowlisted author is rejected (positive allowlist, n
     const r = runWitness(repo, { prList: [], prAuthor: 'some-other-app[bot]' });
     assert.notEqual(r.status, 0, 'a non-allowlisted author must fail closed');
     assert.match(r.stderr, /authored by 'some-other-app\[bot\]'/, 'error names the actual (wrong) author');
-    assert.match(r.stderr, /not the allowlisted App identity 'commitperclip\[bot\]'/,
+    assert.match(r.stderr, /not the allowlisted App identity 'solidus-paperclip-delivery\[bot\]'/,
       'error names the expected allowlisted identity');
   } finally {
     rmSync(repo.root, { recursive: true, force: true });
   }
 });
 
-test('happy path: a commitperclip[bot]-authored PR passes the allowlist guard', { skip }, () => {
-  // The expected App identity must NOT be rejected — the allowlist admits it.
+test('fail closed: the superseded commitperclip[bot] identity is now rejected', { skip }, () => {
+  // Post-migration the witness is authored by solidus-paperclip-delivery[bot].
+  // The previously-expected commitperclip[bot] (external, inaccessible App) must
+  // now itself fail the positive allowlist — proving the migration flipped the
+  // expected identity rather than merely widening it.
   const repo = makeRepo();
   try {
     const r = runWitness(repo, { prList: [], prAuthor: 'commitperclip[bot]' });
+    assert.notEqual(r.status, 0, 'the superseded identity must fail closed');
+    assert.match(r.stderr, /authored by 'commitperclip\[bot\]'/, 'error names the superseded author');
+    assert.match(r.stderr, /not the allowlisted App identity 'solidus-paperclip-delivery\[bot\]'/,
+      'error names the new expected identity');
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('happy path: a solidus-paperclip-delivery[bot]-authored PR passes the allowlist guard', { skip }, () => {
+  // The expected App identity must NOT be rejected — the allowlist admits it.
+  const repo = makeRepo();
+  try {
+    const r = runWitness(repo, { prList: [], prAuthor: 'solidus-paperclip-delivery[bot]' });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stdout, /authored by commitperclip\[bot\]/, 'the allowlisted author is accepted');
+    assert.match(r.stdout, /authored by solidus-paperclip-delivery\[bot\]/, 'the allowlisted author is accepted');
     assert.doesNotMatch(r.stderr, /not the allowlisted App identity/, 'must not trip the guard');
   } finally {
     rmSync(repo.root, { recursive: true, force: true });

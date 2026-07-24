@@ -13,27 +13,29 @@
 # built-in GITHUB_TOKEN. GitHub suppresses pull_request/pull_request_target/push
 # workflow triggers for events created with GITHUB_TOKEN, so a witness opened
 # with it would author a github-actions[bot] PR on which NO required checks ever
-# run. `gh pr create` uses GH_TOKEN, so opening the PR with an App token makes the
-# normal PR workflows fire. The branch push relies on the ambient checkout
-# credential (GITHUB_TOKEN), which is fine because push events are not required.
+# run. Both the branch push (via `gh auth setup-git`, which wires GH_TOKEN into
+# git's credential helper) and `gh pr create` therefore use the SAME App token,
+# so the branch is pushed and the PR opened by one coherent App identity and the
+# normal PR workflows fire on the exact head.
 #
 # Required env (all trusted GitHub-provided values; there are NO workflow inputs,
 # so nothing user-supplied can reach a ref, path, or command):
-#   GH_TOKEN        commitperclip App installation token (see note above); used
-#                   only by `gh`. NEVER the built-in GITHUB_TOKEN.
+#   GH_TOKEN        solidus-paperclip-delivery App installation token (see note
+#                   above); used by `gh` and by `git` push. NEVER the built-in
+#                   GITHUB_TOKEN.
 #   RUN_ID          github.run_id (integer)
 #   HEAD_SHA        github.sha
 #   REPO            owner/repo
 #   DEFAULT_BRANCH  repository default branch
 set -euo pipefail
 
-# The witness must be authored by the allowlisted commitperclip App identity. A
-# positive allowlist (rather than merely excluding github-actions[bot]) also
-# catches a misconfigured App or a wrong installation. In particular a
+# The witness must be authored by the allowlisted solidus-paperclip-delivery App
+# identity. A positive allowlist (rather than merely excluding github-actions[bot])
+# also catches a misconfigured App or a wrong installation. In particular a
 # github-actions[bot] author means the PR was created with the built-in
 # GITHUB_TOKEN, whose pull_request workflows are suppressed → the required checks
 # never ran, so a check-less witness could otherwise masquerade as valid.
-EXPECTED_AUTHOR="commitperclip[bot]"
+EXPECTED_AUTHOR="solidus-paperclip-delivery[bot]"
 
 : "${GH_TOKEN:?GH_TOKEN required}"
 : "${RUN_ID:?RUN_ID required}"
@@ -53,12 +55,17 @@ DOC_DIR="doc/autonomy-witness"
 DOC_PATH="${DOC_DIR}/${RUN_ID}.md"
 OWNER="${REPO%%/*}"
 
-# Commit identity for the docs commit (pushed with the ambient checkout token).
-# The PR *author* — the identity the autonomy allowlist and paperclip-checker
-# actually evaluate — is instead set by GH_TOKEN (the App installation token)
-# when `gh pr create` runs below.
+# Commit identity for the docs commit. The PR *author* — the identity the
+# autonomy allowlist and paperclip-checker actually evaluate — is instead set by
+# GH_TOKEN (the App installation token) when `gh pr create` runs below.
 git config user.name "github-actions[bot]"
 git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+# Wire the App installation token (GH_TOKEN) into git's credential helper so the
+# branch push authenticates as the App — NOT the ambient checkout credential
+# (checkout ran with persist-credentials:false). This makes the SAME App identity
+# push the branch and open the PR, so authorship/event provenance is coherent.
+gh auth setup-git
 
 # Re-run safe: if the run-id branch already exists on origin, continue FROM it so
 # an unchanged re-run is a genuine no-op. Only ever the fixed run-id branch is
@@ -134,7 +141,7 @@ fi
 # whether the PR was freshly created or reused.
 author="$(gh pr view "$pr_number" --repo "$REPO" --json author --jq .author.login)"
 if [ "$author" != "$EXPECTED_AUTHOR" ]; then
-  echo "ERROR: witness PR #${pr_number} is authored by '${author}', not the allowlisted App identity '${EXPECTED_AUTHOR}'. In particular github-actions[bot] is produced only by the built-in GITHUB_TOKEN, whose pull_request workflows are suppressed so the required checks never run. Open the witness with a minted commitperclip App installation token instead." >&2
+  echo "ERROR: witness PR #${pr_number} is authored by '${author}', not the allowlisted App identity '${EXPECTED_AUTHOR}'. In particular github-actions[bot] is produced only by the built-in GITHUB_TOKEN, whose pull_request workflows are suppressed so the required checks never run. Open the witness with a minted solidus-paperclip-delivery App installation token instead." >&2
   exit 1
 fi
 

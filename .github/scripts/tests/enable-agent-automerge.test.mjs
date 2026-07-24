@@ -9,7 +9,13 @@ import {
   fetchBranchProtection,
   buildRequiredEvidence,
   planAutomerge,
+  ALLOWED_AUTOMERGE_AUTHORS,
 } from '../enable-agent-automerge.mjs';
+
+test('ALLOWED_AUTOMERGE_AUTHORS: includes the dedicated delivery App, excludes humans', () => {
+  assert.ok(ALLOWED_AUTOMERGE_AUTHORS.has('solidus-paperclip-delivery[bot]'));
+  assert.ok(!ALLOWED_AUTOMERGE_AUTHORS.has('haykel1977'));
+});
 
 const protectedMain = {
   required_status_checks: {

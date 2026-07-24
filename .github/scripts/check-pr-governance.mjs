@@ -29,6 +29,8 @@ export const HARD_BLOCK_LABELS = new Set([
 ]);
 
 const ALLOWED_AGENT_AUTHORS = new Set([
+  // Dedicated autonomous delivery App (id 4384863) for this repo's witness PRs.
+  'solidus-paperclip-delivery[bot]',
   'commitperclip[bot]',
   'github-actions[bot]',
   'paperclipai[bot]',
