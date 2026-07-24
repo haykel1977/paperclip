@@ -24,6 +24,40 @@ test('KNOWN_ACTORS: the dedicated delivery App is an autonomous actor; humans ar
   assert.ok(!KNOWN_ACTORS.has('haykel1977'), 'humans must not be autonomous actors');
 });
 
+test('KNOWN_ACTORS: recognizes BOTH exact canonical forms of the delivery App, rejects lookalikes', () => {
+  // GitHub returns the SAME App as `app/solidus-paperclip-delivery` (GraphQL) or
+  // `solidus-paperclip-delivery[bot]` (REST). Both must reach GREEN; nothing that
+  // merely resembles them may — the allowlist must not widen to `app/*`.
+  assert.ok(KNOWN_ACTORS.has('app/solidus-paperclip-delivery'), 'GraphQL form recognized');
+  assert.ok(KNOWN_ACTORS.has('solidus-paperclip-delivery[bot]'), 'REST form recognized');
+  for (const impostor of [
+    'app/solidus-paperclip-delivery-evil',
+    'app/solidus-paperclip-deliveryx',
+    'app/solidus-paperclip',
+    'solidus-paperclip-delivery',
+    'app/solidus-paperclip-delivery[bot]',
+    'solidus-paperclip-delivery[bot]-evil',
+    ' app/solidus-paperclip-delivery',
+    'app/Solidus-Paperclip-Delivery',
+  ]) {
+    assert.ok(!KNOWN_ACTORS.has(impostor), `must reject lookalike ${JSON.stringify(impostor)}`);
+  }
+});
+
+test('a docs-only witness PR authored by the delivery App (GraphQL form) reaches GREEN', () => {
+  const result = classifyPrRiskLane({
+    title: 'docs(autonomy-witness): witness run 123',
+    labels: [],
+    author: 'app/solidus-paperclip-delivery',
+    files: [file('doc/autonomy-witness/123.md', { additions: 12, changes: 12 })],
+    headSha: FRESH_SHA,
+    expectedHeadSha: FRESH_SHA,
+    evidence: DEFAULT_REQUIRED_EVIDENCE.map(name => ({ name, conclusion: 'success' })),
+    requiredEvidence: [...DEFAULT_REQUIRED_EVIDENCE],
+  });
+  assert.equal(result.lane, LANES.GREEN);
+});
+
 const FRESH_SHA = 'a'.repeat(40);
 
 const file = (filename, overrides = {}) => ({

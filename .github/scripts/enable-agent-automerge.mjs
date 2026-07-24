@@ -28,6 +28,9 @@ export const DEFAULT_REQUIRED_CHECKS = ['verify', 'gitleaks'];
 
 export const ALLOWED_AUTOMERGE_AUTHORS = new Set([
   // Dedicated autonomous delivery App (id 4384863) for this repo's witness PRs.
+  // GitHub returns the SAME App as `app/solidus-paperclip-delivery` (GraphQL) or
+  // `solidus-paperclip-delivery[bot]` (REST); both exact forms, no `app/*` widening.
+  'app/solidus-paperclip-delivery',
   'solidus-paperclip-delivery[bot]',
   'commitperclip[bot]',
   'github-actions[bot]',
