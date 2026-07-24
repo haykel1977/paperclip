@@ -139,39 +139,80 @@ resolve_pr_number() {
     --jq "[.[] | select(.headRepositoryOwner.login == \"${OWNER}\") | .number] | first // empty"
 }
 
+# Fail closed unless the resolved PR is authored by the expected allowlisted App
+# identity. A positive allowlist rejects not only the github-actions[bot]
+# event-suppression signature (built-in GITHUB_TOKEN → suppressed pull_request
+# workflows → no required checks) but also any misconfigured App or wrong
+# installation. On the reuse path this MUST run before the label edit so a
+# wrong-identity PR is never mutated. Reads the global $pr_number.
+assert_expected_author() {
+  author="$(gh pr view "$pr_number" --repo "$REPO" --json author --jq .author.login)"
+  if [ "$author" != "$EXPECTED_AUTHOR_GRAPHQL" ] && [ "$author" != "$EXPECTED_AUTHOR_REST" ]; then
+    echo "ERROR: witness PR #${pr_number} is authored by '${author}', not the allowlisted App identity ('${EXPECTED_AUTHOR_GRAPHQL}' or '${EXPECTED_AUTHOR_REST}'). In particular github-actions[bot] is produced only by the built-in GITHUB_TOKEN, whose pull_request workflows are suppressed so the required checks never run. Open the witness with a minted solidus-paperclip-delivery App installation token instead." >&2
+    # If WE just created this PR under the wrong identity, tear it down so no
+    # witness of any colour is left behind. A reused (pre-existing) PR is left
+    # untouched — closing someone else's PR would overstep this bounded script.
+    if [ "${created:-0}" = "1" ]; then
+      echo "Closing freshly created PR #${pr_number} (wrong identity) so no witness is left behind." >&2
+      gh pr close "$pr_number" --repo "$REPO" || true
+    fi
+    exit 1
+  fi
+}
+
+# Authoritative, fail-closed check that the resolved PR actually carries the
+# EXACT risk:red label. This is the safety net for Finding 1: `gh pr create
+# --label` applies the label as a post-creation API call, so a partial failure
+# could otherwise leave a freshly created, UNLABELED (green-shaped) witness PR.
+# Re-reading the resolved labels here means the script can only report success
+# when the RED lane label is genuinely present.
+red_label_present() {
+  local labels
+  labels="$(gh pr view "$pr_number" --repo "$REPO" --json labels --jq '.labels[].name')"
+  # here-string (no pipe) so an early-exiting `grep -q` can never SIGPIPE a
+  # writer under `set -o pipefail` and spuriously report the label as absent.
+  grep -qx "$RISK_RED_LABEL" <<<"$labels"
+}
+
 pr_number="$(resolve_pr_number)"
 
 if [ -n "$pr_number" ]; then
+  # Reuse path: guard identity BEFORE mutating labels, then (idempotently) ensure
+  # the risk:red label is present on the pre-existing PR.
   echo "Reusing existing witness PR #${pr_number}"
+  created=0
+  assert_expected_author
+  gh pr edit "$pr_number" --repo "$REPO" --add-label "$RISK_RED_LABEL"
 else
+  # Create path: apply the risk:red label atomically as part of `gh pr create`,
+  # so there is no window in which a fresh, unlabeled (green-shaped) witness PR
+  # exists before a separate label mutation. If the label ever fails to stick,
+  # the authoritative verification below closes the fresh PR and fails closed.
   gh pr create --repo "$REPO" --base "$DEFAULT_BRANCH" --head "$BRANCH" \
+    --label "$RISK_RED_LABEL" \
     --title "docs(autonomy-witness-red): witness run ${RUN_ID}" \
-    --body "Permanent operational witness infrastructure — RED lane. This docs-only PR was opened by an allowlisted autonomous App identity, using an App installation token (NOT the built-in GITHUB_TOKEN) so the required PR workflows actually run on the exact head. It is then labelled ${RISK_RED_LABEL}, so the deterministic risk-lane classifier assigns RED and BOTH paperclip-checker contexts fail BY POLICY. It exists to prove the RED lane blocks correctly and NEVER auto-merges. It changes only doc/autonomy-witness-red/${RUN_ID}.md. Do NOT auto-merge, auto-approve, or remove the ${RISK_RED_LABEL} label. Cleanup: close this PR and delete branch ${BRANCH} after witnessing."
+    --body "Permanent operational witness infrastructure — RED lane. This docs-only PR was opened by an allowlisted autonomous App identity, using an App installation token (NOT the built-in GITHUB_TOKEN) so the required PR workflows actually run on the exact head. It is created already labelled ${RISK_RED_LABEL}, so the deterministic risk-lane classifier assigns RED and BOTH paperclip-checker contexts fail BY POLICY. It exists to prove the RED lane blocks correctly and NEVER auto-merges. It changes only doc/autonomy-witness-red/${RUN_ID}.md. Do NOT auto-merge, auto-approve, or remove the ${RISK_RED_LABEL} label. Cleanup: close this PR and delete branch ${BRANCH} after witnessing."
   pr_number="$(resolve_pr_number)"
   if [ -z "$pr_number" ]; then
     echo "ERROR: could not resolve the witness PR number after creation." >&2
     exit 1
   fi
+  created=1
+  assert_expected_author
 fi
 
-# Fail closed unless the PR is authored by the expected allowlisted App identity.
-# A positive allowlist rejects not only the github-actions[bot] event-suppression
-# signature (built-in GITHUB_TOKEN → suppressed pull_request workflows → no
-# required checks) but also any misconfigured App or wrong installation. Applies
-# whether the PR was freshly created or reused. This runs BEFORE the label is
-# applied so a wrong-identity PR is never touched further.
-author="$(gh pr view "$pr_number" --repo "$REPO" --json author --jq .author.login)"
-if [ "$author" != "$EXPECTED_AUTHOR_GRAPHQL" ] && [ "$author" != "$EXPECTED_AUTHOR_REST" ]; then
-  echo "ERROR: witness PR #${pr_number} is authored by '${author}', not the allowlisted App identity ('${EXPECTED_AUTHOR_GRAPHQL}' or '${EXPECTED_AUTHOR_REST}'). In particular github-actions[bot] is produced only by the built-in GITHUB_TOKEN, whose pull_request workflows are suppressed so the required checks never run. Open the witness with a minted solidus-paperclip-delivery App installation token instead." >&2
+# Fail closed unless the RED lane label is authoritatively present. If a PR we
+# just created is missing it, that PR is an accidental green-shaped witness:
+# close it so nothing green is left behind, then exit non-zero. A reused PR is
+# left as-is (we did not create it) but success is still refused.
+if ! red_label_present; then
+  if [ "${created:-0}" = "1" ]; then
+    echo "ERROR: freshly created witness PR #${pr_number} is missing the ${RISK_RED_LABEL} label; closing it so no green-shaped witness is left behind." >&2
+    gh pr close "$pr_number" --repo "$REPO" || true
+  fi
+  echo "ERROR: witness PR #${pr_number} does not carry the required ${RISK_RED_LABEL} label; refusing to report success." >&2
   exit 1
 fi
-
-# Apply the exact risk:red label so the deterministic classifier forces the RED
-# lane. `gh pr edit --add-label` is idempotent — re-adding an already-present
-# label is a harmless no-op — so a re-run leaves the single label in place. This
-# is the ONLY mutation beyond the docs commit; the script still never merges,
-# approves, enables auto-merge, or changes any repository setting.
-gh pr edit "$pr_number" --repo "$REPO" --add-label "$RISK_RED_LABEL"
 
 echo "Witness PR #${pr_number} authored by ${author} (App/bot identity); labelled ${RISK_RED_LABEL} → RED lane, both checker contexts fail by policy, auto-merge never enabled."
 gh pr view "$pr_number" --repo "$REPO" --json url --jq .url

@@ -26,38 +26,62 @@ const COMMENT_SIGNATURE = '— commitperclip';
 // body. They therefore cannot satisfy the human-authored PR-template / linked-
 // issue / dedup-search gates, which produced a false "changes needed" on genuine
 // witness PRs. This is a NARROW exemption: it waives EXACTLY those three
-// documentation-quality gates, and ONLY when the PR is BOTH authored by the exact
-// allowlisted Delivery App identity AND on the exact autonomy-witness branch
-// namespace. Every security-relevant gate — test coverage, lockfile, governance,
-// dependencies — stays fully active. It is not a bot bypass: any other author, or
-// any branch outside these two exact prefixes, gets the normal gates.
+// documentation-quality gates, and ONLY when the PR matches ALL THREE axes of the
+// witness shape. Every security-relevant gate — test coverage, lockfile,
+// governance, dependencies — stays fully active. It is not a bot bypass.
 //
-// Authors are matched EXACTLY (no trimming, no `app/*` widening), mirroring the
-// witness script's own author guard and the risk-lane classifier's KNOWN_ACTORS:
-// GitHub surfaces the one Delivery App as `app/solidus-paperclip-delivery`
-// (GraphQL/`gh pr view`) or `solidus-paperclip-delivery[bot]` (REST).
+// Axis 1 — author: matched EXACTLY (no trimming, no `app/*` widening), mirroring
+// the witness script's own author guard and the risk-lane classifier's
+// KNOWN_ACTORS. GitHub surfaces the one Delivery App as
+// `app/solidus-paperclip-delivery` (GraphQL/`gh pr view`) or
+// `solidus-paperclip-delivery[bot]` (REST).
+//
+// Axis 2 — branch: matched by an anchored regex requiring the exact
+// `autonomy-witness` or `autonomy-witness-red` namespace followed by `/` and a
+// purely numeric run-id and NOTHING else. This rejects lookalikes such as
+// `autonomy-witness-evil/…`, extra path segments (`autonomy-witness-red/1/2`),
+// non-numeric suffixes (`autonomy-witness/abc`), and whitespace-padded copies.
+//
+// Axis 3 — file scope: the PR diff must be EXACTLY one file, at the generated
+// witness doc path for that lane and run-id (`doc/autonomy-witness[-red]/<run_id>.md`
+// where <run_id> equals the branch's numeric suffix). Any additional file, any
+// non-doc change, or a mismatched run-id/path fails the exemption. File metadata
+// comes from the trusted PR files API, not from anything user-controlled.
 export const AUTONOMY_WITNESS_AUTHORS = new Set([
   'app/solidus-paperclip-delivery',
   'solidus-paperclip-delivery[bot]',
 ]);
 
-// Branch prefixes are matched with a trailing slash so the namespace boundary is
-// exact: `autonomy-witness-red/` is admitted, but lookalikes such as
-// `autonomy-witness-evil/…` or `autonomy-witness-red-evil/…` are NOT (the char
-// after the fixed stem is not the required `/`). A bare `autonomy-witness` with
-// no slash, or a whitespace-padded copy, also fails — the safe direction.
+// Retained for documentation/tests: the two exact branch namespaces. The
+// authoritative match is the anchored regex below, which additionally pins the
+// numeric run-id and rejects trailing segments.
 export const AUTONOMY_WITNESS_BRANCH_PREFIXES = Object.freeze([
   'autonomy-witness/',
   'autonomy-witness-red/',
 ]);
 
-export function isAutonomyWitnessPr(author, branch) {
+// Anchored: exact namespace, a single `/`, a purely numeric run-id, end of
+// string. The capture group is the run-id used to pin the expected doc path.
+export const AUTONOMY_WITNESS_BRANCH_RE = /^autonomy-witness(-red)?\/([0-9]+)$/;
+
+export function isAutonomyWitnessPr(author, branch, files) {
   const rawAuthor = String(author ?? '');
   const rawBranch = String(branch ?? '');
-  return (
-    AUTONOMY_WITNESS_AUTHORS.has(rawAuthor) &&
-    AUTONOMY_WITNESS_BRANCH_PREFIXES.some(prefix => rawBranch.startsWith(prefix))
-  );
+
+  if (!AUTONOMY_WITNESS_AUTHORS.has(rawAuthor)) return false;
+
+  const match = AUTONOMY_WITNESS_BRANCH_RE.exec(rawBranch);
+  if (!match) return false;
+
+  const lane = match[1] ? 'autonomy-witness-red' : 'autonomy-witness';
+  const runId = match[2];
+  const expectedPath = `doc/${lane}/${runId}.md`;
+
+  // Exactly one changed file, at the exact witness doc path for this lane/run-id.
+  const list = Array.isArray(files) ? files : [];
+  if (list.length !== 1) return false;
+  const filename = typeof list[0]?.filename === 'string' ? list[0].filename : '';
+  return filename === expectedPath;
 }
 
 const SKIPPED_GATE = Object.freeze({ passed: true, failures: [] });
@@ -160,7 +184,7 @@ async function main() {
   // Narrow exemption for the docs-only autonomy witness PRs: waive ONLY the
   // documentation-quality gates (template / linked-issue / dedup) and keep every
   // security-relevant gate active. See isAutonomyWitnessPr above.
-  const witnessExempt = isAutonomyWitnessPr(author, branch);
+  const witnessExempt = isAutonomyWitnessPr(author, branch, files);
   const [templateResult, issueResult, dedupResult, testResult, lockfileResult, governanceResult, depsResult] =
     await Promise.all([
       Promise.resolve(witnessExempt ? SKIPPED_GATE : checkTemplate(prBody)),

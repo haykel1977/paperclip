@@ -60,14 +60,22 @@ function makeRepo() {
   const listJson = join(root, 'pr-list.json');
   const createLog = join(root, 'gh-create.log');
   const labelLog = join(root, 'gh-label.log');
+  const labelState = join(root, 'gh-label-state.log');
+  const closeLog = join(root, 'gh-close.log');
   // gh stub: faithfully applies the script's `--jq` via system jq to a fixture.
   //   pr list   → runs the script's owner-scoping jq against the fixture.
-  //   pr create → records the call AND appends an owner-scoped row to the fixture
-  //               so the script's post-create `pr list` resolves the new number.
-  //   pr view   → for `--json author` echoes GH_PR_AUTHOR (the identity under
-  //               test); otherwise echoes a URL.
-  //   pr edit   → records the `--add-label` argument so a test can assert exactly
-  //               the risk:red label was applied (and only after the guard).
+  //   pr create → records the call, records any atomic `--label` value (to BOTH
+  //               the attempt log and the authoritative label STATE), and appends
+  //               an owner-scoped row so the post-create `pr list` resolves it.
+  //   pr view   → `--json author` echoes GH_PR_AUTHOR; `--json labels` (with
+  //               `--jq .labels[].name`) prints the current label STATE, one per
+  //               line; otherwise echoes a URL.
+  //   pr edit   → records the `--add-label` value (attempt log + label STATE).
+  //   pr close  → records the close so a test can prove a fresh green-shaped PR
+  //               is torn down when label verification fails.
+  // GH_SUPPRESS_LABEL=1 models a label that never sticks: the attempt is logged
+  // but the authoritative STATE is left empty, so `pr view --json labels` returns
+  // nothing and the script's fail-closed verification must trip.
   const stub = `#!/usr/bin/env bash
 set -euo pipefail
 jq_expr() {
@@ -84,12 +92,19 @@ json_fields() {
   done
   printf '%s' "\$val"
 }
-add_label() {
-  local lbl="" args=("\$@") i
+opt_value() {
+  local flag="\$1"; shift
+  local val="" args=("\$@") i
   for ((i=0;i<\${#args[@]};i++)); do
-    if [ "\${args[\$i]}" = "--add-label" ]; then lbl="\${args[\$((i+1))]}"; fi
+    if [ "\${args[\$i]}" = "\$flag" ]; then val="\${args[\$((i+1))]}"; fi
   done
-  printf '%s' "\$lbl"
+  printf '%s' "\$val"
+}
+record_label() {
+  local lbl="\$1"
+  [ -n "\$lbl" ] || return 0
+  echo "\$lbl" >> "\$GH_LABEL_LOG"
+  if [ "\${GH_SUPPRESS_LABEL:-0}" != "1" ]; then echo "\$lbl" >> "\$GH_LABEL_STATE"; fi
 }
 if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "list" ]; then
   jq -r "\$(jq_expr "\$@")" "\$GH_PR_LIST_JSON"
@@ -99,6 +114,8 @@ if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "view" ]; then
   fields="\$(json_fields "\$@")"
   if [[ "\$fields" == *author* ]]; then
     echo "\${GH_PR_AUTHOR}"
+  elif [[ "\$fields" == *labels* ]]; then
+    cat "\$GH_LABEL_STATE" 2>/dev/null || true
   else
     echo "https://example.test/pr/\${3:-0}"
   fi
@@ -108,11 +125,16 @@ if [ "\${1:-}" = "auth" ]; then
   exit 0
 fi
 if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "edit" ]; then
-  echo "\$(add_label "\$@")" >> "\$GH_LABEL_LOG"
+  record_label "\$(opt_value --add-label "\$@")"
+  exit 0
+fi
+if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "close" ]; then
+  echo "close \${3:-0}" >> "\$GH_CLOSE_LOG"
   exit 0
 fi
 if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "create" ]; then
   echo "create $*" >> "\$GH_CREATE_LOG"
+  record_label "\$(opt_value --label "\$@")"
   tmp="\$(mktemp)"
   jq --argjson n "\$GH_CREATED_PR" --arg o "\$GH_STUB_OWNER" \
     '. + [{number:\$n, headRepositoryOwner:{login:\$o}}]' "\$GH_PR_LIST_JSON" > "\$tmp"
@@ -127,7 +149,7 @@ exit 1
   writeFileSync(ghPath, stub);
   chmodSync(ghPath, 0o755);
 
-  return { root, origin, binDir, listJson, createLog, labelLog };
+  return { root, origin, binDir, listJson, createLog, labelLog, labelState, closeLog };
 }
 
 function runWitness(repo, {
@@ -136,6 +158,7 @@ function runWitness(repo, {
   prList = [],
   prAuthor = 'app/solidus-paperclip-delivery',
   createdPr = '1000',
+  suppressLabel = false,
 } = {}) {
   writeFileSync(repo.listJson, JSON.stringify(prList));
   const wd = mkdtempSync(join(repo.root, 'wd-'));
@@ -154,9 +177,12 @@ function runWitness(repo, {
       GH_PR_LIST_JSON: repo.listJson,
       GH_CREATE_LOG: repo.createLog,
       GH_LABEL_LOG: repo.labelLog,
+      GH_LABEL_STATE: repo.labelState,
+      GH_CLOSE_LOG: repo.closeLog,
       GH_PR_AUTHOR: prAuthor,
       GH_STUB_OWNER: OWNER,
       GH_CREATED_PR: createdPr,
+      GH_SUPPRESS_LABEL: suppressLabel ? '1' : '0',
     },
   });
   return r;
@@ -173,6 +199,10 @@ function createCount(repo) {
 
 function appliedLabels(repo) {
   return existsSync(repo.labelLog) ? readFileSync(repo.labelLog, 'utf8').trim().split('\n').filter(Boolean) : [];
+}
+
+function closedPrs(repo) {
+  return existsSync(repo.closeLog) ? readFileSync(repo.closeLog, 'utf8').trim().split('\n').filter(Boolean) : [];
 }
 
 function commitCountOnBranch(repo) {
@@ -298,33 +328,75 @@ test('owner scoping: ONLY fork-owned PRs → treated as none, so a real PR is op
   }
 });
 
-test('fail closed: a github-actions[bot]-authored PR is rejected BEFORE any label is applied', { skip }, () => {
+test('fail closed: a freshly created github-actions[bot] PR is rejected AND torn down', { skip }, () => {
   // A witness opened with the built-in GITHUB_TOKEN authors a github-actions[bot]
   // PR whose pull_request workflows are suppressed → the required checks never
-  // run. It must fail closed, and crucially the risk:red label must NOT be applied
-  // to a PR that failed the author guard.
+  // run. It must fail closed. Because the label rides atomically with creation,
+  // the PR is never green; and because WE created it under the wrong identity,
+  // the script tears it down so no witness of any colour is left behind.
   const repo = makeRepo();
   try {
-    const r = runWitness(repo, { prList: [], prAuthor: 'github-actions[bot]' });
+    const r = runWitness(repo, { prList: [], prAuthor: 'github-actions[bot]', createdPr: '1000' });
     assert.notEqual(r.status, 0, 'must fail closed on the event-suppressed identity');
     assert.match(r.stderr, /authored by 'github-actions\[bot\]'/,
       'error must name the forbidden, event-suppressed identity');
     assert.match(r.stderr, /minted solidus-paperclip-delivery App installation token/, 'error must point to the correct fix');
-    assert.deepEqual(appliedLabels(repo), [], 'no label may be applied when the author guard fails');
+    assert.deepEqual(closedPrs(repo), ['close 1000'], 'the wrong-identity fresh PR must be closed, not left behind');
   } finally {
     rmSync(repo.root, { recursive: true, force: true });
   }
 });
 
-test('fail closed: any non-allowlisted author is rejected, no label applied', { skip }, () => {
+test('fail closed: any non-allowlisted author is rejected and the fresh PR is torn down', { skip }, () => {
   const repo = makeRepo();
   try {
-    const r = runWitness(repo, { prList: [], prAuthor: 'some-other-app[bot]' });
+    const r = runWitness(repo, { prList: [], prAuthor: 'some-other-app[bot]', createdPr: '1000' });
     assert.notEqual(r.status, 0, 'a non-allowlisted author must fail closed');
     assert.match(r.stderr, /authored by 'some-other-app\[bot\]'/, 'error names the actual (wrong) author');
     assert.match(r.stderr, /not the allowlisted App identity \('app\/solidus-paperclip-delivery' or 'solidus-paperclip-delivery\[bot\]'\)/,
       'error names both expected allowlisted forms');
-    assert.deepEqual(appliedLabels(repo), [], 'no label may be applied to a non-allowlisted author');
+    assert.deepEqual(closedPrs(repo), ['close 1000'], 'the wrong-identity fresh PR must be closed');
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('fail closed: a REUSED wrong-identity PR is rejected but NOT closed (we did not create it)', { skip }, () => {
+  // On the reuse path the author guard runs BEFORE any label mutation, so no label
+  // is applied to a wrong-identity PR — and the script must not close a PR it did
+  // not create.
+  const repo = makeRepo();
+  try {
+    const r = runWitness(repo, {
+      prList: [{ number: 202, headRepositoryOwner: { login: OWNER } }],
+      prAuthor: 'github-actions[bot]',
+    });
+    assert.notEqual(r.status, 0, 'must fail closed on a reused wrong-identity PR');
+    assert.match(r.stderr, /authored by 'github-actions\[bot\]'/);
+    assert.deepEqual(appliedLabels(repo), [], 'no label may be applied to a reused wrong-identity PR');
+    assert.deepEqual(closedPrs(repo), [], 'a pre-existing PR must never be closed by this script');
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('fail closed (Finding 1): label that never sticks → verification trips, fresh PR torn down', { skip }, () => {
+  // Models `gh pr create --label` (and any re-add) silently NOT applying the
+  // label. The authoritative re-read (`gh pr view --json labels`) returns nothing,
+  // so the script must refuse to report success AND close the fresh, green-shaped
+  // PR so no accidental green witness is left behind.
+  const repo = makeRepo();
+  try {
+    const r = runWitness(repo, {
+      prList: [],
+      prAuthor: 'solidus-paperclip-delivery[bot]',
+      createdPr: '1000',
+      suppressLabel: true,
+    });
+    assert.notEqual(r.status, 0, 'missing risk:red label must fail closed');
+    assert.match(r.stderr, /does not carry the required risk:red label/, 'must explain the fail-closed reason');
+    assert.match(r.stderr, /no green-shaped witness is left behind/, 'must announce the teardown');
+    assert.deepEqual(closedPrs(repo), ['close 1000'], 'the unlabeled fresh PR must be closed');
   } finally {
     rmSync(repo.root, { recursive: true, force: true });
   }
@@ -370,10 +442,10 @@ test('fail closed: near-lookalike App logins are rejected (exact match, no prefi
   for (const impostor of lookalikes) {
     const repo = makeRepo();
     try {
-      const r = runWitness(repo, { prList: [], prAuthor: impostor });
+      const r = runWitness(repo, { prList: [], prAuthor: impostor, createdPr: '1000' });
       assert.notEqual(r.status, 0, `lookalike must fail closed: ${JSON.stringify(impostor)}`);
       assert.match(r.stderr, /not the allowlisted App identity/, `guard must reject ${JSON.stringify(impostor)}`);
-      assert.deepEqual(appliedLabels(repo), [], `no label for lookalike ${JSON.stringify(impostor)}`);
+      assert.deepEqual(closedPrs(repo), ['close 1000'], `wrong-identity fresh PR must be torn down: ${JSON.stringify(impostor)}`);
     } finally {
       rmSync(repo.root, { recursive: true, force: true });
     }

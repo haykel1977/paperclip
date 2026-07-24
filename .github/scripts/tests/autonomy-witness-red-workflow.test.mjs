@@ -164,6 +164,33 @@ test('script: applies EXACTLY the risk:red label and nothing else', () => {
     'the author guard must precede the risk:red label edit');
 });
 
+test('fix#1 atomic label: the PR is created WITH the risk:red label (gh pr create --label)', () => {
+  // The label must ride atomically with creation so there is never a window in
+  // which a fresh, unlabeled (green-shaped) witness PR exists.
+  assert.match(shCode, /gh pr create[\s\S]*?--label\s+"\$RISK_RED_LABEL"/,
+    'gh pr create must apply --label "$RISK_RED_LABEL" atomically');
+});
+
+test('fix#1 fail-closed verification: re-reads authoritative labels and refuses success if absent', () => {
+  assert.match(shCode, /gh pr view "\$pr_number" --repo "\$REPO" --json labels --jq '\.labels\[\]\.name'/,
+    'must re-read the resolved PR labels authoritatively');
+  assert.match(shCode, /grep -qx "\$RISK_RED_LABEL"/, 'must check for the EXACT risk:red label');
+  assert.doesNotMatch(shCode, /gh pr view[^\n]*--json labels[^\n]*\|\s*grep/,
+    'label read must not pipe into grep (SIGPIPE-safe under pipefail); use a here-string');
+  // Use raw `sh`: the comment-stripper truncates this echo at its literal
+  // `#${pr_number}`, which would drop the phrase we key on.
+  assert.match(sh, /does not carry the required \$\{RISK_RED_LABEL\} label[\s\S]*?exit 1/,
+    'must fail closed (exit 1) when the label is not authoritatively present');
+});
+
+test('fix#1 teardown: a freshly created PR is closed on fail-closed, only when WE created it', () => {
+  assert.match(shCode, /gh pr close "\$pr_number" --repo "\$REPO"/, 'must be able to close a fresh PR');
+  // Every close is guarded by created==1 so a reused (pre-existing) PR is never closed.
+  const closeGuards = [...shCode.matchAll(/\[ "\$\{created:-0\}" = "1" \]/g)];
+  assert.ok(closeGuards.length >= 2, 'both fail-closed paths must guard close behind created==1');
+  assert.doesNotMatch(shCode, /gh pr close[\s\S]*?--delete-branch/, 'teardown closes the PR; it does not delete refs');
+});
+
 test('script: never auto-merges, auto-approves, or changes settings', () => {
   assert.doesNotMatch(shCode, /gh pr merge/, 'must not merge');
   assert.doesNotMatch(shCode, /--auto\b/, 'must not enable auto-merge');
