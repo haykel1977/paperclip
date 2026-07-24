@@ -180,15 +180,18 @@ test('script: references no secrets, PAT, or App-key minting (token is injected 
 });
 
 test('script: fails closed unless the PR is authored by the allowlisted App identity', () => {
-  // Positive allowlist: the witness author MUST be solidus-paperclip-delivery[bot].
-  // This rejects the github-actions[bot] event-suppression signature (built-in
+  // Positive allowlist: the witness author MUST be the solidus-paperclip-delivery
+  // App, which GitHub surfaces as `app/solidus-paperclip-delivery` (GraphQL/`gh pr
+  // view`) or `solidus-paperclip-delivery[bot]` (REST). Both exact forms are named;
+  // this rejects the github-actions[bot] event-suppression signature (built-in
   // GITHUB_TOKEN → suppressed pull_request workflows → no required checks) AND
   // any other unexpected identity (a misconfigured App or wrong installation).
-  assert.match(shCode, /EXPECTED_AUTHOR="solidus-paperclip-delivery\[bot\]"/, 'names the expected allowlisted identity');
+  assert.match(shCode, /EXPECTED_AUTHOR_GRAPHQL="app\/solidus-paperclip-delivery"/, 'names the GraphQL-form identity');
+  assert.match(shCode, /EXPECTED_AUTHOR_REST="solidus-paperclip-delivery\[bot\]"/, 'names the REST-form identity');
   assert.match(shCode, /gh pr view "\$pr_number" --repo "\$REPO" --json author --jq \.author\.login/,
     'must read the resolved PR author');
-  assert.match(shCode, /if \[ "\$author" != "\$EXPECTED_AUTHOR" \]; then[\s\S]*?exit 1/,
-    'must exit non-zero (fail closed) when the author is not the expected identity');
+  assert.match(shCode, /if \[ "\$author" != "\$EXPECTED_AUTHOR_GRAPHQL" \] && \[ "\$author" != "\$EXPECTED_AUTHOR_REST" \]; then[\s\S]*?exit 1/,
+    'must exit non-zero (fail closed) unless the author is one of the two exact expected forms');
 });
 
 // ── the two fixes ─────────────────────────────────────────────────────────────

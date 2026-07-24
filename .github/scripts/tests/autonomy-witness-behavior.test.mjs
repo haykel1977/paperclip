@@ -120,16 +120,17 @@ exit 1
 
 /** Run the witness script from a FRESH clone (each dispatch is a fresh checkout).
  * `prAuthor` is the login the gh stub reports for `pr view --json author` — i.e.
- * the identity the fail-closed guard evaluates. It defaults to the allowlisted
- * App identity (solidus-paperclip-delivery[bot]); tests override it with the
- * forbidden github-actions[bot] to exercise the event-suppression guard.
+ * the identity the fail-closed guard evaluates. It defaults to the exact login
+ * GitHub actually returns for this App via the `gh pr view` (GraphQL) path,
+ * `app/solidus-paperclip-delivery`; tests override it with the REST form or with
+ * forbidden identities to exercise the fail-closed guard.
  * `createdPr` is the number the stub
  * assigns to a freshly created PR so the post-create lookup can resolve it. */
 function runWitness(repo, {
   runId = RUN_ID,
   headSha = SHA_A,
   prList = [],
-  prAuthor = 'solidus-paperclip-delivery[bot]',
+  prAuthor = 'app/solidus-paperclip-delivery',
   createdPr = '1000',
 } = {}) {
   writeFileSync(repo.listJson, JSON.stringify(prList));
@@ -341,8 +342,8 @@ test('fail closed: any non-allowlisted author is rejected (positive allowlist, n
     const r = runWitness(repo, { prList: [], prAuthor: 'some-other-app[bot]' });
     assert.notEqual(r.status, 0, 'a non-allowlisted author must fail closed');
     assert.match(r.stderr, /authored by 'some-other-app\[bot\]'/, 'error names the actual (wrong) author');
-    assert.match(r.stderr, /not the allowlisted App identity 'solidus-paperclip-delivery\[bot\]'/,
-      'error names the expected allowlisted identity');
+    assert.match(r.stderr, /not the allowlisted App identity \('app\/solidus-paperclip-delivery' or 'solidus-paperclip-delivery\[bot\]'\)/,
+      'error names both expected allowlisted forms');
   } finally {
     rmSync(repo.root, { recursive: true, force: true });
   }
@@ -358,23 +359,64 @@ test('fail closed: the superseded commitperclip[bot] identity is now rejected', 
     const r = runWitness(repo, { prList: [], prAuthor: 'commitperclip[bot]' });
     assert.notEqual(r.status, 0, 'the superseded identity must fail closed');
     assert.match(r.stderr, /authored by 'commitperclip\[bot\]'/, 'error names the superseded author');
-    assert.match(r.stderr, /not the allowlisted App identity 'solidus-paperclip-delivery\[bot\]'/,
-      'error names the new expected identity');
+    assert.match(r.stderr, /not the allowlisted App identity \('app\/solidus-paperclip-delivery' or 'solidus-paperclip-delivery\[bot\]'\)/,
+      'error names the new expected forms');
   } finally {
     rmSync(repo.root, { recursive: true, force: true });
   }
 });
 
-test('happy path: a solidus-paperclip-delivery[bot]-authored PR passes the allowlist guard', { skip }, () => {
-  // The expected App identity must NOT be rejected — the allowlist admits it.
+test('happy path (GraphQL form): an app/solidus-paperclip-delivery-authored PR passes the guard', { skip }, () => {
+  // The `gh pr view` (GraphQL) path returns the App as `app/solidus-paperclip-delivery`.
+  // This is the exact login the live witness run produced; it must be accepted.
+  const repo = makeRepo();
+  try {
+    const r = runWitness(repo, { prList: [], prAuthor: 'app/solidus-paperclip-delivery' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /authored by app\/solidus-paperclip-delivery/, 'the GraphQL-form login is accepted');
+    assert.doesNotMatch(r.stderr, /not the allowlisted App identity/, 'must not trip the guard');
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('happy path (REST form): a solidus-paperclip-delivery[bot]-authored PR passes the guard', { skip }, () => {
+  // The REST webhook form of the SAME App must also be admitted.
   const repo = makeRepo();
   try {
     const r = runWitness(repo, { prList: [], prAuthor: 'solidus-paperclip-delivery[bot]' });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stdout, /authored by solidus-paperclip-delivery\[bot\]/, 'the allowlisted author is accepted');
+    assert.match(r.stdout, /authored by solidus-paperclip-delivery\[bot\]/, 'the REST-form login is accepted');
     assert.doesNotMatch(r.stderr, /not the allowlisted App identity/, 'must not trip the guard');
   } finally {
     rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('fail closed: near-lookalike App logins are rejected (exact match, no prefix/substring)', { skip }, () => {
+  // Only the two exact canonical forms are admitted. Anything that merely resembles
+  // them — a prefix/substring, a suffixed impostor, a whitespace-padded copy, or the
+  // bare name without the `app/` or `[bot]` marker — must fail closed. This proves
+  // the allowlist did not widen to `app/*` or accept partial matches.
+  const lookalikes = [
+    'app/solidus-paperclip-delivery-evil',
+    'app/solidus-paperclip-deliveryx',
+    'app/solidus-paperclip',
+    'solidus-paperclip-delivery',
+    'app/solidus-paperclip-delivery[bot]',
+    'solidus-paperclip-delivery[bot]-evil',
+    ' app/solidus-paperclip-delivery',
+    'app/Solidus-Paperclip-Delivery',
+  ];
+  for (const impostor of lookalikes) {
+    const repo = makeRepo();
+    try {
+      const r = runWitness(repo, { prList: [], prAuthor: impostor });
+      assert.notEqual(r.status, 0, `lookalike must fail closed: ${JSON.stringify(impostor)}`);
+      assert.match(r.stderr, /not the allowlisted App identity/, `guard must reject ${JSON.stringify(impostor)}`);
+    } finally {
+      rmSync(repo.root, { recursive: true, force: true });
+    }
   }
 });
 

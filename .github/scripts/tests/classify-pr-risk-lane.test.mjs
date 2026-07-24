@@ -24,6 +24,68 @@ test('KNOWN_ACTORS: the dedicated delivery App is an autonomous actor; humans ar
   assert.ok(!KNOWN_ACTORS.has('haykel1977'), 'humans must not be autonomous actors');
 });
 
+test('KNOWN_ACTORS: recognizes BOTH exact canonical forms of the delivery App, rejects lookalikes', () => {
+  // GitHub returns the SAME App as `app/solidus-paperclip-delivery` (GraphQL) or
+  // `solidus-paperclip-delivery[bot]` (REST). Both must reach GREEN; nothing that
+  // merely resembles them may — the allowlist must not widen to `app/*`.
+  assert.ok(KNOWN_ACTORS.has('app/solidus-paperclip-delivery'), 'GraphQL form recognized');
+  assert.ok(KNOWN_ACTORS.has('solidus-paperclip-delivery[bot]'), 'REST form recognized');
+  for (const impostor of [
+    'app/solidus-paperclip-delivery-evil',
+    'app/solidus-paperclip-deliveryx',
+    'app/solidus-paperclip',
+    'solidus-paperclip-delivery',
+    'app/solidus-paperclip-delivery[bot]',
+    'solidus-paperclip-delivery[bot]-evil',
+    ' app/solidus-paperclip-delivery',
+    'app/Solidus-Paperclip-Delivery',
+  ]) {
+    assert.ok(!KNOWN_ACTORS.has(impostor), `must reject lookalike ${JSON.stringify(impostor)}`);
+  }
+});
+
+test('a docs-only witness PR authored by the delivery App (GraphQL form) reaches GREEN', () => {
+  const result = classifyPrRiskLane({
+    title: 'docs(autonomy-witness): witness run 123',
+    labels: [],
+    author: 'app/solidus-paperclip-delivery',
+    files: [file('doc/autonomy-witness/123.md', { additions: 12, changes: 12 })],
+    headSha: FRESH_SHA,
+    expectedHeadSha: FRESH_SHA,
+    evidence: DEFAULT_REQUIRED_EVIDENCE.map(name => ({ name, conclusion: 'success' })),
+    requiredEvidence: [...DEFAULT_REQUIRED_EVIDENCE],
+  });
+  assert.equal(result.lane, LANES.GREEN);
+});
+
+test('classifyPrRiskLane: whitespace-padded delivery-App logins are rejected (raw exact compare, no trim)', () => {
+  // The author login is compared RAW. Leading/trailing spaces, tabs, and newlines
+  // around either canonical form must NOT be trimmed away into a match — they fall
+  // to the fail-closed unknown-actor branch, consistent with the witness guard.
+  const greenInputs = (author) => ({
+    title: 'docs(autonomy-witness): witness run 123',
+    labels: [],
+    author,
+    files: [file('doc/autonomy-witness/123.md', { additions: 12, changes: 12 })],
+    headSha: FRESH_SHA,
+    expectedHeadSha: FRESH_SHA,
+    evidence: DEFAULT_REQUIRED_EVIDENCE.map(name => ({ name, conclusion: 'success' })),
+    requiredEvidence: [...DEFAULT_REQUIRED_EVIDENCE],
+  });
+  for (const base of ['app/solidus-paperclip-delivery', 'solidus-paperclip-delivery[bot]']) {
+    for (const padded of [` ${base}`, `${base} `, `\t${base}`, `${base}\t`, `\n${base}`, `${base}\n`, `${base}\r\n`]) {
+      const result = classifyPrRiskLane(greenInputs(padded));
+      assert.equal(result.lane, LANES.RED, `padded author must fail closed: ${JSON.stringify(padded)}`);
+      assert.ok(
+        result.reasons.some(r => r.includes('is not a recognized autonomy identity')),
+        `padded author must trip the unknown-actor guard: ${JSON.stringify(padded)}`,
+      );
+    }
+    // The exact, unpadded canonical form still reaches GREEN.
+    assert.equal(classifyPrRiskLane(greenInputs(base)).lane, LANES.GREEN, `exact form must still be GREEN: ${base}`);
+  }
+});
+
 const FRESH_SHA = 'a'.repeat(40);
 
 const file = (filename, overrides = {}) => ({

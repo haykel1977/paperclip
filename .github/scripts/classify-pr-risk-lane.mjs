@@ -55,7 +55,11 @@ const PASSING_EVIDENCE_CONCLUSIONS = new Set(['success']);
 export const KNOWN_ACTORS = new Set([
   // Dedicated autonomous delivery App for this repo (App id 4384863); opens the
   // Autonomy Witness PR. Distinct from the paperclip-checker gate (4372695) and
-  // the Actions runner (15368), so it never gates its own PR.
+  // the Actions runner (15368), so it never gates its own PR. GitHub surfaces the
+  // SAME App under two exact login forms: `app/solidus-paperclip-delivery` via the
+  // GraphQL/`gh pr view` path and `solidus-paperclip-delivery[bot]` via REST. Both
+  // exact forms are listed; no prefix/substring/`app/*` widening.
+  'app/solidus-paperclip-delivery',
   'solidus-paperclip-delivery[bot]',
   // Retained: still the review identity used by commitperclip-review.yml.
   'commitperclip[bot]',
@@ -280,10 +284,13 @@ export function classifyPrRiskLane({
   }
 
   // ── Unknown actor is fail-closed ─────────────────────────────────────────
-  const normalizedAuthor = String(author ?? '').trim();
-  if (!KNOWN_ACTORS.has(normalizedAuthor)) {
+  // Compare the RAW GitHub login exactly — no whitespace trimming. The contract
+  // is an exact finite identity set (see KNOWN_ACTORS), consistent with the
+  // witness guard and governance, so a padded lookalike must not be admitted.
+  const rawAuthor = String(author ?? '');
+  if (!KNOWN_ACTORS.has(rawAuthor)) {
     redReasons.push(
-      `Actor \`${normalizedAuthor || 'unknown'}\` is not a recognized autonomy identity. ` +
+      `Actor \`${rawAuthor || 'unknown'}\` is not a recognized autonomy identity. ` +
       `GREEN autonomy is limited to: ${[...KNOWN_ACTORS].map(a => `\`${a}\``).join(', ')}.`
     );
   }
