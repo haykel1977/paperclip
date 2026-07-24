@@ -153,15 +153,9 @@ test('script: applies EXACTLY the risk:red label and nothing else', () => {
   // contexts fail by policy.
   assert.match(shCode, /RISK_RED_LABEL="risk:red"/, 'names the exact risk:red label');
   const addLabels = [...shCode.matchAll(/--add-label\s+("?[^"\s]+"?)/g)].map(m => m[1].replace(/"/g, ''));
-  assert.deepEqual(addLabels, ['$RISK_RED_LABEL'], 'exactly one --add-label, the risk:red variable');
+  assert.deepEqual(addLabels, [], 'reuse path must not mutate labels; create must be fully shaped already');
   assert.doesNotMatch(shCode, /--remove-label\b/, 'must not remove any label');
-  // The label edit must run only AFTER the fail-closed author guard passes.
-  // Use the raw source: the comment-stripper truncates the guard's echo line at
-  // its literal `#${pr_number}`, which would drop the phrase we key on.
-  const guardIdx = sh.indexOf('not the allowlisted App identity');
-  const labelIdx = sh.indexOf('gh pr edit');
-  assert.ok(guardIdx !== -1 && labelIdx !== -1 && guardIdx < labelIdx,
-    'the author guard must precede the risk:red label edit');
+  assert.doesNotMatch(shCode, /gh pr edit/, 'reuse path must not edit a pre-existing PR');
 });
 
 test('fix#1 atomic label: the PR is created WITH the risk:red label (gh pr create --label)', () => {
@@ -185,9 +179,12 @@ test('fix#1 fail-closed verification: re-reads authoritative labels and refuses 
 
 test('fix#1 teardown: a freshly created PR is closed on fail-closed, only when WE created it', () => {
   assert.match(shCode, /gh pr close "\$pr_number" --repo "\$REPO"/, 'must be able to close a fresh PR');
-  // Every close is guarded by created==1 so a reused (pre-existing) PR is never closed.
-  const closeGuards = [...shCode.matchAll(/\[ "\$\{created:-0\}" = "1" \]/g)];
-  assert.ok(closeGuards.length >= 2, 'both fail-closed paths must guard close behind created==1');
+  assert.match(shCode, /if \[ -z "\$created_pr_number" \]; then[\s\S]*?refusing cleanup/,
+    'cleanup must be forbidden when create emitted no trustworthy id');
+  assert.match(shCode, /if \[ "\$pr_base" = "\$DEFAULT_BRANCH" \] && \[ "\$pr_head" = "\$BRANCH" \] && \[ "\$pr_head_owner" = "\$OWNER" \]; then[\s\S]*?gh pr close "\$pr_number" --repo "\$REPO"/,
+    'close must be gated by authoritative revalidation of the emitted PR id');
+  assert.match(shCode, /pr_number="\$\(resolve_pr_number\)"[\s\S]*?else[\s\S]*?created_pr_number="\$\(extract_created_pr_number "\$create_output"\)"/,
+    'branch discovery must stay on the reuse path; create-failure cleanup must use only the create-emitted id');
   assert.doesNotMatch(shCode, /gh pr close[\s\S]*?--delete-branch/, 'teardown closes the PR; it does not delete refs');
 });
 
@@ -214,6 +211,23 @@ test('script: fails closed unless the PR is authored by the allowlisted App iden
     'must read the resolved PR author');
   assert.match(shCode, /if \[ "\$author" != "\$EXPECTED_AUTHOR_GRAPHQL" \] && \[ "\$author" != "\$EXPECTED_AUTHOR_REST" \]; then[\s\S]*?exit 1/,
     'must exit non-zero (fail closed) unless the author is one of the two exact expected forms');
+});
+
+test('reuse path: revalidates the complete witness shape before success', () => {
+  assert.match(shCode, /--json baseRefName,headRefName,headRepositoryOwner,author,labels,files/,
+    'reuse path must fetch full PR shape authoritatively');
+  assert.match(shCode, /if \[ "\$pr_base" != "\$DEFAULT_BRANCH" \]; then[\s\S]*?exit 1/,
+    'reuse path must pin the base branch');
+  assert.match(shCode, /if \[ "\$pr_head" != "\$BRANCH" \]; then[\s\S]*?exit 1/,
+    'reuse path must pin the head branch');
+  assert.match(shCode, /if \[ "\$files_count" -ne 1 \]; then[\s\S]*?exit 1/,
+    'reuse path must require exactly one changed file');
+  assert.match(shCode, /if \[ "\$file_path" != "\$DOC_PATH" \]; then[\s\S]*?exit 1/,
+    'reuse path must require the exact witness doc path');
+  assert.match(shCode, /if \[ -n "\$file_previous_filename" \]; then[\s\S]*?exit 1/,
+    'reuse path must reject rename sources');
+  assert.match(shCode, /if ! grep -qx "\$RISK_RED_LABEL" <<<"\$labels"; then[\s\S]*?exit 1/,
+    'reuse path must require the exact risk:red label');
 });
 
 test('fix#1 idempotency: resumes existing run-id branch, no-op commit guard, FF push (no --force)', () => {
