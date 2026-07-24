@@ -119,3 +119,8 @@ test('allows agent PRs from dedicated bot identity', () => {
   const result = checkPrGovernance(basePr({ labels: ['agent-pr'], author: 'commitperclip[bot]' }));
   assert.equal(result.passed, true);
 });
+
+test('allows agent PRs from the dedicated delivery App identity', () => {
+  const result = checkPrGovernance(basePr({ labels: ['agent-pr'], author: 'solidus-paperclip-delivery[bot]' }));
+  assert.equal(result.passed, true);
+});

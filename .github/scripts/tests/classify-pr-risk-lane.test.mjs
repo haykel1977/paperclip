@@ -14,8 +14,15 @@ import {
   MAX_GREEN_CHANGED_FILES,
   DEFAULT_REQUIRED_EVIDENCE,
   DEPENDENCY_MANIFEST_LABEL,
+  KNOWN_ACTORS,
 } from '../classify-pr-risk-lane.mjs';
 import { MAX_CHANGED_FILES, MAX_CHANGED_LINES } from '../check-pr-governance.mjs';
+
+test('KNOWN_ACTORS: the dedicated delivery App is an autonomous actor; humans are not', () => {
+  assert.ok(KNOWN_ACTORS.has('solidus-paperclip-delivery[bot]'),
+    'the witness author must be able to reach the autonomous GREEN lane');
+  assert.ok(!KNOWN_ACTORS.has('haykel1977'), 'humans must not be autonomous actors');
+});
 
 const FRESH_SHA = 'a'.repeat(40);
 
@@ -29,6 +36,20 @@ const file = (filename, overrides = {}) => ({
 });
 
 const greenEvidence = () => DEFAULT_REQUIRED_EVIDENCE.map(name => ({ name, conclusion: 'success' }));
+
+test('a docs-only witness PR authored by the delivery App reaches GREEN', () => {
+  const result = classifyPrRiskLane({
+    title: 'docs(autonomy-witness): witness run 123',
+    labels: [],
+    author: 'solidus-paperclip-delivery[bot]',
+    files: [file('doc/autonomy-witness/123.md', { additions: 12, changes: 12 })],
+    headSha: FRESH_SHA,
+    expectedHeadSha: FRESH_SHA,
+    evidence: DEFAULT_REQUIRED_EVIDENCE.map(name => ({ name, conclusion: 'success' })),
+    requiredEvidence: [...DEFAULT_REQUIRED_EVIDENCE],
+  });
+  assert.equal(result.lane, LANES.GREEN);
+});
 
 // A baseline PR that should land GREEN so each adversarial test can flip a
 // single dimension and prove it downgrades the lane.

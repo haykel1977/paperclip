@@ -40,6 +40,7 @@ The script enables GitHub native auto-merge only when all conditions are true:
 - PR targets `main`.
 - PR comes from the same repository, not a fork.
 - Author is a dedicated automation identity:
+  - `solidus-paperclip-delivery[bot]`
   - `commitperclip[bot]`
   - `github-actions[bot]`
   - `paperclipai[bot]`

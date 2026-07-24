@@ -53,6 +53,11 @@ const PASSING_EVIDENCE_CONCLUSIONS = new Set(['success']);
 // fail-closed to RED — GREEN autonomy is only for recognized identities; humans
 // and unknown bots still get a human-reviewed lane.
 export const KNOWN_ACTORS = new Set([
+  // Dedicated autonomous delivery App for this repo (App id 4384863); opens the
+  // Autonomy Witness PR. Distinct from the paperclip-checker gate (4372695) and
+  // the Actions runner (15368), so it never gates its own PR.
+  'solidus-paperclip-delivery[bot]',
+  // Retained: still the review identity used by commitperclip-review.yml.
   'commitperclip[bot]',
   'github-actions[bot]',
   'paperclipai[bot]',

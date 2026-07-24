@@ -27,6 +27,8 @@ export const DEFAULT_MERGE_METHOD = 'SQUASH';
 export const DEFAULT_REQUIRED_CHECKS = ['verify', 'gitleaks'];
 
 export const ALLOWED_AUTOMERGE_AUTHORS = new Set([
+  // Dedicated autonomous delivery App (id 4384863) for this repo's witness PRs.
+  'solidus-paperclip-delivery[bot]',
   'commitperclip[bot]',
   'github-actions[bot]',
   'paperclipai[bot]',

@@ -49,22 +49,28 @@ test('workflow: trigger is workflow_dispatch and takes NO inputs', () => {
   assert.doesNotMatch(wf, /^\s{2}push:\s*$/m);
 });
 
-test('workflow: minimal workflow-token permissions — contents:write only', () => {
+test('workflow: minimal workflow-token permissions — contents:read only', () => {
   const block = topLevelPermissionsBlock();
   assert.ok(block, 'must declare a top-level permissions block');
   const perms = block
     .map(l => l.split('#')[0].trim())
     .filter(Boolean)
     .sort();
-  assert.deepEqual(perms, ['contents: write'],
-    'GITHUB_TOKEN needs only contents:write (branch push); PR scope comes from the App token');
-  // pull-requests:write must NOT be granted to the workflow token: every `gh`
-  // call uses the App installation token (which carries that scope), so the
-  // ambient GITHUB_TOKEN stays minimal.
+  assert.deepEqual(perms, ['contents: read'],
+    'GITHUB_TOKEN needs only contents:read (checkout fetch); the App token does the push AND the PR');
+  // Neither contents:write nor pull-requests:write may be granted to the
+  // workflow token: the branch push and the PR both use the App installation
+  // token (checkout runs with persist-credentials:false), so the ambient
+  // GITHUB_TOKEN stays read-only.
+  assert.doesNotMatch(wfCode, /^\s*contents:\s*write\b/m,
+    'workflow token must not be granted contents:write (the App token pushes)');
   assert.doesNotMatch(wfCode, /^\s*pull-requests:\s*write\b/m,
     'workflow token must not be granted pull-requests:write');
   assert.doesNotMatch(wf, /\b(id-token|packages|actions|checks|deployments|security-events|statuses|issues|pages|discussions):\s*write\b/,
     'no additional write scopes may be granted');
+  // The App token does the push, so the checkout credential must not persist.
+  assert.match(wfCode, /persist-credentials:\s*false/,
+    'checkout must not persist the ambient GITHUB_TOKEN; the App token authenticates git');
 });
 
 test('workflow: only first-party actions, pinned by full commit SHA', () => {
@@ -100,20 +106,25 @@ test('workflow: opens the PR with a minted App token — never the built-in GITH
     ['DEFAULT_BRANCH', 'GH_TOKEN', 'HEAD_SHA', 'REPO', 'RUN_ID']);
 });
 
-test('workflow: App token minted fail-closed — COMMITPERCLIP_KEY only, no GITHUB_TOKEN fallback', () => {
-  assert.match(wfCode, /node \.github\/scripts\/get-bot-token\.mjs/, 'mints via get-bot-token.mjs');
-  const mintEnv = stepEnvKeys(/get-bot-token\.mjs/);
-  // The App key must be present; GITHUB_TOKEN must be absent so get-bot-token.mjs
-  // cannot silently fall back to the event-suppressing default token.
-  assert.ok(mintEnv.includes('COMMITPERCLIP_KEY'), 'mint step needs the App key');
+test('workflow: App token minted fail-closed — delivery secrets only, no GITHUB_TOKEN fallback', () => {
+  assert.match(wfCode, /node \.github\/scripts\/paperclip-delivery-token\.mjs/, 'mints via paperclip-delivery-token.mjs');
+  assert.doesNotMatch(wfCode, /node \.github\/scripts\/get-bot-token\.mjs/,
+    'must NOT mint via the commitperclip get-bot-token.mjs (that App is inaccessible here)');
+  const mintEnv = stepEnvKeys(/paperclip-delivery-token\.mjs/);
+  // Both dedicated delivery secrets must be present; GITHUB_TOKEN must be absent
+  // so the minter cannot silently fall back to the event-suppressing default.
+  assert.ok(mintEnv.includes('PAPERCLIP_DELIVERY_APP_ID'), 'mint step needs the delivery App ID');
+  assert.ok(mintEnv.includes('PAPERCLIP_DELIVERY_PRIVATE_KEY'), 'mint step needs the delivery private key');
   assert.ok(!mintEnv.includes('GITHUB_TOKEN'),
     'mint step must NOT receive GITHUB_TOKEN, else a mint failure silently falls back to it');
 });
 
-test('workflow: the only secret referenced is COMMITPERCLIP_KEY', () => {
+test('workflow: the only secrets referenced are the two delivery App secrets', () => {
   const secrets = [...new Set([...wf.matchAll(/secrets\.([A-Za-z0-9_]+)/g)].map(m => m[1]))].sort();
-  assert.deepEqual(secrets, ['COMMITPERCLIP_KEY'], 'exactly one secret — the App key — may be referenced');
-  assert.doesNotMatch(wf, /PAPERCLIP_DELIVERY_BOT_TOKEN|PAPERCLIP_AUTONOMOUS_DELIVERY/, 'no delivery secrets');
+  assert.deepEqual(secrets, ['PAPERCLIP_DELIVERY_APP_ID', 'PAPERCLIP_DELIVERY_PRIVATE_KEY'],
+    'exactly the two dedicated delivery App secrets may be referenced');
+  assert.doesNotMatch(wf, /COMMITPERCLIP_KEY/, 'the inaccessible commitperclip App key must not be referenced');
+  assert.doesNotMatch(wf, /PAPERCLIP_DELIVERY_BOT_TOKEN|PAPERCLIP_AUTONOMOUS_DELIVERY/, 'no PAT-style delivery secrets');
   assert.doesNotMatch(wfCode, /\bPAT\b|personal.access.token/i, 'no PAT');
 });
 
@@ -163,9 +174,9 @@ test('script: references no secrets, PAT, or App-key minting (token is injected 
   // The script never touches secrets itself — the workflow mints the App token
   // and injects it as GH_TOKEN. This keeps the trust boundary in the workflow.
   assert.doesNotMatch(shCode, /secrets\./, 'no secrets context');
-  assert.doesNotMatch(shCode, /COMMITPERCLIP_KEY|PAPERCLIP_DELIVERY_BOT_TOKEN|PAPERCLIP_AUTONOMOUS_DELIVERY/, 'no delivery/App secrets');
+  assert.doesNotMatch(shCode, /COMMITPERCLIP_KEY|PAPERCLIP_DELIVERY_APP_ID|PAPERCLIP_DELIVERY_PRIVATE_KEY|PAPERCLIP_DELIVERY_BOT_TOKEN|PAPERCLIP_AUTONOMOUS_DELIVERY/, 'no delivery/App secrets');
   assert.doesNotMatch(shCode, /\bPAT\b|personal.access.token/i, 'no PAT');
-  assert.doesNotMatch(shCode, /get-bot-token|generateJWT|installations\/.*access_tokens/, 'no App token minting in the script');
+  assert.doesNotMatch(shCode, /get-bot-token|paperclip-delivery-token|generateJWT|generateAppJwt|installations\/.*access_tokens/, 'no App token minting in the script');
 });
 
 test('script: fails closed unless the PR is authored by the allowlisted App identity', () => {
@@ -173,7 +184,7 @@ test('script: fails closed unless the PR is authored by the allowlisted App iden
   // rejects the github-actions[bot] event-suppression signature (built-in
   // GITHUB_TOKEN → suppressed pull_request workflows → no required checks) AND
   // any other unexpected identity (a misconfigured App or wrong installation).
-  assert.match(shCode, /EXPECTED_AUTHOR="commitperclip\[bot\]"/, 'names the expected allowlisted identity');
+  assert.match(shCode, /EXPECTED_AUTHOR="solidus-paperclip-delivery\[bot\]"/, 'names the expected allowlisted identity');
   assert.match(shCode, /gh pr view "\$pr_number" --repo "\$REPO" --json author --jq \.author\.login/,
     'must read the resolved PR author');
   assert.match(shCode, /if \[ "\$author" != "\$EXPECTED_AUTHOR" \]; then[\s\S]*?exit 1/,
@@ -199,6 +210,19 @@ test('fix#1 idempotency: resumes existing run-id branch, no-op commit guard, FF 
   // Fast-forward push only: no force can clobber a divergent remote.
   assert.match(shCode, /git push origin "\$BRANCH"/, 'plain fast-forward push');
   assert.doesNotMatch(shCode, /git push\s+(-f|--force|--force-with-lease)\b/, 'must not force-push');
+});
+
+test('coherent provenance: the branch is pushed with the App token, not the ambient credential', () => {
+  // `gh auth setup-git` wires GH_TOKEN (the App installation token) into git's
+  // credential helper, so `git push` authenticates as the App — the SAME
+  // identity that opens the PR. The checkout runs with persist-credentials:false
+  // so no ambient GITHUB_TOKEN is available to push instead.
+  assert.match(shCode, /gh auth setup-git/, 'must wire the App token into git for the push');
+  // setup-git must precede the push so the push actually uses the App credential.
+  const setupIdx = shCode.indexOf('gh auth setup-git');
+  const pushIdx = shCode.indexOf('git push origin');
+  assert.ok(setupIdx !== -1 && pushIdx !== -1 && setupIdx < pushIdx,
+    'gh auth setup-git must run before git push');
 });
 
 test('fix#2 SIGPIPE: PR lookup selects first owner match inside jq, no early-terminating pipe', () => {
