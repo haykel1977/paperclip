@@ -180,8 +180,8 @@ test('script: references no secrets, PAT, or App-key minting (token is injected 
 });
 
 test('script: fails closed unless the PR is authored by the allowlisted App identity', () => {
-  // Positive allowlist: the witness author MUST be commitperclip[bot]. This
-  // rejects the github-actions[bot] event-suppression signature (built-in
+  // Positive allowlist: the witness author MUST be solidus-paperclip-delivery[bot].
+  // This rejects the github-actions[bot] event-suppression signature (built-in
   // GITHUB_TOKEN → suppressed pull_request workflows → no required checks) AND
   // any other unexpected identity (a misconfigured App or wrong installation).
   assert.match(shCode, /EXPECTED_AUTHOR="solidus-paperclip-delivery\[bot\]"/, 'names the expected allowlisted identity');
