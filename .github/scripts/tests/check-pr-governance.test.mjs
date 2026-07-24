@@ -124,3 +124,16 @@ test('allows agent PRs from the dedicated delivery App identity', () => {
   const result = checkPrGovernance(basePr({ labels: ['agent-pr'], author: 'solidus-paperclip-delivery[bot]' }));
   assert.equal(result.passed, true);
 });
+
+test('allows agent PRs from the delivery App under its GraphQL login form', () => {
+  const result = checkPrGovernance(basePr({ labels: ['agent-pr'], author: 'app/solidus-paperclip-delivery' }));
+  assert.equal(result.passed, true);
+});
+
+test('rejects agent PRs from an app/* lookalike of the delivery App', () => {
+  for (const impostor of ['app/solidus-paperclip-delivery-evil', 'app/solidus-paperclip', 'solidus-paperclip-delivery', 'app/solidus-paperclip-delivery[bot]']) {
+    const result = checkPrGovernance(basePr({ labels: ['agent-pr'], author: impostor }));
+    assert.equal(result.passed, false, `must reject ${impostor}`);
+    assert.ok(result.failures.some(failure => failure.includes('dedicated bot identity')));
+  }
+});

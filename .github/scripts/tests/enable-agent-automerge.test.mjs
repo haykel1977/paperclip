@@ -17,6 +17,22 @@ test('ALLOWED_AUTOMERGE_AUTHORS: includes the dedicated delivery App, excludes h
   assert.ok(!ALLOWED_AUTOMERGE_AUTHORS.has('haykel1977'));
 });
 
+test('ALLOWED_AUTOMERGE_AUTHORS: recognizes BOTH exact canonical App forms, rejects lookalikes', () => {
+  assert.ok(ALLOWED_AUTOMERGE_AUTHORS.has('app/solidus-paperclip-delivery'), 'GraphQL form');
+  assert.ok(ALLOWED_AUTOMERGE_AUTHORS.has('solidus-paperclip-delivery[bot]'), 'REST form');
+  for (const impostor of [
+    'app/solidus-paperclip-delivery-evil',
+    'app/solidus-paperclip-deliveryx',
+    'app/solidus-paperclip',
+    'solidus-paperclip-delivery',
+    'app/solidus-paperclip-delivery[bot]',
+    ' app/solidus-paperclip-delivery',
+    'app/Solidus-Paperclip-Delivery',
+  ]) {
+    assert.ok(!ALLOWED_AUTOMERGE_AUTHORS.has(impostor), `must reject lookalike ${JSON.stringify(impostor)}`);
+  }
+});
+
 const protectedMain = {
   required_status_checks: {
     strict: true,
@@ -230,6 +246,18 @@ test('evaluateAutomergeEligibility: allows opted-in same-repo agent PRs with pro
   const result = evaluateAutomergeEligibility(pr(), { branchProtection: protectedMain });
   assert.equal(result.eligible, true);
   assert.deepEqual(result.failures, []);
+});
+
+test('evaluateAutomergeEligibility: allows the delivery App under its GraphQL login form', () => {
+  const result = evaluateAutomergeEligibility(pr({ user: { login: 'app/solidus-paperclip-delivery' } }), { branchProtection: protectedMain });
+  assert.equal(result.eligible, true);
+  assert.deepEqual(result.failures, []);
+});
+
+test('evaluateAutomergeEligibility: rejects an app/* lookalike of the delivery App', () => {
+  const result = evaluateAutomergeEligibility(pr({ user: { login: 'app/solidus-paperclip-delivery-evil' } }), { branchProtection: protectedMain });
+  assert.equal(result.eligible, false);
+  assert.ok(result.failures.some(failure => failure.includes('not an allowed automation identity')));
 });
 
 test('evaluateAutomergeEligibility: rejects human-authored PRs even with labels', () => {

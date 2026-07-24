@@ -35,7 +35,12 @@ set -euo pipefail
 # github-actions[bot] author means the PR was created with the built-in
 # GITHUB_TOKEN, whose pull_request workflows are suppressed → the required checks
 # never ran, so a check-less witness could otherwise masquerade as valid.
-EXPECTED_AUTHOR="solidus-paperclip-delivery[bot]"
+# GitHub surfaces this ONE App under two exact login forms: the GraphQL/`gh pr
+# view` path (used just below) returns `app/solidus-paperclip-delivery`, while REST
+# webhook payloads use `solidus-paperclip-delivery[bot]`. Accept exactly these two
+# canonical representations of the same App — no prefixes, no other `app/*`.
+EXPECTED_AUTHOR_GRAPHQL="app/solidus-paperclip-delivery"
+EXPECTED_AUTHOR_REST="solidus-paperclip-delivery[bot]"
 
 : "${GH_TOKEN:?GH_TOKEN required}"
 : "${RUN_ID:?RUN_ID required}"
@@ -140,8 +145,8 @@ fi
 # required checks) but also any misconfigured App or wrong installation. Applies
 # whether the PR was freshly created or reused.
 author="$(gh pr view "$pr_number" --repo "$REPO" --json author --jq .author.login)"
-if [ "$author" != "$EXPECTED_AUTHOR" ]; then
-  echo "ERROR: witness PR #${pr_number} is authored by '${author}', not the allowlisted App identity '${EXPECTED_AUTHOR}'. In particular github-actions[bot] is produced only by the built-in GITHUB_TOKEN, whose pull_request workflows are suppressed so the required checks never run. Open the witness with a minted solidus-paperclip-delivery App installation token instead." >&2
+if [ "$author" != "$EXPECTED_AUTHOR_GRAPHQL" ] && [ "$author" != "$EXPECTED_AUTHOR_REST" ]; then
+  echo "ERROR: witness PR #${pr_number} is authored by '${author}', not the allowlisted App identity ('${EXPECTED_AUTHOR_GRAPHQL}' or '${EXPECTED_AUTHOR_REST}'). In particular github-actions[bot] is produced only by the built-in GITHUB_TOKEN, whose pull_request workflows are suppressed so the required checks never run. Open the witness with a minted solidus-paperclip-delivery App installation token instead." >&2
   exit 1
 fi
 
