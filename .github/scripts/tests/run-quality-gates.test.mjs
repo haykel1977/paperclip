@@ -77,6 +77,8 @@ test('isAutonomyWitnessPr: exact author + numeric branch + matching single doc f
 test('isAutonomyWitnessPr: exposes the exact author/prefix allowlists and the branch regex', () => {
   assert.deepEqual([...AUTONOMY_WITNESS_AUTHORS].sort(),
     ['app/solidus-paperclip-delivery', 'solidus-paperclip-delivery[bot]']);
+  assert.equal(Object.isFrozen(AUTONOMY_WITNESS_AUTHORS), true, 'author allowlist export must be immutable');
+  assert.throws(() => AUTONOMY_WITNESS_AUTHORS.push('github-actions[bot]'), TypeError);
   assert.deepEqual([...AUTONOMY_WITNESS_BRANCH_PREFIXES],
     ['autonomy-witness/', 'autonomy-witness-red/']);
   assert.equal(AUTONOMY_WITNESS_BRANCH_RE.source, '^autonomy-witness(-red)?\\/([0-9]+)$');

@@ -86,7 +86,7 @@ function makeRepo() {
   run('git', ['init', '--bare', '--initial-branch=main', origin]);
 
   const seed = join(root, 'seed');
-  run('git', ['clone', origin, seed], { allowFail: true });
+  run('git', ['clone', origin, seed]);
   git(seed, 'checkout', '-b', 'main');
   git(seed, 'config', 'user.name', 'seed');
   git(seed, 'config', 'user.email', 'seed@example.test');

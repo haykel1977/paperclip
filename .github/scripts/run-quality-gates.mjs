@@ -22,10 +22,11 @@ const COMMENT_SIGNATURE = '— commitperclip';
 
 // ── Autonomy-witness exemption ───────────────────────────────────────────────
 // The autonomy witness PRs (green and RED) are deliberately docs-only: a single
-// generated file under doc/autonomy-witness[-red]/<run_id>.md with no prose PR
-// body. They therefore cannot satisfy the human-authored PR-template / linked-
-// issue / dedup-search gates, which produced a false "changes needed" on genuine
-// witness PRs. This is a NARROW exemption: it waives EXACTLY those three
+// generated file under doc/autonomy-witness[-red]/<run_id>.md with an automation
+// body that does not carry the full human PR template / linked-issue / dedup
+// content. They therefore cannot satisfy those three documentation-quality
+// gates, which produced a false "changes needed" on genuine witness PRs. This
+// is a NARROW exemption: it waives EXACTLY those three
 // documentation-quality gates, and ONLY when the PR matches ALL THREE axes of the
 // witness shape. Every security-relevant gate — test coverage, lockfile,
 // governance, dependencies — stays fully active. It is not a bot bypass.
@@ -48,10 +49,11 @@ const COMMENT_SIGNATURE = '— commitperclip';
 // non-doc change, a mismatched run-id/path, or any rename/copy source
 // (`previous_filename`) fails the exemption. File metadata comes from the trusted
 // PR files API, not from anything user-controlled.
-export const AUTONOMY_WITNESS_AUTHORS = new Set([
+export const AUTONOMY_WITNESS_AUTHORS = Object.freeze([
   'app/solidus-paperclip-delivery',
   'solidus-paperclip-delivery[bot]',
 ]);
+const AUTONOMY_WITNESS_AUTHOR_SET = new Set(AUTONOMY_WITNESS_AUTHORS);
 
 // Retained for documentation/tests: the two exact branch namespaces. The
 // authoritative match is the anchored regex below, which additionally pins the
@@ -69,7 +71,7 @@ export function isAutonomyWitnessPr(author, branch, files) {
   const rawAuthor = String(author ?? '');
   const rawBranch = String(branch ?? '');
 
-  if (!AUTONOMY_WITNESS_AUTHORS.has(rawAuthor)) return false;
+  if (!AUTONOMY_WITNESS_AUTHOR_SET.has(rawAuthor)) return false;
 
   const match = AUTONOMY_WITNESS_BRANCH_RE.exec(rawBranch);
   if (!match) return false;
@@ -89,7 +91,7 @@ export function isAutonomyWitnessPr(author, branch, files) {
   return filename === expectedPath;
 }
 
-const SKIPPED_GATE = Object.freeze({ passed: true, failures: [] });
+const SKIPPED_GATE = Object.freeze({ passed: true, failures: Object.freeze([]) });
 
 function buildComment(author, failures, informational) {
   if (failures.length === 0 && informational.length === 0) {
