@@ -284,10 +284,13 @@ export function classifyPrRiskLane({
   }
 
   // ── Unknown actor is fail-closed ─────────────────────────────────────────
-  const normalizedAuthor = String(author ?? '').trim();
-  if (!KNOWN_ACTORS.has(normalizedAuthor)) {
+  // Compare the RAW GitHub login exactly — no whitespace trimming. The contract
+  // is an exact finite identity set (see KNOWN_ACTORS), consistent with the
+  // witness guard and governance, so a padded lookalike must not be admitted.
+  const rawAuthor = String(author ?? '');
+  if (!KNOWN_ACTORS.has(rawAuthor)) {
     redReasons.push(
-      `Actor \`${normalizedAuthor || 'unknown'}\` is not a recognized autonomy identity. ` +
+      `Actor \`${rawAuthor || 'unknown'}\` is not a recognized autonomy identity. ` +
       `GREEN autonomy is limited to: ${[...KNOWN_ACTORS].map(a => `\`${a}\``).join(', ')}.`
     );
   }

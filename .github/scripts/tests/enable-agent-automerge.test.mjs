@@ -260,6 +260,25 @@ test('evaluateAutomergeEligibility: rejects an app/* lookalike of the delivery A
   assert.ok(result.failures.some(failure => failure.includes('not an allowed automation identity')));
 });
 
+test('evaluateAutomergeEligibility: whitespace-padded delivery-App logins are rejected (raw exact compare, no trim)', () => {
+  // The login is compared RAW against the exact finite allowlist. Padding with
+  // spaces, tabs, or newlines must NOT be trimmed into a match — consistent with
+  // the witness guard and governance, which already reject padded identities.
+  for (const base of ['app/solidus-paperclip-delivery', 'solidus-paperclip-delivery[bot]']) {
+    for (const padded of [` ${base}`, `${base} `, `\t${base}`, `${base}\t`, `\n${base}`, `${base}\n`, `${base}\r\n`]) {
+      const result = evaluateAutomergeEligibility(pr({ user: { login: padded } }), { branchProtection: protectedMain });
+      assert.equal(result.eligible, false, `padded login must be ineligible: ${JSON.stringify(padded)}`);
+      assert.ok(
+        result.failures.some(failure => failure.includes('not an allowed automation identity')),
+        `padded login must trip the identity guard: ${JSON.stringify(padded)}`,
+      );
+    }
+    // The exact, unpadded canonical form remains eligible.
+    const ok = evaluateAutomergeEligibility(pr({ user: { login: base } }), { branchProtection: protectedMain });
+    assert.equal(ok.eligible, true, `exact form must remain eligible: ${base}`);
+  }
+});
+
 test('evaluateAutomergeEligibility: rejects human-authored PRs even with labels', () => {
   const result = evaluateAutomergeEligibility(pr({ user: { login: 'haykel1977' } }), { branchProtection: protectedMain });
   assert.equal(result.eligible, false);

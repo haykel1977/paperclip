@@ -46,7 +46,10 @@ function labels(pr) {
 }
 
 function authorLogin(pr) {
-  return String(pr?.user?.login ?? '').trim();
+  // Return the RAW GitHub login — no whitespace trimming. Eligibility compares
+  // against an exact finite allowlist (ALLOWED_AUTOMERGE_AUTHORS), so a padded
+  // lookalike must fail, consistent with the witness guard and governance.
+  return String(pr?.user?.login ?? '');
 }
 
 function isSameRepositoryPr(pr) {
