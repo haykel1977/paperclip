@@ -155,6 +155,26 @@ test('isAutonomyWitnessPr: exact author+branch but wrong FILE SCOPE is NOT exemp
   }
 });
 
+test('isAutonomyWitnessPr: rename-source evasion is NOT exempt even when the destination path matches', () => {
+  for (const { branch, path } of [
+    { branch: 'autonomy-witness/123456', path: 'doc/autonomy-witness/123456.md' },
+    { branch: 'autonomy-witness-red/123456', path: 'doc/autonomy-witness-red/123456.md' },
+  ]) {
+    assert.equal(
+      isAutonomyWitnessPr('solidus-paperclip-delivery[bot]', branch, [{
+        filename: path,
+        previous_filename: '.github/workflows/pr.yml',
+        status: 'renamed',
+        additions: 6,
+        deletions: 0,
+        changes: 6,
+      }]),
+      false,
+      `must NOT exempt sacred rename into ${path}`
+    );
+  }
+});
+
 test('isAutonomyWitnessPr: missing/nullish inputs are not exempt (fail toward enforcing gates)', () => {
   const okFiles = witnessFiles('doc/autonomy-witness/1.md');
   assert.equal(isAutonomyWitnessPr(undefined, undefined, undefined), false);

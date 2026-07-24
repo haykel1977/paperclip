@@ -186,18 +186,36 @@ if [ -n "$pr_number" ]; then
 else
   # Create path: apply the risk:red label atomically as part of `gh pr create`,
   # so there is no window in which a fresh, unlabeled (green-shaped) witness PR
-  # exists before a separate label mutation. If the label ever fails to stick,
-  # the authoritative verification below closes the fresh PR and fails closed.
-  gh pr create --repo "$REPO" --base "$DEFAULT_BRANCH" --head "$BRANCH" \
+  # exists before a separate label mutation. Capture the create status explicitly:
+  # even under `set -e`, `gh pr create --label` can partially fail after the PR is
+  # already server-side discoverable. We therefore ALWAYS re-resolve
+  # authoritatively afterward; if a fresh same-repo PR exists despite a non-zero
+  # create status, close only that just-created PR and fail closed.
+  create_status=0
+  if gh pr create --repo "$REPO" --base "$DEFAULT_BRANCH" --head "$BRANCH" \
     --label "$RISK_RED_LABEL" \
     --title "docs(autonomy-witness-red): witness run ${RUN_ID}" \
     --body "Permanent operational witness infrastructure — RED lane. This docs-only PR was opened by an allowlisted autonomous App identity, using an App installation token (NOT the built-in GITHUB_TOKEN) so the required PR workflows actually run on the exact head. It is created already labelled ${RISK_RED_LABEL}, so the deterministic risk-lane classifier assigns RED and BOTH paperclip-checker contexts fail BY POLICY. It exists to prove the RED lane blocks correctly and NEVER auto-merges. It changes only doc/autonomy-witness-red/${RUN_ID}.md. Do NOT auto-merge, auto-approve, or remove the ${RISK_RED_LABEL} label. Cleanup: close this PR and delete branch ${BRANCH} after witnessing."
+  then
+    create_status=0
+  else
+    create_status=$?
+  fi
   pr_number="$(resolve_pr_number)"
   if [ -z "$pr_number" ]; then
+    if [ "$create_status" -ne 0 ]; then
+      echo "ERROR: gh pr create exited ${create_status} and no witness PR is discoverable afterward." >&2
+      exit "$create_status"
+    fi
     echo "ERROR: could not resolve the witness PR number after creation." >&2
     exit 1
   fi
   created=1
+  if [ "$create_status" -ne 0 ]; then
+    echo "ERROR: gh pr create exited ${create_status} but fresh witness PR #${pr_number} is now discoverable; closing it so no partial witness is left behind." >&2
+    gh pr close "$pr_number" --repo "$REPO" || true
+    exit "$create_status"
+  fi
   assert_expected_author
 fi
 

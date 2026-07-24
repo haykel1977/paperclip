@@ -45,8 +45,9 @@ const COMMENT_SIGNATURE = '— commitperclip';
 // Axis 3 — file scope: the PR diff must be EXACTLY one file, at the generated
 // witness doc path for that lane and run-id (`doc/autonomy-witness[-red]/<run_id>.md`
 // where <run_id> equals the branch's numeric suffix). Any additional file, any
-// non-doc change, or a mismatched run-id/path fails the exemption. File metadata
-// comes from the trusted PR files API, not from anything user-controlled.
+// non-doc change, a mismatched run-id/path, or any rename/copy source
+// (`previous_filename`) fails the exemption. File metadata comes from the trusted
+// PR files API, not from anything user-controlled.
 export const AUTONOMY_WITNESS_AUTHORS = new Set([
   'app/solidus-paperclip-delivery',
   'solidus-paperclip-delivery[bot]',
@@ -81,6 +82,10 @@ export function isAutonomyWitnessPr(author, branch, files) {
   const list = Array.isArray(files) ? files : [];
   if (list.length !== 1) return false;
   const filename = typeof list[0]?.filename === 'string' ? list[0].filename : '';
+  const previousFilename = typeof list[0]?.previous_filename === 'string'
+    ? list[0].previous_filename
+    : '';
+  if (previousFilename !== '') return false;
   return filename === expectedPath;
 }
 

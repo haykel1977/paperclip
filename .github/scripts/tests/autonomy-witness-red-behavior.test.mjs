@@ -66,7 +66,9 @@ function makeRepo() {
   //   pr list   → runs the script's owner-scoping jq against the fixture.
   //   pr create → records the call, records any atomic `--label` value (to BOTH
   //               the attempt log and the authoritative label STATE), and appends
-  //               an owner-scoped row so the post-create `pr list` resolves it.
+  //               an owner-scoped row so the post-create `pr list` resolves it,
+  //               then exits with GH_CREATE_EXIT_CODE (default 0) so tests can
+  //               model "PR exists, but gh pr create still returns non-zero".
   //   pr view   → `--json author` echoes GH_PR_AUTHOR; `--json labels` (with
   //               `--jq .labels[].name`) prints the current label STATE, one per
   //               line; otherwise echoes a URL.
@@ -140,7 +142,7 @@ if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "create" ]; then
     '. + [{number:\$n, headRepositoryOwner:{login:\$o}}]' "\$GH_PR_LIST_JSON" > "\$tmp"
   mv "\$tmp" "\$GH_PR_LIST_JSON"
   echo "https://example.test/pr/\${GH_CREATED_PR}"
-  exit 0
+  exit "\${GH_CREATE_EXIT_CODE:-0}"
 fi
 echo "unhandled gh: $*" >&2
 exit 1
@@ -158,6 +160,7 @@ function runWitness(repo, {
   prList = [],
   prAuthor = 'app/solidus-paperclip-delivery',
   createdPr = '1000',
+  createExitCode = 0,
   suppressLabel = false,
 } = {}) {
   writeFileSync(repo.listJson, JSON.stringify(prList));
@@ -182,6 +185,7 @@ function runWitness(repo, {
       GH_PR_AUTHOR: prAuthor,
       GH_STUB_OWNER: OWNER,
       GH_CREATED_PR: createdPr,
+      GH_CREATE_EXIT_CODE: String(createExitCode),
       GH_SUPPRESS_LABEL: suppressLabel ? '1' : '0',
     },
   });
@@ -375,6 +379,27 @@ test('fail closed: a REUSED wrong-identity PR is rejected but NOT closed (we did
     assert.match(r.stderr, /authored by 'github-actions\[bot\]'/);
     assert.deepEqual(appliedLabels(repo), [], 'no label may be applied to a reused wrong-identity PR');
     assert.deepEqual(closedPrs(repo), [], 'a pre-existing PR must never be closed by this script');
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('fail closed (Finding 1): gh pr create non-zero after creating a discoverable PR → fresh PR torn down', { skip }, () => {
+  // Models a partial `gh pr create --label` failure under `set -e`: the CLI
+  // returns non-zero even though the same-repo PR is now discoverable. The
+  // script must still resolve the fresh PR authoritatively, close it, and fail.
+  const repo = makeRepo();
+  try {
+    const r = runWitness(repo, {
+      prList: [],
+      prAuthor: 'solidus-paperclip-delivery[bot]',
+      createdPr: '1000',
+      createExitCode: 1,
+    });
+    assert.notEqual(r.status, 0, 'partial create failure must fail closed');
+    assert.match(r.stderr, /gh pr create exited 1 but fresh witness PR #1000 is now discoverable/,
+      'must explain the partial-create cleanup');
+    assert.deepEqual(closedPrs(repo), ['close 1000'], 'the fresh PR must be closed on partial create failure');
   } finally {
     rmSync(repo.root, { recursive: true, force: true });
   }
