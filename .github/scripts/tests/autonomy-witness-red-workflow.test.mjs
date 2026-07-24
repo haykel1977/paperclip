@@ -153,38 +153,41 @@ test('script: applies EXACTLY the risk:red label and nothing else', () => {
   // contexts fail by policy.
   assert.match(shCode, /RISK_RED_LABEL="risk:red"/, 'names the exact risk:red label');
   const addLabels = [...shCode.matchAll(/--add-label\s+("?[^"\s]+"?)/g)].map(m => m[1].replace(/"/g, ''));
-  assert.deepEqual(addLabels, [], 'reuse path must not mutate labels; create must be fully shaped already');
+  assert.deepEqual(addLabels, ['$RISK_RED_LABEL'], 'exactly one label request, for the exact risk:red label');
   assert.doesNotMatch(shCode, /--remove-label\b/, 'must not remove any label');
-  assert.doesNotMatch(shCode, /gh pr edit/, 'reuse path must not edit a pre-existing PR');
+  const editIdx = shCode.indexOf('gh pr edit "$pr_number" --repo "$REPO" --add-label "$RISK_RED_LABEL"');
+  const reuseIdx = shCode.indexOf('if [ -n "$pr_number" ]; then');
+  assert.ok(editIdx !== -1 && reuseIdx !== -1 && editIdx > reuseIdx,
+    'label request must exist only on the create path, never before reuse selection');
 });
 
-test('fix#1 atomic label: the PR is created WITH the risk:red label (gh pr create --label)', () => {
-  // The label must ride atomically with creation so there is never a window in
-  // which a fresh, unlabeled (green-shaped) witness PR exists.
-  assert.match(shCode, /gh pr create[\s\S]*?--label\s+"\$RISK_RED_LABEL"/,
-    'gh pr create must apply --label "$RISK_RED_LABEL" atomically');
+test('fix#1 create path: new witness PR is created as a DRAFT first', () => {
+  assert.match(shCode, /gh pr create[\s\S]*?--draft[\s\S]*?--base "\$DEFAULT_BRANCH"[\s\S]*?--head "\$BRANCH"/,
+    'create path must open a draft PR before validations run');
+  assert.doesNotMatch(shCode, /gh pr create[\s\S]*?--label\s+"\$RISK_RED_LABEL"/,
+    'create path must not attach the label atomically; label request happens after draft creation');
 });
 
 test('fix#1 fail-closed verification: re-reads authoritative labels and refuses success if absent', () => {
-  assert.match(shCode, /gh pr view "\$pr_number" --repo "\$REPO" --json labels --jq '\.labels\[\]\.name'/,
-    'must re-read the resolved PR labels authoritatively');
+  assert.match(shCode, /load_pr_json\(\) \{[\s\S]*?--json id,number,isDraft,baseRefName,headRefName,headRepositoryOwner,headRefOid,author,labels,files,url/,
+    'must fetch full PR shape authoritatively for validation');
   assert.match(shCode, /grep -qx "\$RISK_RED_LABEL"/, 'must check for the EXACT risk:red label');
-  assert.doesNotMatch(shCode, /gh pr view[^\n]*--json labels[^\n]*\|\s*grep/,
-    'label read must not pipe into grep (SIGPIPE-safe under pipefail); use a here-string');
-  // Use raw `sh`: the comment-stripper truncates this echo at its literal
-  // `#${pr_number}`, which would drop the phrase we key on.
-  assert.match(sh, /does not carry the required \$\{RISK_RED_LABEL\} label[\s\S]*?exit 1/,
+  assert.match(shCode, /assert_pr_shape "\$pr_json" "\$pr_id_resolved" "yes" "\$expected_head_oid"/,
+    'fresh draft must be fully validated before any ready transition');
+  assert.match(sh, /does not carry the required \$\{RISK_RED_LABEL\} label/,
     'must fail closed (exit 1) when the label is not authoritatively present');
 });
 
-test('fix#1 teardown: a freshly created PR is closed on fail-closed, only when WE created it', () => {
+test('fix#1 teardown: ambiguous create failure closes nothing, verified post-create failure closes only the known draft', () => {
   assert.match(shCode, /gh pr close "\$pr_number" --repo "\$REPO"/, 'must be able to close a fresh PR');
-  assert.match(shCode, /if \[ -z "\$created_pr_number" \]; then[\s\S]*?refusing cleanup/,
-    'cleanup must be forbidden when create emitted no trustworthy id');
-  assert.match(shCode, /if \[ "\$pr_base" = "\$DEFAULT_BRANCH" \] && \[ "\$pr_head" = "\$BRANCH" \] && \[ "\$pr_head_owner" = "\$OWNER" \]; then[\s\S]*?gh pr close "\$pr_number" --repo "\$REPO"/,
-    'close must be gated by authoritative revalidation of the emitted PR id');
-  assert.match(shCode, /pr_number="\$\(resolve_pr_number\)"[\s\S]*?else[\s\S]*?created_pr_number="\$\(extract_created_pr_number "\$create_output"\)"/,
-    'branch discovery must stay on the reuse path; create-failure cleanup must use only the create-emitted id');
+  assert.match(shCode, /if \[ "\$create_status" -ne 0 \]; then[\s\S]*?leaving any partial draft untouched and refusing further mutation/,
+    'ambiguous create failure must leave any partial draft untouched');
+  assert.match(shCode, /created_pr_number="\$\(extract_created_pr_number "\$create_output"\)"/,
+    'successful create path should rely on the exact emitted PR number');
+  assert.match(shCode, /trap 'close_created_pr_if_revalidated "\$pr_id_resolved" "\$expected_head_oid"' ERR/,
+    'post-create cleanup must be gated by exact created PR identity and head revalidation');
+  assert.match(shCode, /if \[ "\$pr_id" = "\$expected_id" \] && \[ "\$pr_base" = "\$DEFAULT_BRANCH" \] && \[ "\$pr_head" = "\$BRANCH" \] && \[ "\$pr_head_owner" = "\$OWNER" \] && \[ "\$pr_head_oid" = "\$expected_head_oid" \]; then[\s\S]*?gh pr close "\$pr_number" --repo "\$REPO"/,
+    'close must be gated by authoritative revalidation of id/base/head/owner/head sha');
   assert.doesNotMatch(shCode, /gh pr close[\s\S]*?--delete-branch/, 'teardown closes the PR; it does not delete refs');
 });
 
@@ -207,19 +210,21 @@ test('script: references no secrets, PAT, or App-key minting (token is injected 
 test('script: fails closed unless the PR is authored by the allowlisted App identity', () => {
   assert.match(shCode, /EXPECTED_AUTHOR_GRAPHQL="app\/solidus-paperclip-delivery"/, 'names the GraphQL-form identity');
   assert.match(shCode, /EXPECTED_AUTHOR_REST="solidus-paperclip-delivery\[bot\]"/, 'names the REST-form identity');
-  assert.match(shCode, /gh pr view "\$pr_number" --repo "\$REPO" --json author --jq \.author\.login/,
+  assert.match(shCode, /pr_author="\$\(jq -r '\.author\.login \/\/ empty' <<<"\$pr_json"\)"/,
     'must read the resolved PR author');
-  assert.match(shCode, /if \[ "\$author" != "\$EXPECTED_AUTHOR_GRAPHQL" \] && \[ "\$author" != "\$EXPECTED_AUTHOR_REST" \]; then[\s\S]*?exit 1/,
+  assert.match(shCode, /if \[ "\$pr_author" != "\$EXPECTED_AUTHOR_GRAPHQL" \] && \[ "\$pr_author" != "\$EXPECTED_AUTHOR_REST" \]; then[\s\S]*?return 1/,
     'must exit non-zero (fail closed) unless the author is one of the two exact expected forms');
 });
 
 test('reuse path: revalidates the complete witness shape before success', () => {
-  assert.match(shCode, /--json baseRefName,headRefName,headRepositoryOwner,author,labels,files/,
+  assert.match(shCode, /--json id,number,isDraft,baseRefName,headRefName,headRepositoryOwner,headRefOid,author,labels,files,url/,
     'reuse path must fetch full PR shape authoritatively');
   assert.match(shCode, /if \[ "\$pr_base" != "\$DEFAULT_BRANCH" \]; then[\s\S]*?exit 1/,
     'reuse path must pin the base branch');
   assert.match(shCode, /if \[ "\$pr_head" != "\$BRANCH" \]; then[\s\S]*?exit 1/,
     'reuse path must pin the head branch');
+  assert.match(shCode, /if \[ -n "\$reused_head_sha" \]; then[\s\S]*?current_head_sha="\$\(git rev-parse HEAD\)"/,
+    'reuse path must compare the remote branch head before any mutation');
   assert.match(shCode, /if \[ "\$files_count" -ne 1 \]; then[\s\S]*?exit 1/,
     'reuse path must require exactly one changed file');
   assert.match(shCode, /if \[ "\$file_path" != "\$DOC_PATH" \]; then[\s\S]*?exit 1/,
@@ -231,6 +236,10 @@ test('reuse path: revalidates the complete witness shape before success', () => 
 });
 
 test('fix#1 idempotency: resumes existing run-id branch, no-op commit guard, FF push (no --force)', () => {
+  const resolveIdx = shCode.indexOf('pr_number="$(resolve_pr_number)"');
+  const mkdirIdx = shCode.indexOf('mkdir -p "$DOC_DIR"');
+  assert.ok(resolveIdx !== -1 && mkdirIdx !== -1 && resolveIdx < mkdirIdx,
+    'existing same-branch PR must be resolved before writing docs');
   assert.match(shCode, /git ls-remote --exit-code --heads origin "refs\/heads\/\$\{BRANCH\}"/,
     'must probe for the existing run-id branch');
   assert.match(shCode, /git checkout -B "\$BRANCH" "refs\/remotes\/origin\/\$\{BRANCH\}"/,
@@ -251,6 +260,13 @@ test('coherent provenance: the branch is pushed with the App token, not the ambi
   const pushIdx = shCode.indexOf('git push origin');
   assert.ok(setupIdx !== -1 && pushIdx !== -1 && setupIdx < pushIdx,
     'gh auth setup-git must run before git push');
+});
+
+test('ready transition: only after full validation, and only for drafts', () => {
+  assert.match(shCode, /if \[ "\$pr_is_draft_resolved" = "true" \]; then[\s\S]*?gh pr ready "\$pr_number" --repo "\$REPO"/,
+    'only draft PRs may be marked ready');
+  assert.match(shCode, /gh pr edit "\$pr_number" --repo "\$REPO" --add-label "\$RISK_RED_LABEL"[\s\S]*?assert_pr_shape "\$pr_json" "\$pr_id_resolved" "yes" "\$expected_head_oid"[\s\S]*?mark_ready_if_still_draft/,
+    'ready transition must occur only after full draft validation passes');
 });
 
 test('fix#2 SIGPIPE: PR lookup selects first owner match inside jq, no early-terminating pipe', () => {

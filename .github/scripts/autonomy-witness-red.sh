@@ -5,7 +5,7 @@
 # Invoked only by .github/workflows/autonomy-witness-red.yml (manual dispatch).
 # It is the deterministic-RED counterpart to autonomy-witness.sh: it opens a
 # docs-only pull request authored by the SAME allowlisted autonomous App identity
-# and then applies the exact `risk:red` label, so the deterministic risk-lane
+# and then requests the exact `risk:red` label, so the deterministic risk-lane
 # classifier assigns RED and BOTH paperclip-checker contexts fail BY POLICY. Its
 # purpose is to prove the RED lane blocks correctly and NEVER auto-merges — it is
 # a genuine negative witness, not a green one. Every bound here is asserted by:
@@ -22,8 +22,9 @@
 # normal PR workflows fire on the exact head.
 #
 # It NEVER merges, NEVER approves, NEVER enables auto-merge, and NEVER changes
-# settings. The RED lane is expected to leave the required checker contexts red;
-# that is the witnessed outcome, not a failure of this script.
+# settings. New RED witness PRs are created as DRAFT first so they remain inert
+# while identity/label/diff validations run. Only after all invariants pass will
+# a valid draft be marked ready.
 #
 # Required env (all trusted GitHub-provided values; there are NO workflow inputs,
 # so nothing user-supplied can reach a ref, path, or command):
@@ -71,6 +72,7 @@ BRANCH="autonomy-witness-red/${RUN_ID}"
 DOC_DIR="doc/autonomy-witness-red"
 DOC_PATH="${DOC_DIR}/${RUN_ID}.md"
 OWNER="${REPO%%/*}"
+created=0
 
 # Commit identity for the docs commit. The PR *author* — the identity the
 # autonomy allowlist and paperclip-checker actually evaluate — is instead set by
@@ -84,6 +86,169 @@ git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 # push the branch and open the PR, so authorship/event provenance is coherent.
 gh auth setup-git
 
+# Re-run safe AND SIGPIPE-safe: select the first open PR for this branch that is
+# owned by THIS repo (never a same-named fork branch) entirely inside jq. There
+# is no `head`/early-terminating consumer, so `gh pr list` cannot take SIGPIPE
+# under `set -o pipefail`.
+resolve_pr_number() {
+  gh pr list --repo "$REPO" --state open --head "$BRANCH" \
+    --json number,headRepositoryOwner \
+    --jq "[.[] | select(.headRepositoryOwner.login == \"${OWNER}\") | .number] | first // empty"
+}
+
+extract_created_pr_number() {
+  local create_output="$1"
+  local pr_number
+  pr_number="$(printf '%s\n' "$create_output" | sed -n 's#^.*/pull/\([0-9][0-9]*\)$#\1#p' | tail -n 1)"
+  if [[ "$pr_number" =~ ^[0-9]+$ ]]; then
+    printf '%s' "$pr_number"
+  fi
+}
+
+load_pr_json() {
+  gh pr view "$1" --repo "$REPO" \
+    --json id,number,isDraft,baseRefName,headRefName,headRepositoryOwner,headRefOid,author,labels,files,url
+}
+
+close_created_pr_if_revalidated() {
+  local expected_id="$1"
+  local expected_head_oid="$2"
+  local pr_json pr_id pr_base pr_head pr_head_owner pr_head_oid
+
+  if [ "${created:-0}" != "1" ]; then
+    return 0
+  fi
+
+  pr_json="$(load_pr_json "$pr_number" 2>/dev/null || true)"
+  pr_id="$(jq -r '.id // empty' <<<"$pr_json")"
+  pr_base="$(jq -r '.baseRefName // empty' <<<"$pr_json")"
+  pr_head="$(jq -r '.headRefName // empty' <<<"$pr_json")"
+  pr_head_owner="$(jq -r '.headRepositoryOwner.login // empty' <<<"$pr_json")"
+  pr_head_oid="$(jq -r '.headRefOid // empty' <<<"$pr_json")"
+
+  if [ "$pr_id" = "$expected_id" ] && [ "$pr_base" = "$DEFAULT_BRANCH" ] && [ "$pr_head" = "$BRANCH" ] && [ "$pr_head_owner" = "$OWNER" ] && [ "$pr_head_oid" = "$expected_head_oid" ]; then
+    echo "Closing freshly created draft PR #${pr_number} after fail-closed verification." >&2
+    gh pr close "$pr_number" --repo "$REPO" || true
+    return 0
+  fi
+
+  echo "ERROR: freshly created draft PR #${pr_number} failed verification, but revalidation was insufficient for automatic close; leaving the draft untouched." >&2
+}
+
+assert_pr_core() {
+  local pr_json="$1"
+  local expected_id="${2:-}"
+  local require_draft="${3:-either}"
+  local expected_head_oid="${4:-}"
+  local pr_id pr_base pr_head pr_head_owner pr_is_draft pr_head_oid
+
+  pr_id="$(jq -r '.id // empty' <<<"$pr_json")"
+  pr_base="$(jq -r '.baseRefName // empty' <<<"$pr_json")"
+  pr_head="$(jq -r '.headRefName // empty' <<<"$pr_json")"
+  pr_head_owner="$(jq -r '.headRepositoryOwner.login // empty' <<<"$pr_json")"
+  pr_head_oid="$(jq -r '.headRefOid // empty' <<<"$pr_json")"
+  pr_is_draft="$(jq -r '.isDraft // false' <<<"$pr_json")"
+
+  if [ -n "$expected_id" ] && [ "$pr_id" != "$expected_id" ]; then
+    echo "ERROR: witness PR #${pr_number} has id '${pr_id}', expected '${expected_id}'." >&2
+    return 1
+  fi
+  if [ -z "$pr_id" ]; then
+    echo "ERROR: witness PR #${pr_number} did not expose a stable id." >&2
+    return 1
+  fi
+  if [ "$pr_base" != "$DEFAULT_BRANCH" ]; then
+    echo "ERROR: witness PR #${pr_number} targets base '${pr_base}', expected '${DEFAULT_BRANCH}'." >&2
+    return 1
+  fi
+  if [ "$pr_head" != "$BRANCH" ]; then
+    echo "ERROR: witness PR #${pr_number} targets head '${pr_head}', expected '${BRANCH}'." >&2
+    return 1
+  fi
+  if [ "$pr_head_owner" != "$OWNER" ]; then
+    echo "ERROR: witness PR #${pr_number} is owned by '${pr_head_owner}', expected '${OWNER}'." >&2
+    return 1
+  fi
+  if [ -n "$expected_head_oid" ] && [ "$pr_head_oid" != "$expected_head_oid" ]; then
+    echo "ERROR: witness PR #${pr_number} points at head '${pr_head_oid}', expected '${expected_head_oid}'." >&2
+    return 1
+  fi
+  if [ "$require_draft" = "yes" ] && [ "$pr_is_draft" != "true" ]; then
+    echo "ERROR: witness PR #${pr_number} must still be draft while validations run." >&2
+    return 1
+  fi
+  if [ "$require_draft" = "no" ] && [ "$pr_is_draft" != "false" ]; then
+    echo "ERROR: witness PR #${pr_number} should already be ready." >&2
+    return 1
+  fi
+
+  pr_id_resolved="$pr_id"
+  pr_is_draft_resolved="$pr_is_draft"
+  return 0
+}
+
+assert_pr_shape() {
+  local pr_json="$1"
+  local expected_id="${2:-}"
+  local require_draft="${3:-either}"
+  local expected_head_oid="${4:-}"
+  local pr_author labels files_count file_path file_previous_filename
+
+  assert_pr_core "$pr_json" "$expected_id" "$require_draft" "$expected_head_oid"
+
+  pr_author="$(jq -r '.author.login // empty' <<<"$pr_json")"
+  labels="$(jq -r '.labels[].name? // empty' <<<"$pr_json")"
+  files_count="$(jq -r '(.files // []) | length' <<<"$pr_json")"
+  file_path="$(jq -r '.files[0].path // empty' <<<"$pr_json")"
+  file_previous_filename="$(jq -r '.files[0].previous_filename // empty' <<<"$pr_json")"
+
+  if [ "$pr_author" != "$EXPECTED_AUTHOR_GRAPHQL" ] && [ "$pr_author" != "$EXPECTED_AUTHOR_REST" ]; then
+    echo "ERROR: witness PR #${pr_number} is authored by '${pr_author}', not the allowlisted App identity ('${EXPECTED_AUTHOR_GRAPHQL}' or '${EXPECTED_AUTHOR_REST}'). In particular github-actions[bot] is produced only by the built-in GITHUB_TOKEN, whose pull_request workflows are suppressed so the required checks never run. Open the witness with a minted solidus-paperclip-delivery App installation token instead." >&2
+    return 1
+  fi
+  if [ "$files_count" -ne 1 ]; then
+    echo "ERROR: witness PR #${pr_number} changes ${files_count} files; expected exactly 1 (${DOC_PATH})." >&2
+    return 1
+  fi
+  if [ "$file_path" != "$DOC_PATH" ]; then
+    echo "ERROR: witness PR #${pr_number} changes '${file_path}', expected '${DOC_PATH}'." >&2
+    return 1
+  fi
+  if [ -n "$file_previous_filename" ]; then
+    echo "ERROR: witness PR #${pr_number} includes rename source '${file_previous_filename}', so it is not a pure witness doc change." >&2
+    return 1
+  fi
+  if ! grep -qx "$RISK_RED_LABEL" <<<"$labels"; then
+    echo "ERROR: witness PR #${pr_number} does not carry the required ${RISK_RED_LABEL} label; refusing to report success." >&2
+    return 1
+  fi
+
+  author="$pr_author"
+  return 0
+}
+
+mark_ready_if_still_draft() {
+  if [ "$pr_is_draft_resolved" = "true" ]; then
+    gh pr ready "$pr_number" --repo "$REPO"
+    pr_json="$(load_pr_json "$pr_number")"
+    assert_pr_shape "$pr_json" "$pr_id_resolved" "no" "$expected_head_oid"
+  fi
+}
+
+pr_number="$(resolve_pr_number)"
+
+if [ -n "$pr_number" ]; then
+  # Reuse path: validate the complete witness shape BEFORE writing docs,
+  # committing, or pushing. Invalid reuse leaves the branch and PR untouched.
+  echo "Reusing existing witness PR #${pr_number}"
+  pr_json="$(load_pr_json "$pr_number")"
+  assert_pr_shape "$pr_json" "" "either" ""
+  expected_head_oid="$(jq -r '.headRefOid // empty' <<<"$pr_json")"
+  reused_head_sha="$expected_head_oid"
+else
+  reused_head_sha=""
+fi
+
 # Re-run safe: if the run-id branch already exists on origin, continue FROM it so
 # an unchanged re-run is a genuine no-op. Only ever the fixed run-id branch is
 # fetched (a literal refspec, never an arbitrary ref). Otherwise start from the
@@ -93,6 +258,14 @@ if git ls-remote --exit-code --heads origin "refs/heads/${BRANCH}" >/dev/null 2>
   git checkout -B "$BRANCH" "refs/remotes/origin/${BRANCH}"
 else
   git checkout -B "$BRANCH"
+fi
+
+if [ -n "$reused_head_sha" ]; then
+  current_head_sha="$(git rev-parse HEAD)"
+  if [ "$current_head_sha" != "$reused_head_sha" ]; then
+    echo "ERROR: reused witness PR #${pr_number} points at '${reused_head_sha}', but branch '${BRANCH}' currently resolves to '${current_head_sha}' before any mutation." >&2
+    exit 1
+  fi
 fi
 
 mkdir -p "$DOC_DIR"
@@ -125,186 +298,52 @@ else
   git commit -m "docs(autonomy-witness-red): witness run ${RUN_ID}"
 fi
 
+expected_head_oid="$(git rev-parse HEAD)"
+
 # Fast-forward push: the branch is either brand new or advanced from its own tip,
 # so no force is needed — a divergent remote is surfaced rather than clobbered.
 git push origin "$BRANCH"
 
-# Re-run safe AND SIGPIPE-safe: select the first open PR for this branch that is
-# owned by THIS repo (never a same-named fork branch) entirely inside jq. There
-# is no `head`/early-terminating consumer, so `gh pr list` cannot take SIGPIPE
-# under `set -o pipefail`.
-resolve_pr_number() {
-  gh pr list --repo "$REPO" --state open --head "$BRANCH" \
-    --json number,headRepositoryOwner \
-    --jq "[.[] | select(.headRepositoryOwner.login == \"${OWNER}\") | .number] | first // empty"
-}
-
-# Parse the trustworthy PR number emitted by THIS exact `gh pr create`
-# invocation. This is intentionally stricter than branch discovery: if create
-# fails non-zero and we do not have a number the create command itself emitted,
-# we fail closed and close nothing. Branch-shaped PRs that appear later must not
-# be treated as ours.
-extract_created_pr_number() {
-  local create_output="$1"
-  local pr_number
-  pr_number="$(printf '%s\n' "$create_output" | sed -n 's#^.*/pull/\([0-9][0-9]*\)$#\1#p' | tail -n 1)"
-  if [[ "$pr_number" =~ ^[0-9]+$ ]]; then
-    printf '%s' "$pr_number"
-  fi
-}
-
-assert_reused_pr_shape() {
-  local pr_json pr_base pr_head pr_author pr_head_owner
-  local labels files_count file_path file_previous_filename
-
-  pr_json="$(gh pr view "$pr_number" --repo "$REPO" \
-    --json baseRefName,headRefName,headRepositoryOwner,author,labels,files)"
-  pr_base="$(jq -r '.baseRefName // empty' <<<"$pr_json")"
-  pr_head="$(jq -r '.headRefName // empty' <<<"$pr_json")"
-  pr_head_owner="$(jq -r '.headRepositoryOwner.login // empty' <<<"$pr_json")"
-  pr_author="$(jq -r '.author.login // empty' <<<"$pr_json")"
-  labels="$(jq -r '.labels[].name? // empty' <<<"$pr_json")"
-  files_count="$(jq -r '(.files // []) | length' <<<"$pr_json")"
-  file_path="$(jq -r '.files[0].path // empty' <<<"$pr_json")"
-  file_previous_filename="$(jq -r '.files[0].previous_filename // empty' <<<"$pr_json")"
-
-  if [ "$pr_base" != "$DEFAULT_BRANCH" ]; then
-    echo "ERROR: reused witness PR #${pr_number} targets base '${pr_base}', expected '${DEFAULT_BRANCH}'." >&2
-    exit 1
-  fi
-  if [ "$pr_head" != "$BRANCH" ]; then
-    echo "ERROR: reused witness PR #${pr_number} targets head '${pr_head}', expected '${BRANCH}'." >&2
-    exit 1
-  fi
-  if [ "$pr_head_owner" != "$OWNER" ]; then
-    echo "ERROR: reused witness PR #${pr_number} is owned by '${pr_head_owner}', expected '${OWNER}'." >&2
-    exit 1
-  fi
-  if [ "$pr_author" != "$EXPECTED_AUTHOR_GRAPHQL" ] && [ "$pr_author" != "$EXPECTED_AUTHOR_REST" ]; then
-    echo "ERROR: witness PR #${pr_number} is authored by '${pr_author}', not the allowlisted App identity ('${EXPECTED_AUTHOR_GRAPHQL}' or '${EXPECTED_AUTHOR_REST}'). In particular github-actions[bot] is produced only by the built-in GITHUB_TOKEN, whose pull_request workflows are suppressed so the required checks never run. Open the witness with a minted solidus-paperclip-delivery App installation token instead." >&2
-    exit 1
-  fi
-  if [ "$files_count" -ne 1 ]; then
-    echo "ERROR: reused witness PR #${pr_number} changes ${files_count} files; expected exactly 1 (${DOC_PATH})." >&2
-    exit 1
-  fi
-  if [ "$file_path" != "$DOC_PATH" ]; then
-    echo "ERROR: reused witness PR #${pr_number} changes '${file_path}', expected '${DOC_PATH}'." >&2
-    exit 1
-  fi
-  if [ -n "$file_previous_filename" ]; then
-    echo "ERROR: reused witness PR #${pr_number} includes rename source '${file_previous_filename}', so it is not a pure witness doc change." >&2
-    exit 1
-  fi
-  if ! grep -qx "$RISK_RED_LABEL" <<<"$labels"; then
-    echo "ERROR: witness PR #${pr_number} does not carry the required ${RISK_RED_LABEL} label; refusing to report success." >&2
-    exit 1
-  fi
-
-  author="$pr_author"
-}
-
-# Fail closed unless the resolved PR is authored by the expected allowlisted App
-# identity. A positive allowlist rejects not only the github-actions[bot]
-# event-suppression signature (built-in GITHUB_TOKEN → suppressed pull_request
-# workflows → no required checks) but also any misconfigured App or wrong
-# installation.
-assert_expected_author() {
-  author="$(gh pr view "$pr_number" --repo "$REPO" --json author --jq .author.login)"
-  if [ "$author" != "$EXPECTED_AUTHOR_GRAPHQL" ] && [ "$author" != "$EXPECTED_AUTHOR_REST" ]; then
-    echo "ERROR: witness PR #${pr_number} is authored by '${author}', not the allowlisted App identity ('${EXPECTED_AUTHOR_GRAPHQL}' or '${EXPECTED_AUTHOR_REST}'). In particular github-actions[bot] is produced only by the built-in GITHUB_TOKEN, whose pull_request workflows are suppressed so the required checks never run. Open the witness with a minted solidus-paperclip-delivery App installation token instead." >&2
-    # If WE just created this PR under the wrong identity, tear it down so no
-    # witness of any colour is left behind. A reused (pre-existing) PR is left
-    # untouched — closing someone else's PR would overstep this bounded script.
-    if [ "${created:-0}" = "1" ]; then
-      echo "Closing freshly created PR #${pr_number} (wrong identity) so no witness is left behind." >&2
-      gh pr close "$pr_number" --repo "$REPO" || true
-    fi
-    exit 1
-  fi
-}
-
-# Authoritative, fail-closed check that the resolved PR actually carries the
-# EXACT risk:red label. This is the safety net for Finding 1: `gh pr create
-# --label` applies the label as a post-creation API call, so a partial failure
-# could otherwise leave a freshly created, UNLABELED (green-shaped) witness PR.
-# Re-reading the resolved labels here means the script can only report success
-# when the RED lane label is genuinely present.
-red_label_present() {
-  local labels
-  labels="$(gh pr view "$pr_number" --repo "$REPO" --json labels --jq '.labels[].name')"
-  # here-string (no pipe) so an early-exiting `grep -q` can never SIGPIPE a
-  # writer under `set -o pipefail` and spuriously report the label as absent.
-  grep -qx "$RISK_RED_LABEL" <<<"$labels"
-}
-
-pr_number="$(resolve_pr_number)"
-
 if [ -n "$pr_number" ]; then
-  # Reuse path: revalidate the COMPLETE witness shape before any mutation or
-  # success. A reused PR that violates any invariant is fail-closed and left
-  # untouched.
-  echo "Reusing existing witness PR #${pr_number}"
-  created=0
-  assert_reused_pr_shape
+  pr_json="$(load_pr_json "$pr_number")"
+  assert_pr_shape "$pr_json" "" "either" "$expected_head_oid"
+  mark_ready_if_still_draft
 else
-  # Create path: apply the risk:red label atomically as part of `gh pr create`,
-  # so there is no window in which a fresh, unlabeled (green-shaped) witness PR
-  # exists before a separate label mutation. Capture the create status explicitly:
-  # even under `set -e`, `gh pr create --label` can partially fail after the PR is
-  # already server-side discoverable. Cleanup is allowed ONLY when this exact
-  # create invocation emitted a trustworthy PR number and that number still
-  # resolves to the expected same-repo head/base pair.
-  create_status=0
+  # Create path: always create as a DRAFT first. On a non-zero create result we
+  # close nothing and infer nothing — any partial draft remains inert.
   create_output=""
+  create_status=0
   created_pr_number=""
   set +e
-  create_output="$(gh pr create --repo "$REPO" --base "$DEFAULT_BRANCH" --head "$BRANCH" \
-    --label "$RISK_RED_LABEL" \
+  create_output="$(gh pr create --repo "$REPO" --draft --base "$DEFAULT_BRANCH" --head "$BRANCH" \
     --title "docs(autonomy-witness-red): witness run ${RUN_ID}" \
-    --body "Permanent operational witness infrastructure — RED lane. This docs-only PR was opened by an allowlisted autonomous App identity, using an App installation token (NOT the built-in GITHUB_TOKEN) so the required PR workflows actually run on the exact head. It is created already labelled ${RISK_RED_LABEL}, so the deterministic risk-lane classifier assigns RED and BOTH paperclip-checker contexts fail BY POLICY. It exists to prove the RED lane blocks correctly and NEVER auto-merges. It changes only doc/autonomy-witness-red/${RUN_ID}.md. Do NOT auto-merge, auto-approve, or remove the ${RISK_RED_LABEL} label. Cleanup: close this PR and delete branch ${BRANCH} after witnessing." 2>&1)"
+    --body "Permanent operational witness infrastructure — RED lane. This docs-only PR was opened by an allowlisted autonomous App identity, using an App installation token (NOT the built-in GITHUB_TOKEN) so the required PR workflows actually run on the exact head. It is created as a draft first, then validated for exact author/base/head/doc-path/rename/label invariants before ever being marked ready. It changes only doc/autonomy-witness-red/${RUN_ID}.md. Do NOT auto-merge, auto-approve, or change repository settings. Cleanup: close this PR and delete branch ${BRANCH} after witnessing." 2>&1)"
   create_status=$?
   set -e
-  created_pr_number="$(extract_created_pr_number "$create_output")"
   if [ "$create_status" -ne 0 ]; then
-    if [ -z "$created_pr_number" ]; then
-      echo "ERROR: gh pr create exited ${create_status} without emitting a trustworthy PR identifier; refusing cleanup." >&2
-      exit "$create_status"
+    if [ -n "$create_output" ]; then
+      printf '%s\n' "$create_output" >&2
     fi
-    pr_number="$created_pr_number"
-    created=1
-    pr_json="$(gh pr view "$pr_number" --repo "$REPO" --json baseRefName,headRefName,headRepositoryOwner 2>/dev/null || true)"
-    pr_base="$(jq -r '.baseRefName // empty' <<<"$pr_json")"
-    pr_head="$(jq -r '.headRefName // empty' <<<"$pr_json")"
-    pr_head_owner="$(jq -r '.headRepositoryOwner.login // empty' <<<"$pr_json")"
-    if [ "$pr_base" = "$DEFAULT_BRANCH" ] && [ "$pr_head" = "$BRANCH" ] && [ "$pr_head_owner" = "$OWNER" ]; then
-      echo "ERROR: gh pr create exited ${create_status} after emitting trustworthy PR #${pr_number}; closing that fresh PR and failing closed." >&2
-      gh pr close "$pr_number" --repo "$REPO" || true
-      exit "$create_status"
-    fi
-    echo "ERROR: gh pr create exited ${create_status}, but emitted PR #${pr_number} did not revalidate as this invocation's same-repo witness PR; refusing cleanup." >&2
+    echo "ERROR: gh pr create exited ${create_status}; leaving any partial draft untouched and refusing further mutation." >&2
     exit "$create_status"
   fi
-  pr_number="$created_pr_number"
-  if [ -z "$pr_number" ]; then
-    echo "ERROR: could not resolve the witness PR number after creation." >&2
+
+  created_pr_number="$(extract_created_pr_number "$create_output")"
+  if [ -z "$created_pr_number" ]; then
+    echo "ERROR: successful gh pr create did not return a trustworthy PR identifier; leaving the draft untouched." >&2
     exit 1
   fi
-  created=1
-  assert_expected_author
-fi
 
-# Fail closed unless the RED lane label is authoritatively present. If a PR we
-# just created is missing it, that PR is an accidental green-shaped witness:
-# close it so nothing green is left behind, then exit non-zero. A reused PR is
-# left as-is (we did not create it) but success is still refused.
-if ! red_label_present; then
-  if [ "${created:-0}" = "1" ]; then
-    echo "ERROR: freshly created witness PR #${pr_number} is missing the ${RISK_RED_LABEL} label; closing it so no green-shaped witness is left behind." >&2
-    gh pr close "$pr_number" --repo "$REPO" || true
-  fi
-  echo "ERROR: witness PR #${pr_number} does not carry the required ${RISK_RED_LABEL} label; refusing to report success." >&2
-  exit 1
+  pr_number="$created_pr_number"
+  created=1
+  pr_json="$(load_pr_json "$pr_number")"
+  assert_pr_core "$pr_json" "" "yes" "$expected_head_oid"
+  trap 'close_created_pr_if_revalidated "$pr_id_resolved" "$expected_head_oid"' ERR
+  gh pr edit "$pr_number" --repo "$REPO" --add-label "$RISK_RED_LABEL"
+  pr_json="$(load_pr_json "$pr_number")"
+  assert_pr_shape "$pr_json" "$pr_id_resolved" "yes" "$expected_head_oid"
+  trap - ERR
+  mark_ready_if_still_draft
 fi
 
 echo "Witness PR #${pr_number} authored by ${author} (App/bot identity); labelled ${RISK_RED_LABEL} → RED lane, both checker contexts fail by policy, auto-merge never enabled."
