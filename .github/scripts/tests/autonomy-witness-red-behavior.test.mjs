@@ -61,7 +61,7 @@ function stubPr({
   author = 'app/solidus-paperclip-delivery',
   isDraft = false,
   labels = ['risk:red'],
-  files = [{ path: DOC_PATH }],
+  files = [{ filename: DOC_PATH }],
   url = `https://example.test/pull/${number}`,
 } = {}) {
   return {
@@ -188,22 +188,41 @@ save_state() {
   mv "\$tmp" "\$GH_PR_STATE_JSON"
 }
 
+find_api_path() {
+  local args=("\$@") i
+  for ((i=0;i<\${#args[@]};i++)); do
+    if [[ "\${args[\$i]}" == /repos/* ]]; then
+      printf '%s' "\${args[\$i]}"
+      return 0
+    fi
+  done
+  return 1
+}
+
 upsert_list_row() {
   local number="\$1"
   local owner="\$2"
   local tmp
   tmp="\$(mktemp)"
   jq --argjson n "\$number" --arg o "\$owner" '
-    (map(select(.number != \$n))) + [{number:\$n, headRepositoryOwner:{login:\$o}}]
+    (map(select(.number != \$n))) + [{number:\$n, state:"OPEN", headRepositoryOwner:{login:\$o}}]
   ' "\$GH_PR_LIST_JSON" > "\$tmp"
   mv "\$tmp" "\$GH_PR_LIST_JSON"
 }
 
-remove_list_row() {
+close_list_row() {
   local number="\$1"
   local tmp
   tmp="\$(mktemp)"
-  jq --argjson n "\$number" 'map(select(.number != \$n))' "\$GH_PR_LIST_JSON" > "\$tmp"
+  jq --argjson n "\$number" '
+    map(
+      if .number == \$n then
+        .state = "CLOSED"
+      else
+        .
+      end
+    )
+  ' "\$GH_PR_LIST_JSON" > "\$tmp"
   mv "\$tmp" "\$GH_PR_LIST_JSON"
 }
 
@@ -222,6 +241,15 @@ if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "view" ]; then
     printf '%s\n' "\$pr_json"
   fi
   exit 0
+fi
+
+if [ "\${1:-}" = "api" ]; then
+  path="\$(find_api_path "\$@")"
+  if [[ "\$path" =~ ^/repos/.+/pulls/([0-9]+)/files\\?per_page=100$ ]]; then
+    num="\${BASH_REMATCH[1]}"
+    jq -c --argjson n "\$num" '.[$n|tostring].files // []' "\$GH_PR_STATE_JSON"
+    exit 0
+  fi
 fi
 
 if [ "\${1:-}" = "auth" ]; then
@@ -259,7 +287,7 @@ fi
 if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "close" ]; then
   num="\$(find_pr_number "\$@")"
   record_line "\$GH_CLOSE_LOG" "close \$num"
-  remove_list_row "\$num"
+  close_list_row "\$num"
   exit 0
 fi
 
@@ -291,7 +319,7 @@ if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "create" ]; then
              headRefOid: \$oid,
              author: { login: \$author },
              labels: [],
-             files: [{ path: \$doc }],
+             files: [{ filename: \$doc }],
              url: ("https://example.test/pull/" + (\$n|tostring))
            }
          }
@@ -333,7 +361,7 @@ function runWitness(repo, {
   suppressLabel = false,
   readyExitCode = 0,
 } = {}) {
-  writeJson(repo.listJson, prList);
+  writeJson(repo.listJson, prList.map(pr => ({ state: 'OPEN', ...pr })));
   writeJson(repo.stateJson, prViews);
   const wd = mkdtempSync(join(repo.root, 'wd-'));
   run('git', ['clone', repo.origin, wd]); // checks out main (origin HEAD)
@@ -372,6 +400,12 @@ function runWitness(repo, {
       GH_READY_EXIT_CODE: String(readyExitCode),
     },
   });
+  return r;
+}
+
+function seedWitness(repo, opts = {}) {
+  const r = runWitness(repo, { prList: [], ...opts });
+  assert.equal(r.status, 0, `seed run failed: ${r.stderr}`);
   return r;
 }
 
@@ -439,7 +473,7 @@ test('branch absent: creates run-id branch, one docs commit, opens a DRAFT PR, a
 test('idempotency: identical re-run makes no new commit, reuses PR, and already-ready PR stays ready', { skip }, () => {
   const repo = makeRepo();
   try {
-    runWitness(repo, { prList: [] });
+    seedWitness(repo);
     const shaAfterFirst = remoteBranchSha(repo);
     const commitsAfterFirst = commitCountOnBranch(repo);
     resetActionLogs(repo);
@@ -467,7 +501,7 @@ test('idempotency: identical re-run makes no new commit, reuses PR, and already-
 test('reuse path: valid draft is only marked ready after complete validation', { skip }, () => {
   const repo = makeRepo();
   try {
-    runWitness(repo, { prList: [] });
+    seedWitness(repo);
     const beforeSha = remoteBranchSha(repo);
     resetActionLogs(repo);
     const r = runWitness(repo, {
@@ -489,7 +523,7 @@ test('reuse path: valid draft is only marked ready after complete validation', {
 test('changed content: branch exists but generated file differs → exactly one new commit', { skip }, () => {
   const repo = makeRepo();
   try {
-    runWitness(repo, { headSha: SHA_A, prList: [] });
+    seedWitness(repo, { headSha: SHA_A });
     const commitsAfterFirst = commitCountOnBranch(repo);
     const shaAfterFirst = remoteBranchSha(repo);
     resetActionLogs(repo);
@@ -513,25 +547,29 @@ test('changed content: branch exists but generated file differs → exactly one 
   }
 });
 
-test('fix#2 duplicate PR rows: selects first owner match, exits 0 (no SIGPIPE)', { skip }, () => {
+test('multiple same-repo open PR rows fail closed without guessing or recreating', { skip }, () => {
   const repo = makeRepo();
   try {
-    runWitness(repo, { prList: [] }); // seed the branch
+    seedWitness(repo); // seed the branch
     const createsBefore = createCount(repo);
     const beforeSha = remoteBranchSha(repo);
+    const beforeCommits = commitCountOnBranch(repo);
+    resetActionLogs(repo);
     const r = runWitness(repo, {
       prList: [
         { number: 77, headRepositoryOwner: { login: OWNER } },
         { number: 88, headRepositoryOwner: { login: OWNER } },
       ],
-      prViews: {
-        77: stubPr({ number: 77, headRefOid: beforeSha, author: 'app/solidus-paperclip-delivery' }),
-      },
+      prViews: {},
     });
-    assert.equal(r.status, 0, `must not fail under pipefail: ${r.stderr}`);
-    assert.match(r.stdout, /Reusing existing witness PR #77/, 'first owner-scoped match wins');
-    assert.doesNotMatch(r.stdout, /#88/);
-    assert.equal(createCount(repo), createsBefore, 'reuse, not recreate');
+    assert.notEqual(r.status, 0, 'multiple same-repo open PRs must fail closed');
+    assert.match(r.stderr, /matching open witness PRs/, 'must explain the ambiguity');
+    assert.equal(createCount(repo), createsBefore, 'must not create a duplicate PR');
+    assert.equal(remoteBranchSha(repo), beforeSha, 'ambiguous reuse must leave the branch untouched');
+    assert.equal(commitCountOnBranch(repo), beforeCommits, 'ambiguous reuse must not add commits');
+    assert.deepEqual(appliedLabels(repo), [], 'ambiguous reuse must not mutate labels');
+    assert.deepEqual(closedPrs(repo), [], 'ambiguous reuse must not close any PR');
+    assert.deepEqual(readyCalls(repo), [], 'ambiguous reuse must not ready any PR');
   } finally {
     rmSync(repo.root, { recursive: true, force: true });
   }
@@ -540,7 +578,7 @@ test('fix#2 duplicate PR rows: selects first owner match, exits 0 (no SIGPIPE)',
 test('owner scoping: a same-named fork branch PR is ignored; owner PR is reused', { skip }, () => {
   const repo = makeRepo();
   try {
-    runWitness(repo, { prList: [] });
+    seedWitness(repo);
     const createsBefore = createCount(repo);
     const beforeSha = remoteBranchSha(repo);
     const r = runWitness(repo, {
@@ -564,7 +602,7 @@ test('owner scoping: a same-named fork branch PR is ignored; owner PR is reused'
 test('owner scoping: ONLY fork-owned PRs → treated as none, so a real PR is opened', { skip }, () => {
   const repo = makeRepo();
   try {
-    runWitness(repo, { prList: [] });
+    seedWitness(repo);
     const before = createCount(repo);
     const r = runWitness(repo, {
       prList: [{ number: 555, headRepositoryOwner: { login: 'attacker' } }],
@@ -573,6 +611,32 @@ test('owner scoping: ONLY fork-owned PRs → treated as none, so a real PR is op
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stdout, /Reusing existing witness PR/, 'fork-only lookup must not count as existing');
     assert.equal(createCount(repo), before + 1, 'must open a PR when only fork PRs exist');
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('closed same-branch same-repo PR fails closed before any mutation or recreate', { skip }, () => {
+  const repo = makeRepo();
+  try {
+    seedWitness(repo);
+    const beforeSha = remoteBranchSha(repo);
+    const beforeCommits = commitCountOnBranch(repo);
+    const createsBefore = createCount(repo);
+    resetActionLogs(repo);
+    const r = runWitness(repo, {
+      headSha: SHA_B,
+      prList: [{ number: 101, state: 'CLOSED', headRepositoryOwner: { login: OWNER } }],
+      prViews: {},
+    });
+    assert.notEqual(r.status, 0, 'closed prior witness PR must fail closed');
+    assert.match(r.stderr, /matching closed\/terminal witness PR/, 'must explain the terminal-state refusal');
+    assert.equal(createCount(repo), createsBefore, 'must not create a duplicate PR');
+    assert.equal(remoteBranchSha(repo), beforeSha, 'closed prior PR must leave the branch untouched');
+    assert.equal(commitCountOnBranch(repo), beforeCommits, 'closed prior PR must not add commits');
+    assert.deepEqual(appliedLabels(repo), [], 'closed prior PR must not mutate labels');
+    assert.deepEqual(closedPrs(repo), [], 'closed prior PR must not close any PR');
+    assert.deepEqual(readyCalls(repo), [], 'closed prior PR must not ready any PR');
   } finally {
     rmSync(repo.root, { recursive: true, force: true });
   }
@@ -701,7 +765,7 @@ test('RUN_ID guard: a non-numeric run id is rejected before any git/gh action', 
 test('reuse path: extra file fails closed with branch SHA and commit count unchanged', { skip }, () => {
   const repo = makeRepo();
   try {
-    runWitness(repo, { prList: [] });
+    seedWitness(repo);
     const beforeSha = remoteBranchSha(repo);
     const beforeCommits = commitCountOnBranch(repo);
     resetActionLogs(repo);
@@ -713,7 +777,7 @@ test('reuse path: extra file fails closed with branch SHA and commit count uncha
           number: 101,
           headRefOid: beforeSha,
           author: 'solidus-paperclip-delivery[bot]',
-          files: [{ path: DOC_PATH }, { path: 'src/pwn.ts' }],
+          files: [{ filename: DOC_PATH }, { filename: 'src/pwn.ts' }],
         }),
       },
     });
@@ -732,7 +796,7 @@ test('reuse path: extra file fails closed with branch SHA and commit count uncha
 test('reuse path: wrong base fails closed with branch SHA and commit count unchanged', { skip }, () => {
   const repo = makeRepo();
   try {
-    runWitness(repo, { prList: [] });
+    seedWitness(repo);
     const beforeSha = remoteBranchSha(repo);
     const beforeCommits = commitCountOnBranch(repo);
     resetActionLogs(repo);
@@ -758,7 +822,7 @@ test('reuse path: wrong base fails closed with branch SHA and commit count uncha
 test('reuse path: rename source fails closed with no mutation and no close', { skip }, () => {
   const repo = makeRepo();
   try {
-    runWitness(repo, { prList: [] });
+    seedWitness(repo);
     const beforeSha = remoteBranchSha(repo);
     const beforeCommits = commitCountOnBranch(repo);
     resetActionLogs(repo);
@@ -769,7 +833,7 @@ test('reuse path: rename source fails closed with no mutation and no close', { s
           number: 101,
           headRefOid: beforeSha,
           author: 'solidus-paperclip-delivery[bot]',
-          files: [{ path: DOC_PATH, previous_filename: '.github/workflows/pr.yml' }],
+          files: [{ filename: DOC_PATH, previous_filename: '.github/workflows/pr.yml' }],
         }),
       },
     });
@@ -788,7 +852,7 @@ test('reuse path: rename source fails closed with no mutation and no close', { s
 test('reuse path: wrong doc path fails closed with no mutation and no close', { skip }, () => {
   const repo = makeRepo();
   try {
-    runWitness(repo, { prList: [] });
+    seedWitness(repo);
     const beforeSha = remoteBranchSha(repo);
     const beforeCommits = commitCountOnBranch(repo);
     resetActionLogs(repo);
@@ -799,7 +863,7 @@ test('reuse path: wrong doc path fails closed with no mutation and no close', { 
           number: 101,
           headRefOid: beforeSha,
           author: 'solidus-paperclip-delivery[bot]',
-          files: [{ path: 'doc/autonomy-witness-red/999999.md' }],
+          files: [{ filename: 'doc/autonomy-witness-red/999999.md' }],
         }),
       },
     });
@@ -818,7 +882,7 @@ test('reuse path: wrong doc path fails closed with no mutation and no close', { 
 test('reuse path: missing label fails closed with no mutation and no close', { skip }, () => {
   const repo = makeRepo();
   try {
-    runWitness(repo, { prList: [] });
+    seedWitness(repo);
     const beforeSha = remoteBranchSha(repo);
     const beforeCommits = commitCountOnBranch(repo);
     resetActionLogs(repo);

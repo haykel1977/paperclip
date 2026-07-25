@@ -86,14 +86,33 @@ git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 # push the branch and open the PR, so authorship/event provenance is coherent.
 gh auth setup-git
 
-# Re-run safe AND SIGPIPE-safe: select the first open PR for this branch that is
-# owned by THIS repo (never a same-named fork branch) entirely inside jq. There
-# is no `head`/early-terminating consumer, so `gh pr list` cannot take SIGPIPE
-# under `set -o pipefail`.
+# Re-run safe AND SIGPIPE-safe: query ALL states for this branch, scope to PRs
+# owned by THIS repo (never a same-named fork branch), fail closed if any
+# matching PR is already terminal, and reuse only a single matching OPEN PR.
+# There is no `head`/early-terminating consumer, so `gh pr list` cannot take
+# SIGPIPE under `set -o pipefail`.
 resolve_pr_number() {
-  gh pr list --repo "$REPO" --state open --head "$BRANCH" \
-    --json number,headRepositoryOwner \
-    --jq "[.[] | select(.headRepositoryOwner.login == \"${OWNER}\") | .number] | first // empty"
+  local matches_json terminal_count open_count
+
+  matches_json="$(gh pr list --repo "$REPO" --state all --head "$BRANCH" \
+    --json number,state,headRepositoryOwner \
+    --jq "[.[] | select(.headRepositoryOwner.login == \"${OWNER}\") | {number, state}]")"
+
+  terminal_count="$(jq '[.[] | select(.state != "OPEN")] | length' <<<"$matches_json")"
+  if [ "$terminal_count" -ne 0 ]; then
+    echo "ERROR: found matching closed/terminal witness PR(s) for branch '${BRANCH}'; refusing to create or reuse." >&2
+    jq -r '.[] | select(.state != "OPEN") | " - #\(.number) [\(.state)]"' <<<"$matches_json" >&2
+    return 1
+  fi
+
+  open_count="$(jq '[.[] | select(.state == "OPEN")] | length' <<<"$matches_json")"
+  if [ "$open_count" -gt 1 ]; then
+    echo "ERROR: found ${open_count} matching open witness PRs for branch '${BRANCH}'; refusing to guess." >&2
+    jq -r '.[] | select(.state == "OPEN") | " - #\(.number) [\(.state)]"' <<<"$matches_json" >&2
+    return 1
+  fi
+
+  jq -r '[.[] | select(.state == "OPEN") | .number] | first // empty' <<<"$matches_json"
 }
 
 extract_created_pr_number() {
@@ -106,8 +125,13 @@ extract_created_pr_number() {
 }
 
 load_pr_json() {
-  gh pr view "$1" --repo "$REPO" \
-    --json id,number,isDraft,baseRefName,headRefName,headRepositoryOwner,headRefOid,author,labels,files,url
+  local pr_core_json pr_files_json
+
+  pr_core_json="$(gh pr view "$1" --repo "$REPO" \
+    --json id,number,isDraft,baseRefName,headRefName,headRepositoryOwner,headRefOid,author,labels,url)"
+  pr_files_json="$(gh api --paginate "/repos/${REPO}/pulls/$1/files?per_page=100" | jq -s 'add // []')"
+
+  jq -cn --argjson pr "$pr_core_json" --argjson files "$pr_files_json" '$pr + { files: $files }'
 }
 
 close_created_pr_if_revalidated() {
@@ -199,7 +223,7 @@ assert_pr_shape() {
   pr_author="$(jq -r '.author.login // empty' <<<"$pr_json")"
   labels="$(jq -r '.labels[].name? // empty' <<<"$pr_json")"
   files_count="$(jq -r '(.files // []) | length' <<<"$pr_json")"
-  file_path="$(jq -r '.files[0].path // empty' <<<"$pr_json")"
+  file_path="$(jq -r '.files[0].filename // empty' <<<"$pr_json")"
   file_previous_filename="$(jq -r '.files[0].previous_filename // empty' <<<"$pr_json")"
 
   if [ "$pr_author" != "$EXPECTED_AUTHOR_GRAPHQL" ] && [ "$pr_author" != "$EXPECTED_AUTHOR_REST" ]; then

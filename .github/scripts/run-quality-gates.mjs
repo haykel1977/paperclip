@@ -93,6 +93,18 @@ export function isAutonomyWitnessPr(author, branch, files) {
 
 const SKIPPED_GATE = Object.freeze({ passed: true, failures: Object.freeze([]) });
 
+export function getQualityGatePlan(witnessExempt) {
+  return Object.freeze({
+    template: witnessExempt,
+    linkedIssue: witnessExempt,
+    dedupSearch: witnessExempt,
+    testCoverage: false,
+    lockfile: false,
+    governance: false,
+    dependencies: false,
+  });
+}
+
 function buildComment(author, failures, informational) {
   if (failures.length === 0 && informational.length === 0) {
     return `✅ Quality gates passing — ready for branch-protection checks and the configured review/auto-merge policy.\n\n${COMMENT_SIGNATURE}`;
@@ -192,15 +204,16 @@ async function main() {
   // documentation-quality gates (template / linked-issue / dedup) and keep every
   // security-relevant gate active. See isAutonomyWitnessPr above.
   const witnessExempt = isAutonomyWitnessPr(author, branch, files);
+  const gatePlan = getQualityGatePlan(witnessExempt);
   const [templateResult, issueResult, dedupResult, testResult, lockfileResult, governanceResult, depsResult] =
     await Promise.all([
-      Promise.resolve(witnessExempt ? SKIPPED_GATE : checkTemplate(prBody)),
-      Promise.resolve(witnessExempt ? SKIPPED_GATE : checkLinkedIssue(prBody, prTitle)),
-      Promise.resolve(witnessExempt ? SKIPPED_GATE : checkDedupSearch(prBody, prTitle)),
-      Promise.resolve(checkTestCoverage(files, prTitle)),
-      Promise.resolve(checkLockfile(files, author, branch)),
-      Promise.resolve(checkPrGovernance({ title: prTitle, labels: prLabels, files, author })),
-      checkDependencies(files, GH_TOKEN, GH_REPO, prNumber, pr.base?.ref),
+      Promise.resolve(gatePlan.template ? SKIPPED_GATE : checkTemplate(prBody)),
+      Promise.resolve(gatePlan.linkedIssue ? SKIPPED_GATE : checkLinkedIssue(prBody, prTitle)),
+      Promise.resolve(gatePlan.dedupSearch ? SKIPPED_GATE : checkDedupSearch(prBody, prTitle)),
+      Promise.resolve(gatePlan.testCoverage ? SKIPPED_GATE : checkTestCoverage(files, prTitle)),
+      Promise.resolve(gatePlan.lockfile ? SKIPPED_GATE : checkLockfile(files, author, branch)),
+      Promise.resolve(gatePlan.governance ? SKIPPED_GATE : checkPrGovernance({ title: prTitle, labels: prLabels, files, author })),
+      gatePlan.dependencies ? Promise.resolve(SKIPPED_GATE) : checkDependencies(files, GH_TOKEN, GH_REPO, prNumber, pr.base?.ref),
     ]);
 
   const allFailures = [

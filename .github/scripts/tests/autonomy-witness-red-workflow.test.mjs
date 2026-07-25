@@ -31,6 +31,14 @@ function stripComments(src) {
 const wfCode = stripComments(wf);
 const shCode = stripComments(sh);
 
+function hasMutatingGhRestCall(src) {
+  return /gh\s+(repo|api)\b[\s\S]{0,200}?(?:-X\s*(PUT|PATCH|POST|DELETE)\b|--method(?:=|\s+)(PUT|PATCH|POST|DELETE)\b)/.test(src);
+}
+
+function touchesGhSettings(src) {
+  return /gh\s+(repo|api)\b[\s\S]{0,200}?settings\b/.test(src);
+}
+
 /** Top-level `permissions:` block children (2-space indented). */
 function topLevelPermissionsBlock() {
   const start = lines.findIndex(l => /^permissions:\s*$/.test(l));
@@ -169,8 +177,10 @@ test('fix#1 create path: new witness PR is created as a DRAFT first', () => {
 });
 
 test('fix#1 fail-closed verification: re-reads authoritative labels and refuses success if absent', () => {
-  assert.match(shCode, /load_pr_json\(\) \{[\s\S]*?--json id,number,isDraft,baseRefName,headRefName,headRepositoryOwner,headRefOid,author,labels,files,url/,
-    'must fetch full PR shape authoritatively for validation');
+  assert.match(shCode, /load_pr_json\(\) \{[\s\S]*?--json id,number,isDraft,baseRefName,headRefName,headRepositoryOwner,headRefOid,author,labels,url/,
+    'must fetch authoritative PR core data');
+  assert.match(shCode, /gh api --paginate "\/repos\/\$\{REPO\}\/pulls\/\$1\/files\?per_page=100"[\s\S]*?jq -s 'add \/\/ \[\]'/,
+    'must fetch rename-aware PR files from the REST pull-files API');
   assert.match(shCode, /grep -qx "\$RISK_RED_LABEL"/, 'must check for the EXACT risk:red label');
   assert.match(shCode, /assert_pr_shape "\$pr_json" "\$pr_id_resolved" "yes" "\$expected_head_oid"/,
     'fresh draft must be fully validated before any ready transition');
@@ -197,7 +207,21 @@ test('script: never auto-merges, auto-approves, or changes settings', () => {
   assert.doesNotMatch(shCode, /gh pr review/, 'must not approve');
   assert.doesNotMatch(shCode, /enable-agent-automerge/, 'must not invoke the automerge gate');
   assert.doesNotMatch(shCode, /branches\/.*protection/, 'must not touch branch protection');
-  assert.doesNotMatch(shCode, /gh (repo|api) .*(--method (PUT|PATCH|DELETE)|settings)/, 'must not mutate repo settings');
+  assert.equal(hasMutatingGhRestCall(shCode), false, 'script must not issue mutating REST calls');
+  assert.equal(touchesGhSettings(shCode), false, 'must not mutate repo settings');
+});
+
+test('mutation guard helper catches gh api mutators across inline and continued syntaxes', () => {
+  for (const sample of [
+    'gh api -X PUT /repos/o/r/hooks',
+    'gh api \\\n+      -X PATCH /repos/o/r/hooks/1',
+    'gh api \\\n+      --method DELETE /repos/o/r/hooks/1',
+    'gh api \\\n+      --method POST \\\n+      /repos/o/r/hooks',
+    'gh repo \\\n+      --method PATCH /repos/o/r',
+  ]) {
+    assert.equal(hasMutatingGhRestCall(sample), true, `must detect ${JSON.stringify(sample)}`);
+  }
+  assert.equal(hasMutatingGhRestCall('gh api /repos/o/r/pulls/71/files?per_page=100'), false);
 });
 
 test('script: references no secrets, PAT, or App-key minting (token is injected via env)', () => {
@@ -217,8 +241,8 @@ test('script: fails closed unless the PR is authored by the allowlisted App iden
 });
 
 test('reuse path: revalidates the complete witness shape before success', () => {
-  assert.match(shCode, /--json id,number,isDraft,baseRefName,headRefName,headRepositoryOwner,headRefOid,author,labels,files,url/,
-    'reuse path must fetch full PR shape authoritatively');
+  assert.match(shCode, /gh api --paginate "\/repos\/\$\{REPO\}\/pulls\/\$1\/files\?per_page=100"/,
+    'reuse path must fetch rename-aware PR files authoritatively');
   assert.match(shCode, /if \[ "\$pr_base" != "\$DEFAULT_BRANCH" \]; then[\s\S]*?exit 1/,
     'reuse path must pin the base branch');
   assert.match(shCode, /if \[ "\$pr_head" != "\$BRANCH" \]; then[\s\S]*?exit 1/,
@@ -227,6 +251,8 @@ test('reuse path: revalidates the complete witness shape before success', () => 
     'reuse path must compare the remote branch head before any mutation');
   assert.match(shCode, /if \[ "\$files_count" -ne 1 \]; then[\s\S]*?exit 1/,
     'reuse path must require exactly one changed file');
+  assert.match(shCode, /file_path="\$\(jq -r '\.files\[0\]\.filename \/\/ empty' <<<"\$pr_json"\)"/,
+    'reuse path must read the authoritative REST filename field');
   assert.match(shCode, /if \[ "\$file_path" != "\$DOC_PATH" \]; then[\s\S]*?exit 1/,
     'reuse path must require the exact witness doc path');
   assert.match(shCode, /if \[ -n "\$file_previous_filename" \]; then[\s\S]*?exit 1/,
@@ -269,9 +295,15 @@ test('ready transition: only after full validation, and only for drafts', () => 
     'ready transition must occur only after full draft validation passes');
 });
 
-test('fix#2 SIGPIPE: PR lookup selects first owner match inside jq, no early-terminating pipe', () => {
-  assert.match(shCode, /--jq "\[\.\[\] \| select\(\.headRepositoryOwner\.login == \\"\$\{OWNER\}\\"\) \| \.number\] \| first \/\/ empty"/,
-    'owner-scoped first-match selection must live entirely in jq');
+test('PR lookup: queries all states, fails closed on non-open or duplicate matches, and avoids early-terminating pipes', () => {
+  assert.match(shCode, /gh pr list --repo "\$REPO" --state all --head "\$BRANCH"/,
+    'must query all PR states for the exact witness branch');
+  assert.match(shCode, /select\(\.headRepositoryOwner\.login == \\"\$\{OWNER\}\\"\)/,
+    'must scope matches to the current repo owner');
+  assert.match(shCode, /select\(\.state != "OPEN"\)/,
+    'must fail closed on terminal matches');
+  assert.match(shCode, /select\(\.state == "OPEN"\)/,
+    'must only reuse a unique open PR');
   assert.doesNotMatch(shCode, /\|\s*head\b/, 'no head (or any early-terminating consumer) after gh pr list');
 });
 

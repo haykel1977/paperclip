@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import {
   findExistingComment,
   isAutonomyWitnessPr,
+  getQualityGatePlan,
   AUTONOMY_WITNESS_AUTHORS,
   AUTONOMY_WITNESS_BRANCH_PREFIXES,
   AUTONOMY_WITNESS_BRANCH_RE,
@@ -186,23 +187,33 @@ test('isAutonomyWitnessPr: missing/nullish inputs are not exempt (fail toward en
   assert.equal(isAutonomyWitnessPr('', '', []), false);
 });
 
-// ── Orchestrator wiring: exactly the three docs-hygiene gates are waived ──────
-// A static proof (the orchestrator's real main() does live network I/O) that the
-// witness exemption gates ONLY checkTemplate / checkLinkedIssue / checkDedupSearch
-// behind `witnessExempt`, and that every security-relevant gate — test coverage,
-// lockfile, governance, dependencies — is invoked WITHOUT the exemption guard, so
-// it can never be waived for a witness PR.
-test('orchestrator: only template/linked-issue/dedup are guarded by witnessExempt', () => {
+test('getQualityGatePlan: witnessExempt skips only docs-hygiene gates', () => {
+  assert.deepEqual(getQualityGatePlan(true), {
+    template: true,
+    linkedIssue: true,
+    dedupSearch: true,
+    testCoverage: false,
+    lockfile: false,
+    governance: false,
+    dependencies: false,
+  });
+  assert.deepEqual(getQualityGatePlan(false), {
+    template: false,
+    linkedIssue: false,
+    dedupSearch: false,
+    testCoverage: false,
+    lockfile: false,
+    governance: false,
+    dependencies: false,
+  });
+});
+
+test('orchestrator: main consults getQualityGatePlan as a coarse backstop', () => {
   const src = readFileSync(fileURLToPath(new URL('../run-quality-gates.mjs', import.meta.url)), 'utf8');
 
-  for (const gate of ['checkTemplate(', 'checkLinkedIssue(', 'checkDedupSearch(']) {
-    const re = new RegExp(`witnessExempt \\? SKIPPED_GATE : ${gate.replace('(', '\\(')}`);
-    assert.match(src, re, `${gate} must be waived only when witnessExempt`);
-  }
-  for (const gate of ['checkTestCoverage(', 'checkLockfile(', 'checkPrGovernance(', 'checkDependencies(']) {
-    const escaped = gate.replace('(', '\\(');
-    assert.match(src, new RegExp(escaped), `${gate} must still be invoked`);
-    assert.doesNotMatch(src, new RegExp(`witnessExempt \\? SKIPPED_GATE : ${escaped}`),
-      `${gate} must NOT be behind the witness exemption`);
+  assert.match(src, /const gatePlan = getQualityGatePlan\(\s*witnessExempt\s*\)/,
+    'main must derive gate selection from the exported pure plan');
+  for (const key of ['template', 'linkedIssue', 'dedupSearch', 'testCoverage', 'lockfile', 'governance', 'dependencies']) {
+    assert.match(src, new RegExp(`gatePlan\\.${key}`), `main must consult gatePlan.${key}`);
   }
 });
