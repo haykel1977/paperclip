@@ -159,11 +159,21 @@ extract_created_pr_number() {
 # then routes it through close_created_pr_if_revalidated, which independently
 # revalidates base/head/owner/headRefOid before any close. Ambiguity → return 1.
 recover_created_pr_after_failed_create() {
-  local nums candidate
+  local nums count candidate
   nums="$(gh pr list --repo "$REPO" --state open --head "$BRANCH" --limit 10 \
     --json number,headRepositoryOwner \
     --jq "[.[] | select(.headRepositoryOwner.login == \"${OWNER}\") | .number]" 2>/dev/null || printf '[]')"
-  jq -e 'type == "array" and length == 1' <<<"$nums" >/dev/null 2>&1 || return 1
+  jq -e 'type == "array"' <<<"$nums" >/dev/null 2>&1 || return 1
+  count="$(jq 'length' <<<"$nums" 2>/dev/null || printf 'x')"
+  if [ "$count" = "0" ]; then
+    return 1
+  fi
+  if [ "$count" != "1" ]; then
+    # Truthful audit line: candidates WERE found; they are refused as
+    # ambiguous, not reported as absent.
+    echo "WARNING: found ${count} open PR(s) on ${BRANCH} after the failed create: $(jq -r 'map("#\(.)") | join(", ")' <<<"$nums" 2>/dev/null || true) — ambiguous — refusing recovery and leaving all of them untouched." >&2
+    return 1
+  fi
   candidate="$(jq -r '.[0]' <<<"$nums" 2>/dev/null || true)"
   [[ "$candidate" =~ ^[0-9]+$ ]] || return 1
   printf '%s' "$candidate"
@@ -426,20 +436,29 @@ else
     fi
     # A client-side create failure (e.g. network timeout) may still have
     # created the PR server-side, which would otherwise orphan a draft.
-    # Recovery is attempted by exact identity only: the run-scoped branch was
-    # pushed by THIS run at expected_head_oid, so a SINGLE matching open PR is
-    # unambiguously ours and goes through the standard revalidating cleanup.
+    # Recovery identifies by TUPLE, not creator provenance: a SINGLE open PR
+    # on this run-scoped branch whose base/head/owner/headRefOid revalidate
+    # against what THIS run just pushed is treated as this run's artifact.
+    # (A racing third-party PR at the exact same tuple would be closed too —
+    # accepted: seconds-wide window, disposable run-scoped branch,
+    # content-identical diff, reversible and audit-logged close.)
     # Zero or multiple candidates → never guess, leave everything untouched.
     recovered_pr="$(recover_created_pr_after_failed_create || true)"
     if [[ "$recovered_pr" =~ ^[0-9]+$ ]]; then
       echo "ERROR: gh pr create exited ${create_status}, but PR #${recovered_pr} exists server-side on ${BRANCH}; running fail-closed cleanup against this run's exact head." >&2
       pr_number="$recovered_pr"
       created=1
-      cleanup_fired_sentinel="$(mktemp -d -t awr-cleanup-XXXXXX)/fired"
+      # Guarded: an mktemp failure must degrade to no-sentinel (the handler
+      # then merely lacks idempotence) rather than abort before the cleanup.
+      if sentinel_dir="$(mktemp -d -t awr-cleanup-XXXXXX 2>/dev/null)"; then
+        cleanup_fired_sentinel="${sentinel_dir}/fired"
+      else
+        cleanup_fired_sentinel=""
+      fi
       close_created_pr_if_revalidated "" "$expected_head_oid"
       exit "$create_status"
     fi
-    echo "ERROR: gh pr create exited ${create_status}; no server-side PR matching this run's branch was found — leaving any partial draft untouched and refusing further mutation." >&2
+    echo "ERROR: gh pr create exited ${create_status}; no unambiguous server-side PR for this run's branch was identified — leaving any partial draft untouched and refusing further mutation." >&2
     exit "$create_status"
   fi
 
@@ -453,8 +472,14 @@ else
   created=1
   pr_id_resolved=""
   # A fresh private directory guarantees the sentinel path does not exist yet;
-  # the handler's first fire claims it with an atomic mkdir.
-  cleanup_fired_sentinel="$(mktemp -d -t awr-cleanup-XXXXXX)/fired"
+  # the handler's first fire claims it with an atomic mkdir. Guarded: an mktemp
+  # failure degrades to no-sentinel (the handler merely loses idempotence)
+  # instead of aborting between create and trap arming — which would orphan.
+  if sentinel_dir="$(mktemp -d -t awr-cleanup-XXXXXX 2>/dev/null)"; then
+    cleanup_fired_sentinel="${sentinel_dir}/fired"
+  else
+    cleanup_fired_sentinel=""
+  fi
   trap 'close_created_pr_if_revalidated "${pr_id_resolved:-}" "$expected_head_oid"' ERR
   pr_json="$(load_pr_json "$pr_number")"
   assert_pr_core "$pr_json" "" "yes" "$expected_head_oid"
