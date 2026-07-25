@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import {
   findExistingComment,
   isAutonomyWitnessPr,
+  buildComment,
   getQualityGatePlan,
   AUTONOMY_WITNESS_AUTHORS,
   AUTONOMY_WITNESS_BRANCH_PREFIXES,
@@ -227,6 +228,14 @@ test('getQualityGatePlan: witnessExempt skips only docs-hygiene gates', () => {
     governance: false,
     dependencies: false,
   });
+});
+
+test('buildComment: a waived run is visibly distinct from a clean pass (audit trail)', () => {
+  const clean = buildComment('someone', [], [], false);
+  const waived = buildComment('solidus-paperclip-delivery[bot]', [], [], true);
+  assert.doesNotMatch(clean, /exemption applied/i, 'a normal pass must not claim an exemption');
+  assert.match(waived, /Autonomy-witness exemption applied/, 'a waived pass must say so explicitly');
+  assert.match(waived, /security-relevant gates ran/i, 'the waiver note must state what still ran');
 });
 
 test('orchestrator: main consults getQualityGatePlan as a coarse backstop', () => {

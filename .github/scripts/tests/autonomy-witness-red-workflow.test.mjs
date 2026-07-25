@@ -37,7 +37,9 @@ function hasMutatingGhRestCall(src) {
   // GraphQL mutations are implicit POSTs and evade REST-method scanning.
   if (/gh\s+api\s+graphql[\s\S]{0,300}?\bmutation\b/i.test(src)) return true;
   // gh api defaults to POST whenever body fields are supplied — no -X needed.
-  if (/gh\s+api\b(?![\s\S]{0,200}?--method(?:=|\s+)GET\b)[\s\S]{0,200}?(?:\s-(?:f|F)\s|--field\b|--raw-field\b|--input\b)/.test(src)) return true;
+  // graphql is excluded here: read-only GraphQL queries legitimately pass -f,
+  // and mutating GraphQL is already caught by the mutation-keyword rule above.
+  if (/gh\s+api\s+(?!graphql\b)(?![\s\S]{0,200}?--method(?:=|\s+)GET\b)[\s\S]{0,200}?(?:\s-(?:f|F)\s|--field\b|--raw-field\b|--input\b)/i.test(src)) return true;
   // gh repo edit/delete/rename mutate repository state without gh api at all.
   if (/gh\s+repo\s+(edit|delete|rename|archive)\b/.test(src)) return true;
   return false;
@@ -237,6 +239,8 @@ test('mutation guard helper catches gh api mutators across inline and continued 
     assert.equal(hasMutatingGhRestCall(sample), true, `must detect ${JSON.stringify(sample)}`);
   }
   assert.equal(hasMutatingGhRestCall('gh api /repos/o/r/pulls/71/files?per_page=100'), false);
+  assert.equal(hasMutatingGhRestCall('gh api graphql -f query="query{viewer{login}}"'), false,
+    'read-only GraphQL queries must not trip the mutation guard');
 });
 
 test('script: references no secrets, PAT, or App-key minting (token is injected via env)', () => {
@@ -359,4 +363,13 @@ test('planAutomerge: a risk:red-labelled witness PR classifies RED and is skippe
   assert.equal(result.riskLane, 'RED', 'the explicit risk:red label must force the RED lane');
   assert.equal(result.action, 'skip', 'a RED PR must be skipped, never enabled for auto-merge');
   assert.notEqual(result.action, 'enable');
+});
+
+test('workflow: concurrency is a fixed-group mutex that never cancels in-flight runs', () => {
+  assert.match(wf, /^concurrency:\s*$/m, 'must declare a concurrency block');
+  assert.match(wfCode, /^\s*group:\s*autonomy-witness-red\s*$/m,
+    'group must be the FIXED string (a per-run group like autonomy-witness-red-${{ github.run_id }} is a no-op mutex)');
+  assert.doesNotMatch(wfCode, /group:.*run_id/, 'group must not be keyed on the run id');
+  assert.match(wfCode, /^\s*cancel-in-progress:\s*false\s*$/m,
+    'in-flight witness runs must never be cancelled mid-mutation');
 });

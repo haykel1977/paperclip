@@ -25,7 +25,12 @@ const BRANCH_REF = `refs/heads/autonomy-witness-red/${RUN_ID}`;
 const DOC_PATH = `doc/autonomy-witness-red/${RUN_ID}.md`;
 const PR_ID_1000 = 'PR_kwDORED1000';
 
-const skip = process.platform === 'win32';
+// The gh stub is jq-backed: without jq every test dies inside the stub with an
+// opaque failure. Skip (with a reason) instead of misreporting a script bug.
+const jqProbe = spawnSync('jq', ['--version'], { encoding: 'utf8' });
+const skip = process.platform === 'win32'
+  ? 'requires a Unix platform'
+  : (jqProbe.status === 0 ? false : 'requires jq on PATH (the gh stub is jq-backed)');
 
 function run(cmd, args, opts = {}) {
   const r = spawnSync(cmd, args, { encoding: 'utf8', ...opts });
@@ -104,7 +109,8 @@ function makeRepo() {
   const editLog = join(root, 'gh-edit.log');
   const readyLog = join(root, 'gh-ready.log');
   const closeLog = join(root, 'gh-close.log');
-  const realGit = run('bash', ['-lc', 'command -v git']).stdout.trim();
+  const unhandledLog = join(root, 'gh-unhandled.log');
+  const realGit = run('bash', ['-c', 'command -v git']).stdout.trim();
 
   const gitWrapper = `#!/usr/bin/env bash
 set -euo pipefail
@@ -142,14 +148,6 @@ jq_expr() {
     if [ "\${args[\$i]}" = "--jq" ]; then expr="\${args[\$((i+1))]}"; fi
   done
   printf '%s' "\$expr"
-}
-
-json_fields() {
-  local val="" args=("\$@") i
-  for ((i=0;i<\${#args[@]};i++)); do
-    if [ "\${args[\$i]}" = "--json" ]; then val="\${args[\$((i+1))]}"; fi
-  done
-  printf '%s' "\$val"
 }
 
 opt_value() {
@@ -255,6 +253,10 @@ if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "view" ]; then
     [ -f "\$GH_VIEW_COUNT_FILE" ] && count="\$(cat "\$GH_VIEW_COUNT_FILE")"
     count=\$((count + 1))
     printf '%s' "\$count" > "\$GH_VIEW_COUNT_FILE"
+    if [ -n "\${GH_VIEW_CORRUPT_AT:-}" ] && [ "\$count" = "\$GH_VIEW_CORRUPT_AT" ]; then
+      echo "gh stub: {transiently corrupt json"
+      exit 0
+    fi
     if [ -n "\${GH_VIEW_MUTATE_OID_AFTER:-}" ] && [ "\$count" -gt "\$GH_VIEW_MUTATE_OID_AFTER" ]; then
       jq --argjson n "\$num" '.[\$n|tostring].headRefOid = "cccccccccccccccccccccccccccccccccccccccc"' "\$GH_PR_STATE_JSON" | save_state
     fi
@@ -374,6 +376,7 @@ if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "create" ]; then
   exit "\${GH_CREATE_EXIT_CODE:-0}"
 fi
 
+record_line "\${GH_UNHANDLED_LOG:-/dev/null}" "$*"
 echo "unhandled gh: $*" >&2
 exit 1
 `;
@@ -381,7 +384,7 @@ exit 1
   writeFileSync(ghPath, stub);
   chmodSync(ghPath, 0o755);
 
-  return { root, origin, binDir, listJson, stateJson, createLog, editLog, readyLog, closeLog };
+  return { root, origin, binDir, listJson, stateJson, createLog, editLog, readyLog, closeLog, unhandledLog };
 }
 
 function runWitness(repo, {
@@ -404,17 +407,28 @@ function runWitness(repo, {
   viewCorrupt = false,
   viewMutateOidAfter = 0,
   viewMutateDraftAfter = 0,
+  viewCorruptAt = 0,
 } = {}) {
   writeJson(repo.listJson, prList.map(pr => ({ state: 'OPEN', ...pr })));
   writeJson(repo.stateJson, prViews);
   const wd = mkdtempSync(join(repo.root, 'wd-'));
   run('git', ['clone', repo.origin, wd]); // checks out main (origin HEAD)
   const branchName = `autonomy-witness-red/${runId}`;
+  // Ambient GH_*/GITHUB_*/GIT_* auth or config must never leak into the run,
+  // and a wedged child (credential prompt, stub reading stdin) must fail fast
+  // with captured output instead of hanging until the runner timeout.
+  const cleanEnv = Object.fromEntries(
+    Object.entries(process.env).filter(([k]) => !/^(GH_|GITHUB_|GIT_)/.test(k)),
+  );
   const r = spawnSync('bash', [SCRIPT], {
     cwd: wd,
     encoding: 'utf8',
+    timeout: 120_000,
+    killSignal: 'SIGKILL',
+    stdio: ['ignore', 'pipe', 'pipe'],
     env: {
-      ...process.env,
+      ...cleanEnv,
+      GIT_TERMINAL_PROMPT: '0',
       PATH: `${repo.binDir}:${process.env.PATH}`,
       GH_TOKEN: 'stub-token',
       RUN_ID: runId,
@@ -430,6 +444,7 @@ function runWitness(repo, {
       GH_EDIT_LOG: repo.editLog,
       GH_READY_LOG: repo.readyLog,
       GH_CLOSE_LOG: repo.closeLog,
+      GH_UNHANDLED_LOG: repo.unhandledLog,
       GH_STUB_OWNER: OWNER,
       GH_CREATED_PR: createdPr,
       GH_CREATED_PR_ID: createdPrId,
@@ -444,10 +459,11 @@ function runWitness(repo, {
       GH_READY_EXIT_CODE: String(readyExitCode),
       GH_LIST_EXIT_CODE: String(listExitCode),
       GH_VIEW_CORRUPT: viewCorrupt ? '1' : '0',
-      ...(viewMutateOidAfter > 0 || viewMutateDraftAfter > 0
+      ...(viewMutateOidAfter > 0 || viewMutateDraftAfter > 0 || viewCorruptAt > 0
         ? {
             ...(viewMutateOidAfter > 0 ? { GH_VIEW_MUTATE_OID_AFTER: String(viewMutateOidAfter) } : {}),
             ...(viewMutateDraftAfter > 0 ? { GH_VIEW_MUTATE_DRAFT_AFTER: String(viewMutateDraftAfter) } : {}),
+            ...(viewCorruptAt > 0 ? { GH_VIEW_CORRUPT_AT: String(viewCorruptAt) } : {}),
             GH_VIEW_COUNT_FILE: join(repo.root, 'view-count'),
           }
         : {}),
@@ -459,7 +475,13 @@ function runWitness(repo, {
 function seedWitness(repo, opts = {}) {
   const r = runWitness(repo, { prList: [], ...opts });
   assert.equal(r.status, 0, `seed run failed: ${r.stderr}`);
+  assert.deepEqual(unhandledCalls(repo), [],
+    'a green run must never reach the gh stub catch-all (no unexpected gh invocation)');
   return r;
+}
+
+function unhandledCalls(repo) {
+  return readLines(repo.unhandledLog);
 }
 
 function remoteBranchSha(repo) {
@@ -885,6 +907,26 @@ test('fail closed: gh pr ready failure exits non-zero and leaves the labelled dr
     assert.deepEqual(readyCalls(repo), ['ready 1000'], 'exactly one ready attempt');
     assert.deepEqual(closedPrs(repo), [],
       'post-disarm ready failure must not close the otherwise-valid labelled draft');
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('fail closed: transient view corruption fires the cleanup exactly ONCE (no duplicate close)', { skip }, () => {
+  const repo = makeRepo();
+  try {
+    // View #2 (the post-label shape read) is corrupt; the handler's own re-read
+    // succeeds. set -E makes the trap fire in the failing subshell AND at top
+    // level — the sentinel must collapse that to a single close attempt.
+    const r = runWitness(repo, {
+      createdPrAuthor: 'solidus-paperclip-delivery[bot]',
+      createdPrDraft: true,
+      viewCorruptAt: 2,
+      headSha: SHA_A,
+    });
+    assert.notEqual(r.status, 0, 'a corrupt authoritative read must fail closed');
+    assert.deepEqual(closedPrs(repo), ['close 1000'],
+      'the cleanup must close the created PR exactly once, not once per subshell nesting level');
   } finally {
     rmSync(repo.root, { recursive: true, force: true });
   }

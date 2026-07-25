@@ -109,9 +109,14 @@ export function getQualityGatePlan(witnessExempt) {
   });
 }
 
-function buildComment(author, failures, informational) {
+export function buildComment(author, failures, informational, witnessExempt = false) {
+  // A waived run must be distinguishable from a clean pass: the exemption is
+  // an auditable event, not a silent bypass.
+  const waiverNote = witnessExempt
+    ? '\n\n> ℹ️ Autonomy-witness exemption applied: template / linked-issue / dedup gates were waived for this exact App-authored witness PR. All security-relevant gates ran.'
+    : '';
   if (failures.length === 0 && informational.length === 0) {
-    return `✅ Quality gates passing — ready for branch-protection checks and the configured review/auto-merge policy.\n\n${COMMENT_SIGNATURE}`;
+    return `✅ Quality gates passing — ready for branch-protection checks and the configured review/auto-merge policy.${waiverNote}\n\n${COMMENT_SIGNATURE}`;
   }
 
   const lines = [
@@ -232,7 +237,7 @@ async function main() {
   const informational = depsResult.informational ?? [];
   const allPassed = allFailures.length === 0;
 
-  const commentBody = buildComment(author, allFailures, informational);
+  const commentBody = buildComment(author, allFailures, informational, witnessExempt);
 
   // Post comment if there are failures/informational, or update existing comment
   const existing = await findExistingComment(ghFetch, GH_TOKEN, GH_REPO, prNumber);
@@ -240,7 +245,7 @@ async function main() {
     await upsertComment(GH_TOKEN, GH_REPO, prNumber, commentBody, existing);
   }
 
-  console.log(JSON.stringify({ passed: allPassed, failures: allFailures, informational }));
+  console.log(JSON.stringify({ passed: allPassed, failures: allFailures, informational, witnessExempt }));
   process.exit(allPassed ? 0 : 1);
 }
 

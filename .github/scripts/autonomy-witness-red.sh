@@ -168,6 +168,14 @@ close_created_pr_if_revalidated() {
   local expected_head_oid="$2"
   local pr_json pr_id pr_base pr_head pr_head_owner pr_head_oid
 
+  # Idempotence: with `set -E` the ERR trap is inherited by command-substitution
+  # subshells, so one failure can fire this handler once per nesting level. An
+  # atomic mkdir (a shell variable would not escape the subshell) makes every
+  # fire after the first a no-op — one close attempt, one audit line.
+  if [ -n "${cleanup_fired_sentinel:-}" ] && ! mkdir "$cleanup_fired_sentinel" 2>/dev/null; then
+    return 0
+  fi
+
   if [ "${created:-0}" != "1" ] || [ -z "${pr_number:-}" ]; then
     return 0
   fi
@@ -413,13 +421,22 @@ else
   pr_number="$created_pr_number"
   created=1
   pr_id_resolved=""
+  # A fresh private directory guarantees the sentinel path does not exist yet;
+  # the handler's first fire claims it with an atomic mkdir.
+  cleanup_fired_sentinel="$(mktemp -d -t awr-cleanup-XXXXXX)/fired"
   trap 'close_created_pr_if_revalidated "${pr_id_resolved:-}" "$expected_head_oid"' ERR
   pr_json="$(load_pr_json "$pr_number")"
   assert_pr_core "$pr_json" "" "yes" "$expected_head_oid"
   gh pr edit "$pr_number" --repo "$REPO" --add-label "$RISK_RED_LABEL"
   pr_json="$(load_pr_json "$pr_number")"
   assert_pr_shape "$pr_json" "$pr_id_resolved" "yes" "$expected_head_oid"
+  # Intentional asymmetry from here on: the trap is disarmed BEFORE the ready
+  # transition. The PR passed the full invariant set as a draft immediately
+  # above; a post-ready revalidation failure therefore leaves the (labelled,
+  # RED-laned, never auto-merged) PR open for operator inspection rather than
+  # destroying a possibly-valid witness on a transient re-read.
   trap - ERR
+  rm -f "${cleanup_fired_sentinel:-}" || true
   mark_ready_if_still_draft
 fi
 
