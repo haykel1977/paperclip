@@ -73,6 +73,9 @@ DOC_DIR="doc/autonomy-witness-red"
 DOC_PATH="${DOC_DIR}/${RUN_ID}.md"
 OWNER="${REPO%%/*}"
 created=0
+pr_id_resolved=""
+pr_is_draft_resolved=""
+author=""
 
 # Commit identity for the docs commit. The PR *author* — the identity the
 # autonomy allowlist and paperclip-checker actually evaluate — is instead set by
@@ -139,7 +142,7 @@ close_created_pr_if_revalidated() {
   local expected_head_oid="$2"
   local pr_json pr_id pr_base pr_head pr_head_owner pr_head_oid
 
-  if [ "${created:-0}" != "1" ]; then
+  if [ "${created:-0}" != "1" ] || [ -z "${pr_number:-}" ]; then
     return 0
   fi
 
@@ -150,13 +153,18 @@ close_created_pr_if_revalidated() {
   pr_head_owner="$(jq -r '.headRepositoryOwner.login // empty' <<<"$pr_json")"
   pr_head_oid="$(jq -r '.headRefOid // empty' <<<"$pr_json")"
 
-  if [ "$pr_id" = "$expected_id" ] && [ "$pr_base" = "$DEFAULT_BRANCH" ] && [ "$pr_head" = "$BRANCH" ] && [ "$pr_head_owner" = "$OWNER" ] && [ "$pr_head_oid" = "$expected_head_oid" ]; then
-    echo "Closing freshly created draft PR #${pr_number} after fail-closed verification." >&2
+  if [ -n "$expected_id" ] && [ "$pr_id" != "$expected_id" ]; then
+    echo "ERROR: freshly created witness PR #${pr_number} revalidated to id '${pr_id}', expected '${expected_id}'; leaving it untouched." >&2
+    return 0
+  fi
+
+  if [ "$pr_base" = "$DEFAULT_BRANCH" ] && [ "$pr_head" = "$BRANCH" ] && [ "$pr_head_owner" = "$OWNER" ] && [ "$pr_head_oid" = "$expected_head_oid" ]; then
+    echo "Closing freshly created witness PR #${pr_number} after fail-closed verification." >&2
     gh pr close "$pr_number" --repo "$REPO" || true
     return 0
   fi
 
-  echo "ERROR: freshly created draft PR #${pr_number} failed verification, but revalidation was insufficient for automatic close; leaving the draft untouched." >&2
+  echo "ERROR: freshly created witness PR #${pr_number} failed verification, but revalidation was insufficient for automatic close; leaving it untouched." >&2
 }
 
 assert_pr_core() {
@@ -181,6 +189,7 @@ assert_pr_core() {
     echo "ERROR: witness PR #${pr_number} did not expose a stable id." >&2
     return 1
   fi
+  pr_id_resolved="$pr_id"
   if [ "$pr_base" != "$DEFAULT_BRANCH" ]; then
     echo "ERROR: witness PR #${pr_number} targets base '${pr_base}', expected '${DEFAULT_BRANCH}'." >&2
     return 1
@@ -206,7 +215,6 @@ assert_pr_core() {
     return 1
   fi
 
-  pr_id_resolved="$pr_id"
   pr_is_draft_resolved="$pr_is_draft"
   return 0
 }
@@ -360,9 +368,10 @@ else
 
   pr_number="$created_pr_number"
   created=1
+  pr_id_resolved=""
+  trap 'close_created_pr_if_revalidated "${pr_id_resolved:-}" "$expected_head_oid"' ERR
   pr_json="$(load_pr_json "$pr_number")"
   assert_pr_core "$pr_json" "" "yes" "$expected_head_oid"
-  trap 'close_created_pr_if_revalidated "$pr_id_resolved" "$expected_head_oid"' ERR
   gh pr edit "$pr_number" --repo "$REPO" --add-label "$RISK_RED_LABEL"
   pr_json="$(load_pr_json "$pr_number")"
   assert_pr_shape "$pr_json" "$pr_id_resolved" "yes" "$expected_head_oid"

@@ -706,6 +706,45 @@ test('fail closed: successfully created draft with wrong identity is closed afte
   }
 });
 
+test('fail closed: create success followed by non-draft revalidation closes only the known created PR', { skip }, () => {
+  const repo = makeRepo();
+  try {
+    const r = runWitness(repo, {
+      prList: [],
+      prViews: {},
+      createdPrAuthor: 'solidus-paperclip-delivery[bot]',
+      createdPrDraft: false,
+      headSha: SHA_A,
+    });
+    assert.notEqual(r.status, 0, 'non-draft create result must fail closed');
+    assert.match(r.stderr, /must still be draft while validations run/);
+    assert.deepEqual(closedPrs(repo), ['close 1000'], 'known created PR should be closed when it revalidates non-draft');
+    assert.deepEqual(readyCalls(repo), [], 'non-draft create result must never be readied');
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('fail closed: create success followed by missing stable id closes only the known created PR', { skip }, () => {
+  const repo = makeRepo();
+  try {
+    const r = runWitness(repo, {
+      prList: [],
+      prViews: {},
+      createdPrId: '',
+      createdPrAuthor: 'solidus-paperclip-delivery[bot]',
+      createdPrDraft: true,
+      headSha: SHA_A,
+    });
+    assert.notEqual(r.status, 0, 'missing stable id must fail closed');
+    assert.match(r.stderr, /did not expose a stable id/);
+    assert.deepEqual(closedPrs(repo), ['close 1000'], 'known created PR should be closed when id revalidation fails');
+    assert.deepEqual(readyCalls(repo), [], 'missing-id create result must never be readied');
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
 test('fail closed: label that never sticks closes only the known created draft', { skip }, () => {
   const repo = makeRepo();
   try {

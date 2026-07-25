@@ -194,10 +194,12 @@ test('fix#1 teardown: ambiguous create failure closes nothing, verified post-cre
     'ambiguous create failure must leave any partial draft untouched');
   assert.match(shCode, /created_pr_number="\$\(extract_created_pr_number "\$create_output"\)"/,
     'successful create path should rely on the exact emitted PR number');
-  assert.match(shCode, /trap 'close_created_pr_if_revalidated "\$pr_id_resolved" "\$expected_head_oid"' ERR/,
-    'post-create cleanup must be gated by exact created PR identity and head revalidation');
-  assert.match(shCode, /if \[ "\$pr_id" = "\$expected_id" \] && \[ "\$pr_base" = "\$DEFAULT_BRANCH" \] && \[ "\$pr_head" = "\$BRANCH" \] && \[ "\$pr_head_owner" = "\$OWNER" \] && \[ "\$pr_head_oid" = "\$expected_head_oid" \]; then[\s\S]*?gh pr close "\$pr_number" --repo "\$REPO"/,
-    'close must be gated by authoritative revalidation of id/base/head/owner/head sha');
+  assert.match(shCode, /pr_number="\$created_pr_number"[\s\S]*?created=1[\s\S]*?pr_id_resolved=""[\s\S]*?trap 'close_created_pr_if_revalidated "\$\{pr_id_resolved:-\}" "\$expected_head_oid"' ERR[\s\S]*?pr_json="\$\(load_pr_json "\$pr_number"\)"[\s\S]*?assert_pr_core "\$pr_json" "" "yes" "\$expected_head_oid"/,
+    'post-create cleanup must be armed immediately after the trustworthy created PR number is recorded and before any post-create assertion can fail');
+  assert.ok(shCode.includes('if [ -n "$expected_id" ] && [ "$pr_id" != "$expected_id" ]; then'),
+    'cleanup must refuse to close when a known created id revalidates to a different PR id');
+  assert.ok(shCode.includes('if [ "$pr_base" = "$DEFAULT_BRANCH" ] && [ "$pr_head" = "$BRANCH" ] && [ "$pr_head_owner" = "$OWNER" ] && [ "$pr_head_oid" = "$expected_head_oid" ]; then'),
+    'close must still be gated by authoritative base/head/owner/head sha revalidation');
   assert.doesNotMatch(shCode, /gh pr close[\s\S]*?--delete-branch/, 'teardown closes the PR; it does not delete refs');
 });
 
