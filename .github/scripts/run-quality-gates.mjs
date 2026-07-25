@@ -20,9 +20,103 @@ import { checkPrGovernance } from './check-pr-governance.mjs';
 
 const COMMENT_SIGNATURE = '— commitperclip';
 
-function buildComment(author, failures, informational) {
+// ── Autonomy-witness exemption ───────────────────────────────────────────────
+// The autonomy witness PRs (green and RED) are deliberately docs-only: a single
+// generated file under doc/autonomy-witness[-red]/<run_id>.md with an automation
+// body that does not carry the full human PR template / linked-issue / dedup
+// content. They therefore cannot satisfy those three documentation-quality
+// gates, which produced a false "changes needed" on genuine witness PRs. This
+// is a NARROW exemption: it waives EXACTLY those three
+// documentation-quality gates, and ONLY when the PR matches ALL THREE axes of the
+// witness shape. Every security-relevant gate — test coverage, lockfile,
+// governance, dependencies — stays fully active. It is not a bot bypass.
+//
+// Axis 1 — author: matched EXACTLY (no trimming, no `app/*` widening), mirroring
+// the witness script's own author guard and the risk-lane classifier's
+// KNOWN_ACTORS. GitHub surfaces the one Delivery App as
+// `app/solidus-paperclip-delivery` (GraphQL/`gh pr view`) or
+// `solidus-paperclip-delivery[bot]` (REST).
+//
+// Axis 2 — branch: matched by an anchored regex requiring the exact
+// `autonomy-witness` or `autonomy-witness-red` namespace followed by `/` and a
+// purely numeric run-id and NOTHING else. This rejects lookalikes such as
+// `autonomy-witness-evil/…`, extra path segments (`autonomy-witness-red/1/2`),
+// non-numeric suffixes (`autonomy-witness/abc`), and whitespace-padded copies.
+//
+// Axis 3 — file scope: the PR diff must be EXACTLY one file, at the generated
+// witness doc path for that lane and run-id (`doc/autonomy-witness[-red]/<run_id>.md`
+// where <run_id> equals the branch's numeric suffix). Any additional file, any
+// non-doc change, a mismatched run-id/path, or any rename/copy source
+// (`previous_filename`) fails the exemption. File metadata comes from the trusted
+// PR files API, not from anything user-controlled.
+export const AUTONOMY_WITNESS_AUTHORS = Object.freeze([
+  'app/solidus-paperclip-delivery',
+  'solidus-paperclip-delivery[bot]',
+]);
+const AUTONOMY_WITNESS_AUTHOR_SET = new Set(AUTONOMY_WITNESS_AUTHORS);
+
+// Retained for documentation/tests: the two exact branch namespaces. The
+// authoritative match is the anchored regex below, which additionally pins the
+// numeric run-id and rejects trailing segments.
+export const AUTONOMY_WITNESS_BRANCH_PREFIXES = Object.freeze([
+  'autonomy-witness/',
+  'autonomy-witness-red/',
+]);
+
+// Anchored: exact namespace, a single `/`, a purely numeric run-id, end of
+// string. The capture group is the run-id used to pin the expected doc path.
+export const AUTONOMY_WITNESS_BRANCH_RE = /^autonomy-witness(-red)?\/([0-9]+)$/;
+
+export function isAutonomyWitnessPr(author, branch, files) {
+  const rawAuthor = String(author ?? '');
+  const rawBranch = String(branch ?? '');
+
+  if (!AUTONOMY_WITNESS_AUTHOR_SET.has(rawAuthor)) return false;
+
+  const match = AUTONOMY_WITNESS_BRANCH_RE.exec(rawBranch);
+  if (!match) return false;
+
+  const lane = match[1] ? 'autonomy-witness-red' : 'autonomy-witness';
+  const runId = match[2];
+  const expectedPath = `doc/${lane}/${runId}.md`;
+
+  // Exactly one changed file, at the exact witness doc path for this lane/run-id.
+  const list = Array.isArray(files) ? files : [];
+  if (list.length !== 1) return false;
+  const filename = typeof list[0]?.filename === 'string' ? list[0].filename : '';
+  const previousFilename = typeof list[0]?.previous_filename === 'string'
+    ? list[0].previous_filename
+    : '';
+  if (previousFilename !== '') return false;
+  // REST reports renames/copies via `status` too; a rename INTO the doc path
+  // surfaces as one file whose filename matches exactly. Fail closed on both.
+  const status = typeof list[0]?.status === 'string' ? list[0].status : '';
+  if (status === 'renamed' || status === 'copied') return false;
+  return filename === expectedPath;
+}
+
+const SKIPPED_GATE = Object.freeze({ passed: true, failures: Object.freeze([]) });
+
+export function getQualityGatePlan(witnessExempt) {
+  return Object.freeze({
+    template: witnessExempt,
+    linkedIssue: witnessExempt,
+    dedupSearch: witnessExempt,
+    testCoverage: false,
+    lockfile: false,
+    governance: false,
+    dependencies: false,
+  });
+}
+
+export function buildComment(author, failures, informational, witnessExempt = false) {
+  // A waived run must be distinguishable from a clean pass: the exemption is
+  // an auditable event, not a silent bypass.
+  const waiverNote = witnessExempt
+    ? '\n\n> ℹ️ Autonomy-witness exemption applied: template / linked-issue / dedup gates were waived for this exact App-authored witness PR. All security-relevant gates ran.'
+    : '';
   if (failures.length === 0 && informational.length === 0) {
-    return `✅ Quality gates passing — ready for branch-protection checks and the configured review/auto-merge policy.\n\n${COMMENT_SIGNATURE}`;
+    return `✅ Quality gates passing — ready for branch-protection checks and the configured review/auto-merge policy.${waiverNote}\n\n${COMMENT_SIGNATURE}`;
   }
 
   const lines = [
@@ -114,15 +208,21 @@ async function main() {
   // Run all quality gates (pure functions run sync, deps check is async)
   const prTitle = pr.title ?? '';
   const prLabels = (pr.labels ?? []).map(label => label.name).filter(Boolean);
+
+  // Narrow exemption for the docs-only autonomy witness PRs: waive ONLY the
+  // documentation-quality gates (template / linked-issue / dedup) and keep every
+  // security-relevant gate active. See isAutonomyWitnessPr above.
+  const witnessExempt = isAutonomyWitnessPr(author, branch, files);
+  const gatePlan = getQualityGatePlan(witnessExempt);
   const [templateResult, issueResult, dedupResult, testResult, lockfileResult, governanceResult, depsResult] =
     await Promise.all([
-      Promise.resolve(checkTemplate(prBody)),
-      Promise.resolve(checkLinkedIssue(prBody, prTitle)),
-      Promise.resolve(checkDedupSearch(prBody, prTitle)),
-      Promise.resolve(checkTestCoverage(files, prTitle)),
-      Promise.resolve(checkLockfile(files, author, branch)),
-      Promise.resolve(checkPrGovernance({ title: prTitle, labels: prLabels, files, author })),
-      checkDependencies(files, GH_TOKEN, GH_REPO, prNumber, pr.base?.ref),
+      Promise.resolve(gatePlan.template ? SKIPPED_GATE : checkTemplate(prBody)),
+      Promise.resolve(gatePlan.linkedIssue ? SKIPPED_GATE : checkLinkedIssue(prBody, prTitle)),
+      Promise.resolve(gatePlan.dedupSearch ? SKIPPED_GATE : checkDedupSearch(prBody, prTitle)),
+      Promise.resolve(gatePlan.testCoverage ? SKIPPED_GATE : checkTestCoverage(files, prTitle)),
+      Promise.resolve(gatePlan.lockfile ? SKIPPED_GATE : checkLockfile(files, author, branch)),
+      Promise.resolve(gatePlan.governance ? SKIPPED_GATE : checkPrGovernance({ title: prTitle, labels: prLabels, files, author })),
+      gatePlan.dependencies ? Promise.resolve(SKIPPED_GATE) : checkDependencies(files, GH_TOKEN, GH_REPO, prNumber, pr.base?.ref),
     ]);
 
   const allFailures = [
@@ -137,7 +237,7 @@ async function main() {
   const informational = depsResult.informational ?? [];
   const allPassed = allFailures.length === 0;
 
-  const commentBody = buildComment(author, allFailures, informational);
+  const commentBody = buildComment(author, allFailures, informational, witnessExempt);
 
   // Post comment if there are failures/informational, or update existing comment
   const existing = await findExistingComment(ghFetch, GH_TOKEN, GH_REPO, prNumber);
@@ -145,7 +245,7 @@ async function main() {
     await upsertComment(GH_TOKEN, GH_REPO, prNumber, commentBody, existing);
   }
 
-  console.log(JSON.stringify({ passed: allPassed, failures: allFailures, informational }));
+  console.log(JSON.stringify({ passed: allPassed, failures: allFailures, informational, witnessExempt }));
   process.exit(allPassed ? 0 : 1);
 }
 

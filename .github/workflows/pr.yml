@@ -118,6 +118,15 @@ jobs:
       - name: Test autonomy-witness runtime behavior
         run: node --test ./.github/scripts/tests/autonomy-witness-behavior.test.mjs
 
+      - name: Test autonomy-witness (RED) workflow policy
+        run: node --test ./.github/scripts/tests/autonomy-witness-red-workflow.test.mjs
+
+      - name: Test autonomy-witness (RED) runtime behavior
+        run: node --test ./.github/scripts/tests/autonomy-witness-red-behavior.test.mjs
+
+      - name: Test quality-gates orchestrator
+        run: node --test ./.github/scripts/tests/run-quality-gates.test.mjs
+
       - name: Validate release package manifest
         run: node ./scripts/release-package-map.mjs check
 
