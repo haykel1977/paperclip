@@ -45,6 +45,16 @@ function hasMutatingGhRestCall(src) {
   return false;
 }
 
+// The witness contract forbids merge/approval/auto-merge/locking outright —
+// including via gh pr subcommands, which the REST/GraphQL guard cannot see.
+// (close / edit --add-label / ready / create are the script's legitimate,
+// separately-asserted mutations and stay out of this deny-set.)
+function hasForbiddenGhPrMutation(src) {
+  if (/gh\s+pr\s+(merge|review|lock|unlock)\b/i.test(src)) return true;
+  if (/--auto\b/.test(src)) return true;
+  return false;
+}
+
 function touchesGhSettings(src) {
   return /gh\s+(repo|api)\b[\s\S]{0,200}?settings\b/.test(src);
 }
@@ -200,8 +210,12 @@ test('fix#1 fail-closed verification: re-reads authoritative labels and refuses 
 
 test('fix#1 teardown: ambiguous create failure closes nothing, verified post-create failure closes only the known draft', () => {
   assert.match(shCode, /gh pr close "\$pr_number" --repo "\$REPO"/, 'must be able to close a fresh PR');
-  assert.match(shCode, /if \[ "\$create_status" -ne 0 \]; then[\s\S]*?leaving any partial draft untouched and refusing further mutation/,
-    'ambiguous create failure must leave any partial draft untouched');
+  assert.match(shCode, /if \[ "\$create_status" -ne 0 \]; then[\s\S]*?recover_created_pr_after_failed_create/,
+    'a failed create must attempt exact-identity recovery of a server-side-created PR');
+  assert.match(sh, /no server-side PR matching this run's branch was found — leaving any partial draft untouched and refusing further mutation/,
+    'zero/ambiguous recovery candidates must leave everything untouched');
+  assert.match(shCode, /jq -e 'type == "array" and length == 1' <<<"\$nums"/,
+    'recovery must demand EXACTLY ONE open candidate — never guess between several');
   assert.match(shCode, /created_pr_number="\$\(extract_created_pr_number "\$create_output"\)"/,
     'successful create path should rely on the exact emitted PR number');
   assert.match(shCode, /pr_number="\$created_pr_number"[\s\S]*?created=1[\s\S]*?pr_id_resolved=""[\s\S]*?trap 'close_created_pr_if_revalidated "\$\{pr_id_resolved:-\}" "\$expected_head_oid"' ERR[\s\S]*?pr_json="\$\(load_pr_json "\$pr_number"\)"[\s\S]*?assert_pr_core "\$pr_json" "" "yes" "\$expected_head_oid"/,
@@ -220,6 +234,8 @@ test('script: never auto-merges, auto-approves, or changes settings', () => {
   assert.doesNotMatch(shCode, /enable-agent-automerge/, 'must not invoke the automerge gate');
   assert.doesNotMatch(shCode, /branches\/.*protection/, 'must not touch branch protection');
   assert.equal(hasMutatingGhRestCall(shCode), false, 'script must not issue mutating REST calls');
+  assert.equal(hasForbiddenGhPrMutation(shCode), false,
+    'script must not invoke forbidden gh pr subcommands (merge/review/lock) or --auto');
   assert.equal(touchesGhSettings(shCode), false, 'must not mutate repo settings');
 });
 
@@ -241,6 +257,22 @@ test('mutation guard helper catches gh api mutators across inline and continued 
   assert.equal(hasMutatingGhRestCall('gh api /repos/o/r/pulls/71/files?per_page=100'), false);
   assert.equal(hasMutatingGhRestCall('gh api graphql -f query="query{viewer{login}}"'), false,
     'read-only GraphQL queries must not trip the mutation guard');
+  for (const sample of [
+    'gh pr merge 7 --squash',
+    'gh pr review 7 --approve',
+    'gh pr merge 7 --auto',
+    'gh pr lock 7',
+  ]) {
+    assert.equal(hasForbiddenGhPrMutation(sample), true, `must detect ${JSON.stringify(sample)}`);
+  }
+  for (const sample of [
+    'gh pr close 7 --repo o/r',
+    'gh pr edit 7 --add-label risk:red',
+    'gh pr ready 7',
+    'gh pr create --draft --base main',
+  ]) {
+    assert.equal(hasForbiddenGhPrMutation(sample), false, `must allow ${JSON.stringify(sample)}`);
+  }
 });
 
 test('script: references no secrets, PAT, or App-key minting (token is injected via env)', () => {

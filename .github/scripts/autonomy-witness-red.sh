@@ -153,6 +153,22 @@ extract_created_pr_number() {
   fi
 }
 
+# After a failed `gh pr create`, look for the PR it may still have created
+# server-side. Identification is by exact identity — this run's run-scoped
+# branch, owned by this repo — and demands EXACTLY ONE open match; the caller
+# then routes it through close_created_pr_if_revalidated, which independently
+# revalidates base/head/owner/headRefOid before any close. Ambiguity → return 1.
+recover_created_pr_after_failed_create() {
+  local nums candidate
+  nums="$(gh pr list --repo "$REPO" --state open --head "$BRANCH" --limit 10 \
+    --json number,headRepositoryOwner \
+    --jq "[.[] | select(.headRepositoryOwner.login == \"${OWNER}\") | .number]" 2>/dev/null || printf '[]')"
+  jq -e 'type == "array" and length == 1' <<<"$nums" >/dev/null 2>&1 || return 1
+  candidate="$(jq -r '.[0]' <<<"$nums" 2>/dev/null || true)"
+  [[ "$candidate" =~ ^[0-9]+$ ]] || return 1
+  printf '%s' "$candidate"
+}
+
 load_pr_json() {
   local pr_core_json pr_files_json
 
@@ -408,7 +424,22 @@ else
     if [ -n "$create_output" ]; then
       printf '%s\n' "$create_output" >&2
     fi
-    echo "ERROR: gh pr create exited ${create_status}; leaving any partial draft untouched and refusing further mutation." >&2
+    # A client-side create failure (e.g. network timeout) may still have
+    # created the PR server-side, which would otherwise orphan a draft.
+    # Recovery is attempted by exact identity only: the run-scoped branch was
+    # pushed by THIS run at expected_head_oid, so a SINGLE matching open PR is
+    # unambiguously ours and goes through the standard revalidating cleanup.
+    # Zero or multiple candidates → never guess, leave everything untouched.
+    recovered_pr="$(recover_created_pr_after_failed_create || true)"
+    if [[ "$recovered_pr" =~ ^[0-9]+$ ]]; then
+      echo "ERROR: gh pr create exited ${create_status}, but PR #${recovered_pr} exists server-side on ${BRANCH}; running fail-closed cleanup against this run's exact head." >&2
+      pr_number="$recovered_pr"
+      created=1
+      cleanup_fired_sentinel="$(mktemp -d -t awr-cleanup-XXXXXX)/fired"
+      close_created_pr_if_revalidated "" "$expected_head_oid"
+      exit "$create_status"
+    fi
+    echo "ERROR: gh pr create exited ${create_status}; no server-side PR matching this run's branch was found — leaving any partial draft untouched and refusing further mutation." >&2
     exit "$create_status"
   fi
 

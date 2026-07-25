@@ -738,7 +738,7 @@ test('ambiguous create failure: duplicate-PR stderr mentioning /pull/999 is neve
   }
 });
 
-test('ambiguous create failure: partial create leaves draft, never ready, never closed', { skip }, () => {
+test('partial create failure: a server-side-created PR is recovered and fail-closed-closed', { skip }, () => {
   const repo = makeRepo();
   try {
     const r = runWitness(repo, {
@@ -751,12 +751,14 @@ test('ambiguous create failure: partial create leaves draft, never ready, never 
       createdPrAuthor: 'solidus-paperclip-delivery[bot]',
       createdPrDraft: true,
     });
-    assert.notEqual(r.status, 0, 'partial create failure must fail closed');
+    assert.notEqual(r.status, 0, 'partial create failure must still fail the run');
+    assert.match(r.stderr, /exists server-side on autonomy-witness-red\/123456; running fail-closed cleanup/,
+      'recovery must announce the adopted server-side PR');
+    assert.deepEqual(closedPrs(repo), ['close 1000'],
+      'the single unambiguous server-side PR on this run branch must be revalidated and closed (no orphan draft)');
     const pr = prState(repo, 1000);
-    assert.equal(pr.isDraft, true, 'partially created PR remains draft/inert');
-    assert.deepEqual(pr.labels.map(l => l.name), [], 'no label mutation should occur after ambiguous create failure');
-    assert.deepEqual(closedPrs(repo), [], 'ambiguous create failure must not close the partial draft');
-    assert.deepEqual(readyCalls(repo), [], 'ambiguous create failure must not ready the partial draft');
+    assert.deepEqual(pr.labels.map(l => l.name), [], 'no label mutation may occur on the recovery path');
+    assert.deepEqual(readyCalls(repo), [], 'recovery must never ready the recovered PR');
   } finally {
     rmSync(repo.root, { recursive: true, force: true });
   }
