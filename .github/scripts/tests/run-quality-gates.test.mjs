@@ -175,6 +175,27 @@ test('isAutonomyWitnessPr: rename-source evasion is NOT exempt even when the des
       false,
       `must NOT exempt sacred rename into ${path}`
     );
+    // A rename entry whose previous_filename is empty/absent must STILL be
+    // rejected via its status — the two signals are independent defenses.
+    for (const previousFilename of ['', undefined]) {
+      assert.equal(
+        isAutonomyWitnessPr('solidus-paperclip-delivery[bot]', branch, [{
+          filename: path,
+          previous_filename: previousFilename,
+          status: 'renamed',
+        }]),
+        false,
+        `must NOT exempt status=renamed with empty previous_filename into ${path}`
+      );
+    }
+    assert.equal(
+      isAutonomyWitnessPr('solidus-paperclip-delivery[bot]', branch, [{
+        filename: path,
+        status: 'copied',
+      }]),
+      false,
+      `must NOT exempt status=copied into ${path}`
+    );
   }
 });
 

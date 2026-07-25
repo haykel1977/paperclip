@@ -32,7 +32,15 @@ const wfCode = stripComments(wf);
 const shCode = stripComments(sh);
 
 function hasMutatingGhRestCall(src) {
-  return /gh\s+(repo|api)\b[\s\S]{0,200}?(?:-X\s*(PUT|PATCH|POST|DELETE)\b|--method(?:=|\s+)(PUT|PATCH|POST|DELETE)\b)/.test(src);
+  // Explicit method forms — case-insensitive, tolerant of -XPUT (no space).
+  if (/gh\s+(repo|api)\b[\s\S]{0,200}?(?:-X\s*(PUT|PATCH|POST|DELETE)\b|--method(?:=|\s+)(PUT|PATCH|POST|DELETE)\b)/i.test(src)) return true;
+  // GraphQL mutations are implicit POSTs and evade REST-method scanning.
+  if (/gh\s+api\s+graphql[\s\S]{0,300}?\bmutation\b/i.test(src)) return true;
+  // gh api defaults to POST whenever body fields are supplied — no -X needed.
+  if (/gh\s+api\b(?![\s\S]{0,200}?--method(?:=|\s+)GET\b)[\s\S]{0,200}?(?:\s-(?:f|F)\s|--field\b|--raw-field\b|--input\b)/.test(src)) return true;
+  // gh repo edit/delete/rename mutate repository state without gh api at all.
+  if (/gh\s+repo\s+(edit|delete|rename|archive)\b/.test(src)) return true;
+  return false;
 }
 
 function touchesGhSettings(src) {
@@ -181,7 +189,7 @@ test('fix#1 fail-closed verification: re-reads authoritative labels and refuses 
     'must fetch authoritative PR core data');
   assert.match(shCode, /gh api --paginate "\/repos\/\$\{REPO\}\/pulls\/\$1\/files\?per_page=100"[\s\S]*?jq -s 'add \/\/ \[\]'/,
     'must fetch rename-aware PR files from the REST pull-files API');
-  assert.match(shCode, /grep -qx "\$RISK_RED_LABEL"/, 'must check for the EXACT risk:red label');
+  assert.match(shCode, /jq -e --arg l "\$RISK_RED_LABEL" 'any\(\.labels\[\]\?; \.name == \$l\)'/, 'must check for the EXACT risk:red label via structural jq equality (newline-immune)');
   assert.match(shCode, /assert_pr_shape "\$pr_json" "\$pr_id_resolved" "yes" "\$expected_head_oid"/,
     'fresh draft must be fully validated before any ready transition');
   assert.match(sh, /does not carry the required \$\{RISK_RED_LABEL\} label/,
@@ -216,10 +224,15 @@ test('script: never auto-merges, auto-approves, or changes settings', () => {
 test('mutation guard helper catches gh api mutators across inline and continued syntaxes', () => {
   for (const sample of [
     'gh api -X PUT /repos/o/r/hooks',
+    'gh api -XPUT /repos/o/r/hooks',
+    'gh api --method delete /repos/o/r/hooks/1',
     'gh api \\\n      -X PATCH /repos/o/r/hooks/1',
     'gh api \\\n      --method DELETE /repos/o/r/hooks/1',
     'gh api \\\n      --method POST \\\n      /repos/o/r/hooks',
     'gh repo \\\n      --method PATCH /repos/o/r',
+    'gh api /repos/o/r/pulls/9/reviews -f event=APPROVE',
+    'gh api graphql -f query="mutation { enablePullRequestAutoMerge(input: {}) }"',
+    'gh repo edit o/r --enable-auto-merge',
   ]) {
     assert.equal(hasMutatingGhRestCall(sample), true, `must detect ${JSON.stringify(sample)}`);
   }
@@ -259,7 +272,7 @@ test('reuse path: revalidates the complete witness shape before success', () => 
     'reuse path must require the exact witness doc path');
   assert.match(shCode, /if \[ -n "\$file_previous_filename" \]; then[\s\S]*?exit 1/,
     'reuse path must reject rename sources');
-  assert.match(shCode, /if ! grep -qx "\$RISK_RED_LABEL" <<<"\$labels"; then[\s\S]*?exit 1/,
+  assert.match(shCode, /if ! jq -e --arg l "\$RISK_RED_LABEL" 'any\(\.labels\[\]\?; \.name == \$l\)' <<<"\$pr_json" >\/dev\/null; then[\s\S]*?exit 1/,
     'reuse path must require the exact risk:red label');
 });
 
@@ -310,7 +323,8 @@ test('PR lookup: queries all states, fails closed on non-open or duplicate match
 });
 
 test('script: runs under strict mode (set -euo pipefail)', () => {
-  assert.match(sh, /^set -euo pipefail$/m, 'must fail fast under strict mode');
+  assert.match(sh, /^set -Eeuo pipefail$/m, 'must fail fast under strict mode WITH errtrace (ERR trap must fire inside functions)');
+  assert.match(sh, /^shopt -s inherit_errexit$/m, 'command substitutions must inherit errexit (a failed gh lookup must abort, not degrade to empty)');
 });
 
 // ── the RED outcome is real: planAutomerge skips the labelled witness ─────────

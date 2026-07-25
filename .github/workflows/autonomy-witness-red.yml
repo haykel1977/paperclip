@@ -84,7 +84,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: autonomy-witness-red-${{ github.run_id }}
+  # Fixed group name = a real overlap mutex: two concurrent dispatches
+  # serialize instead of racing (each run's state is run-id-scoped, but
+  # serialization keeps the audit trail unambiguous).
+  group: autonomy-witness-red
   cancel-in-progress: false
 
 jobs:

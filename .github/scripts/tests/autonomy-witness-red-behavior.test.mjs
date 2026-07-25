@@ -227,6 +227,10 @@ close_list_row() {
 }
 
 if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "list" ]; then
+  if [ "\${GH_LIST_EXIT_CODE:-0}" != "0" ]; then
+    echo "gh stub: simulated pr list failure" >&2
+    exit "\${GH_LIST_EXIT_CODE}"
+  fi
   # Model real gh semantics: default state is OPEN-only; --state all exposes
   # closed/merged rows. A script that forgets --state all therefore never sees
   # terminal PRs, which the one-PR-per-run fail-closed tests would catch.
@@ -240,8 +244,24 @@ if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "list" ]; then
 fi
 
 if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "view" ]; then
+  if [ "\${GH_VIEW_CORRUPT:-0}" = "1" ]; then
+    echo "gh stub: {corrupt json"
+    exit 0
+  fi
   num="\$(find_pr_number "\$@")"
   expr="\$(jq_expr "\$@")"
+  if [ -n "\${GH_VIEW_COUNT_FILE:-}" ]; then
+    count=0
+    [ -f "\$GH_VIEW_COUNT_FILE" ] && count="\$(cat "\$GH_VIEW_COUNT_FILE")"
+    count=\$((count + 1))
+    printf '%s' "\$count" > "\$GH_VIEW_COUNT_FILE"
+    if [ -n "\${GH_VIEW_MUTATE_OID_AFTER:-}" ] && [ "\$count" -gt "\$GH_VIEW_MUTATE_OID_AFTER" ]; then
+      jq --argjson n "\$num" '.[\$n|tostring].headRefOid = "cccccccccccccccccccccccccccccccccccccccc"' "\$GH_PR_STATE_JSON" | save_state
+    fi
+    if [ -n "\${GH_VIEW_MUTATE_DRAFT_AFTER:-}" ] && [ "\$count" -gt "\$GH_VIEW_MUTATE_DRAFT_AFTER" ]; then
+      jq --argjson n "\$num" '.[\$n|tostring].isDraft = false' "\$GH_PR_STATE_JSON" | save_state
+    fi
+  fi
   pr_json="\$(jq -c --argjson n "\$num" '.[$n|tostring] // {}' "\$GH_PR_STATE_JSON")"
   if [ -n "\$expr" ]; then
     printf '%s\n' "\$pr_json" | jq -r "\$expr"
@@ -380,6 +400,10 @@ function runWitness(repo, {
   createStderrText = '',
   suppressLabel = false,
   readyExitCode = 0,
+  listExitCode = 0,
+  viewCorrupt = false,
+  viewMutateOidAfter = 0,
+  viewMutateDraftAfter = 0,
 } = {}) {
   writeJson(repo.listJson, prList.map(pr => ({ state: 'OPEN', ...pr })));
   writeJson(repo.stateJson, prViews);
@@ -418,6 +442,15 @@ function runWitness(repo, {
       GH_CREATE_STDERR_TEXT: createStderrText,
       GH_SUPPRESS_LABEL: suppressLabel ? '1' : '0',
       GH_READY_EXIT_CODE: String(readyExitCode),
+      GH_LIST_EXIT_CODE: String(listExitCode),
+      GH_VIEW_CORRUPT: viewCorrupt ? '1' : '0',
+      ...(viewMutateOidAfter > 0 || viewMutateDraftAfter > 0
+        ? {
+            ...(viewMutateOidAfter > 0 ? { GH_VIEW_MUTATE_OID_AFTER: String(viewMutateOidAfter) } : {}),
+            ...(viewMutateDraftAfter > 0 ? { GH_VIEW_MUTATE_DRAFT_AFTER: String(viewMutateDraftAfter) } : {}),
+            GH_VIEW_COUNT_FILE: join(repo.root, 'view-count'),
+          }
+        : {}),
     },
   });
   return r;
@@ -759,6 +792,155 @@ test('fail closed: create success followed by missing stable id closes only the 
     assert.notEqual(r.status, 0, 'missing stable id must fail closed');
     assert.match(r.stderr, /did not expose a stable id/);
     assert.deepEqual(closedPrs(repo), ['close 1000'], 'known created PR should be closed when id revalidation fails');
+    assert.deepEqual(readyCalls(repo), []);
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('fail closed: gh pr list failure aborts before ANY mutation (no commit, push, or create)', { skip }, () => {
+  const repo = makeRepo();
+  try {
+    const r = runWitness(repo, { listExitCode: 1 });
+    assert.notEqual(r.status, 0, 'a failed PR lookup must abort the run, never degrade to the create path');
+    assert.equal(createCount(repo), 0, 'must not create a PR after a failed lookup');
+    assert.equal(remoteBranchSha(repo), null, 'must not push the witness branch after a failed lookup');
+    assert.deepEqual(appliedLabels(repo), []);
+    assert.deepEqual(readyCalls(repo), []);
+    assert.deepEqual(closedPrs(repo), []);
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('fail closed: NESTED post-create assertion failure still fires the cleanup trap (errtrace)', { skip }, () => {
+  const repo = makeRepo();
+  try {
+    // The draft flips to ready between the first (top-level) validation and the
+    // second (nested, inside assert_pr_shape) one. Without `set -E` the ERR
+    // trap would not fire for the nested failure and the PR would leak open.
+    const r = runWitness(repo, {
+      createdPrAuthor: 'solidus-paperclip-delivery[bot]',
+      createdPrDraft: true,
+      viewMutateDraftAfter: 1,
+      headSha: SHA_A,
+    });
+    assert.notEqual(r.status, 0, 'nested draft-flip revalidation must fail closed');
+    assert.match(r.stderr, /must still be draft while validations run/);
+    assert.deepEqual(closedPrs(repo), ['close 1000'],
+      'cleanup must close the known created PR even when the failure is nested inside a function');
+    assert.deepEqual(readyCalls(repo), [], 'the flipped PR must never be readied by this run');
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('fail closed: unreadable revalidation in the cleanup trap leaves the PR untouched (no blind close)', { skip }, () => {
+  const repo = makeRepo();
+  try {
+    const r = runWitness(repo, {
+      createdPrAuthor: 'solidus-paperclip-delivery[bot]',
+      createdPrDraft: true,
+      viewCorrupt: true,
+      headSha: SHA_A,
+    });
+    assert.notEqual(r.status, 0, 'corrupt PR reads must fail closed');
+    assert.match(r.stderr, /revalidation was unavailable; leaving it untouched/,
+      'the trap handler must degrade to leave-untouched, not abort mid-handler');
+    assert.deepEqual(closedPrs(repo), [], 'must never close a PR it cannot revalidate');
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('fail closed: create exits 0 without a PR URL — nothing is mutated afterwards', { skip }, () => {
+  const repo = makeRepo();
+  try {
+    const r = runWitness(repo, {
+      createExitCode: 0,
+      createEmitUrl: false,
+      createListAppend: false,
+      createStateAppend: false,
+    });
+    assert.notEqual(r.status, 0, 'an unidentifiable created PR must fail closed');
+    assert.match(r.stderr, /did not return a trustworthy PR identifier/);
+    assert.deepEqual(appliedLabels(repo), [], 'must not label an unidentified PR');
+    assert.deepEqual(readyCalls(repo), [], 'must not ready an unidentified PR');
+    assert.deepEqual(closedPrs(repo), [], 'must not close anything it cannot identify');
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('fail closed: gh pr ready failure exits non-zero and leaves the labelled draft inert', { skip }, () => {
+  const repo = makeRepo();
+  try {
+    const r = runWitness(repo, {
+      createdPrAuthor: 'solidus-paperclip-delivery[bot]',
+      createdPrDraft: true,
+      readyExitCode: 1,
+      headSha: SHA_A,
+    });
+    assert.notEqual(r.status, 0, 'a failed ready transition must fail the run');
+    assert.deepEqual(readyCalls(repo), ['ready 1000'], 'exactly one ready attempt');
+    assert.deepEqual(closedPrs(repo), [],
+      'post-disarm ready failure must not close the otherwise-valid labelled draft');
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('reuse path: a label merely EMBEDDING risk:red on its own line does not satisfy the exact check', { skip }, () => {
+  const repo = makeRepo();
+  try {
+    seedWitness(repo);
+    const beforeSha = remoteBranchSha(repo);
+    resetActionLogs(repo);
+    const r = runWitness(repo, {
+      prList: [{ number: 101, headRepositoryOwner: { login: OWNER } }],
+      prViews: {
+        101: stubPr({
+          number: 101,
+          headRefOid: beforeSha,
+          author: 'solidus-paperclip-delivery[bot]',
+          labels: ['evil\nrisk:red\nx'],
+        }),
+      },
+    });
+    assert.notEqual(r.status, 0, 'a crafted multi-line label must not pass the exact-label check');
+    assert.match(r.stderr, /does not carry the required risk:red label/);
+    assert.equal(remoteBranchSha(repo), beforeSha);
+    assert.deepEqual(appliedLabels(repo), []);
+    assert.deepEqual(closedPrs(repo), []);
+    assert.deepEqual(readyCalls(repo), []);
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('reuse path: REST status=renamed fails closed even with an empty previous_filename', { skip }, () => {
+  const repo = makeRepo();
+  try {
+    seedWitness(repo);
+    const beforeSha = remoteBranchSha(repo);
+    resetActionLogs(repo);
+    const r = runWitness(repo, {
+      prList: [{ number: 101, headRepositoryOwner: { login: OWNER } }],
+      prViews: {
+        101: stubPr({
+          number: 101,
+          headRefOid: beforeSha,
+          author: 'solidus-paperclip-delivery[bot]',
+          files: [{ filename: DOC_PATH, status: 'renamed' }],
+        }),
+      },
+    });
+    assert.notEqual(r.status, 0, 'a renamed-status file must not count as a pure witness doc change');
+    assert.match(r.stderr, /file has status 'renamed'/);
+    assert.equal(remoteBranchSha(repo), beforeSha);
+    assert.deepEqual(appliedLabels(repo), []);
+    assert.deepEqual(closedPrs(repo), []);
+    assert.deepEqual(readyCalls(repo), []);
     assert.deepEqual(readyCalls(repo), [], 'missing-id create result must never be readied');
   } finally {
     rmSync(repo.root, { recursive: true, force: true });
@@ -879,6 +1061,8 @@ test('reuse path: >100 changed files are fully counted across pages (pagination 
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /changes 150 files; expected exactly 1/,
       'total must reflect ALL pages, not just the first 100');
+    assert.equal(remoteBranchSha(repo), beforeSha, 'invalid reuse must leave remote branch unchanged');
+    assert.deepEqual(appliedLabels(repo), [], 'must not mutate reused invalid PR');
     assert.deepEqual(closedPrs(repo), [], 'must not close reused invalid PR');
     assert.deepEqual(readyCalls(repo), []);
   } finally {

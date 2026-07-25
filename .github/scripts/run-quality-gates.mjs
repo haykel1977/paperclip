@@ -88,6 +88,10 @@ export function isAutonomyWitnessPr(author, branch, files) {
     ? list[0].previous_filename
     : '';
   if (previousFilename !== '') return false;
+  // REST reports renames/copies via `status` too; a rename INTO the doc path
+  // surfaces as one file whose filename matches exactly. Fail closed on both.
+  const status = typeof list[0]?.status === 'string' ? list[0].status : '';
+  if (status === 'renamed' || status === 'copied') return false;
   return filename === expectedPath;
 }
 

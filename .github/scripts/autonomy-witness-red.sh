@@ -35,7 +35,14 @@
 #   HEAD_SHA        github.sha
 #   REPO            owner/repo
 #   DEFAULT_BRANCH  repository default branch
-set -euo pipefail
+# -E (errtrace): the ERR trap must also fire for failures raised INSIDE shell
+# functions — without it, a nested assertion failure after `gh pr create`
+# would abort the run without ever invoking the cleanup trap.
+# inherit_errexit: command substitutions must keep errexit — without it, a
+# failed `gh pr list` inside `$(resolve_pr_number)` degrades to an empty
+# result and the fail-closed lookup is silently defeated.
+set -Eeuo pipefail
+shopt -s inherit_errexit
 
 # The witness must be authored by the allowlisted solidus-paperclip-delivery App
 # identity. A positive allowlist (rather than merely excluding github-actions[bot])
@@ -97,11 +104,26 @@ gh auth setup-git
 resolve_pr_number() {
   local matches_json terminal_count open_count
 
-  matches_json="$(gh pr list --repo "$REPO" --state all --head "$BRANCH" \
+  # --limit 100 makes the lookup bound explicit (gh defaults to 30). Overflow
+  # interleavings all resolve fail-closed anyway (terminal rows refuse, >1 open
+  # refuses), but the bound should be intentional, not implicit.
+  matches_json="$(gh pr list --repo "$REPO" --state all --head "$BRANCH" --limit 100 \
     --json number,state,headRepositoryOwner \
     --jq "[.[] | select(.headRepositoryOwner.login == \"${OWNER}\") | {number, state}]")"
 
+  # Fail closed on a malformed lookup result: inherit_errexit already aborts on
+  # a failed gh invocation, and this rejects a non-array/garbage payload so the
+  # counts below can never be computed from junk.
+  if ! jq -e 'type == "array"' <<<"$matches_json" >/dev/null 2>&1; then
+    echo "ERROR: witness PR lookup returned a malformed payload; refusing to create or reuse." >&2
+    return 1
+  fi
+
   terminal_count="$(jq '[.[] | select(.state != "OPEN")] | length' <<<"$matches_json")"
+  if ! [[ "$terminal_count" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: witness PR lookup produced a non-numeric terminal count ('${terminal_count}'); refusing to create or reuse." >&2
+    return 1
+  fi
   if [ "$terminal_count" -ne 0 ]; then
     echo "ERROR: found matching closed/terminal witness PR(s) for branch '${BRANCH}'; refusing to create or reuse." >&2
     jq -r '.[] | select(.state != "OPEN") | " - #\(.number) [\(.state)]"' <<<"$matches_json" >&2
@@ -109,6 +131,10 @@ resolve_pr_number() {
   fi
 
   open_count="$(jq '[.[] | select(.state == "OPEN")] | length' <<<"$matches_json")"
+  if ! [[ "$open_count" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: witness PR lookup produced a non-numeric open count ('${open_count}'); refusing to create or reuse." >&2
+    return 1
+  fi
   if [ "$open_count" -gt 1 ]; then
     echo "ERROR: found ${open_count} matching open witness PRs for branch '${BRANCH}'; refusing to guess." >&2
     jq -r '.[] | select(.state == "OPEN") | " - #\(.number) [\(.state)]"' <<<"$matches_json" >&2
@@ -147,11 +173,18 @@ close_created_pr_if_revalidated() {
   fi
 
   pr_json="$(load_pr_json "$pr_number" 2>/dev/null || true)"
-  pr_id="$(jq -r '.id // empty' <<<"$pr_json")"
-  pr_base="$(jq -r '.baseRefName // empty' <<<"$pr_json")"
-  pr_head="$(jq -r '.headRefName // empty' <<<"$pr_json")"
-  pr_head_owner="$(jq -r '.headRepositoryOwner.login // empty' <<<"$pr_json")"
-  pr_head_oid="$(jq -r '.headRefOid // empty' <<<"$pr_json")"
+  # Runs inside the ERR-trap handler: a failed revalidation read must degrade
+  # to "leave untouched", never abort the handler mid-way (which would skip
+  # both the close AND the explanatory message).
+  if [ -z "$pr_json" ] || ! jq -e 'type == "object"' <<<"$pr_json" >/dev/null 2>&1; then
+    echo "ERROR: freshly created witness PR #${pr_number} failed verification, and revalidation was unavailable; leaving it untouched." >&2
+    return 0
+  fi
+  pr_id="$(jq -r '.id // empty' <<<"$pr_json" 2>/dev/null || true)"
+  pr_base="$(jq -r '.baseRefName // empty' <<<"$pr_json" 2>/dev/null || true)"
+  pr_head="$(jq -r '.headRefName // empty' <<<"$pr_json" 2>/dev/null || true)"
+  pr_head_owner="$(jq -r '.headRepositoryOwner.login // empty' <<<"$pr_json" 2>/dev/null || true)"
+  pr_head_oid="$(jq -r '.headRefOid // empty' <<<"$pr_json" 2>/dev/null || true)"
 
   if [ -n "$expected_id" ] && [ "$pr_id" != "$expected_id" ]; then
     echo "ERROR: freshly created witness PR #${pr_number} revalidated to id '${pr_id}', expected '${expected_id}'; leaving it untouched." >&2
@@ -224,15 +257,17 @@ assert_pr_shape() {
   local expected_id="${2:-}"
   local require_draft="${3:-either}"
   local expected_head_oid="${4:-}"
-  local pr_author labels files_count file_path file_previous_filename
+  local pr_author files_count file_path file_previous_filename file_status
 
-  assert_pr_core "$pr_json" "$expected_id" "$require_draft" "$expected_head_oid"
+  # `|| return 1` is belt-and-braces with `set -E`: a nested failure must
+  # surface as this function's failure so the caller's ERR trap can fire.
+  assert_pr_core "$pr_json" "$expected_id" "$require_draft" "$expected_head_oid" || return 1
 
   pr_author="$(jq -r '.author.login // empty' <<<"$pr_json")"
-  labels="$(jq -r '.labels[].name? // empty' <<<"$pr_json")"
   files_count="$(jq -r '(.files // []) | length' <<<"$pr_json")"
   file_path="$(jq -r '.files[0].filename // empty' <<<"$pr_json")"
   file_previous_filename="$(jq -r '.files[0].previous_filename // empty' <<<"$pr_json")"
+  file_status="$(jq -r '.files[0].status // empty' <<<"$pr_json")"
 
   if [ "$pr_author" != "$EXPECTED_AUTHOR_GRAPHQL" ] && [ "$pr_author" != "$EXPECTED_AUTHOR_REST" ]; then
     echo "ERROR: witness PR #${pr_number} is authored by '${pr_author}', not the allowlisted App identity ('${EXPECTED_AUTHOR_GRAPHQL}' or '${EXPECTED_AUTHOR_REST}'). In particular github-actions[bot] is produced only by the built-in GITHUB_TOKEN, whose pull_request workflows are suppressed so the required checks never run. Open the witness with a minted solidus-paperclip-delivery App installation token instead." >&2
@@ -250,7 +285,16 @@ assert_pr_shape() {
     echo "ERROR: witness PR #${pr_number} includes rename source '${file_previous_filename}', so it is not a pure witness doc change." >&2
     return 1
   fi
-  if ! grep -qx "$RISK_RED_LABEL" <<<"$labels"; then
+  # Belt-and-braces with the previous_filename check: REST reports renames and
+  # copies via `status` too, and a rename of a sacred file INTO the doc path
+  # would surface as one file whose filename matches DOC_PATH exactly.
+  if [ "$file_status" = "renamed" ] || [ "$file_status" = "copied" ]; then
+    echo "ERROR: witness PR #${pr_number} file has status '${file_status}', so it is not a pure witness doc change." >&2
+    return 1
+  fi
+  # Structural label equality (jq), not line matching: a crafted label name
+  # embedding a newline around 'risk:red' must NOT satisfy this check.
+  if ! jq -e --arg l "$RISK_RED_LABEL" 'any(.labels[]?; .name == $l)' <<<"$pr_json" >/dev/null; then
     echo "ERROR: witness PR #${pr_number} does not carry the required ${RISK_RED_LABEL} label; refusing to report success." >&2
     return 1
   fi
