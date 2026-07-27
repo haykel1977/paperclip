@@ -582,6 +582,28 @@ async function pushWithRetry(input: {
 }): Promise<{ exitCode: number; stderr: string }> {
   const { branch, worktreeCwd, env, log, ts, runProc, retryDelayMs = 3000 } = input;
 
+  // Mass-deletion guard, push-time variant (fail-closed): the status-based
+  // guard above only sees UNCOMMITTED deletions. A poisoned commit created by
+  // an earlier run (partial worktree) passes a clean status and would still be
+  // pushed on retry — observed live on 2026-07-27 (branch *-remote-ba402d89).
+  // Check the aggregate diff of the commits about to leave the machine.
+  const baseRefForGuard =
+    (await runProc("git", ["rev-parse", "--abbrev-ref", "origin/HEAD"], worktreeCwd, env)
+      .catch(() => null))?.stdout?.trim() || "origin/main";
+  const pushDiffStat = await runProc(
+    "git",
+    ["diff", "--shortstat", `${baseRefForGuard}...HEAD`],
+    worktreeCwd,
+    env,
+  ).catch(() => null);
+  const pushDeletions = Number(pushDiffStat?.stdout?.match(/(\d+) deletions?\(-\)/)?.[1] ?? 0);
+  const pushFilesChanged = Number(pushDiffStat?.stdout?.match(/(\d+) files? changed/)?.[1] ?? 0);
+  if (pushDeletions > 100000 || pushFilesChanged > 5000) {
+    const guardMsg = `mass deletion guard (push-time): ${pushFilesChanged} files / -${pushDeletions} lines vs ${baseRefForGuard} — poisoned commit, abort, no force`;
+    await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="${guardMsg}"\n`);
+    return { exitCode: 1, stderr: guardMsg };
+  }
+
   // paperclip:allow-git-push: delivery-hook pushes agent commits to the operator-configured remote (PAPA-432, see packages/adapters/AUTHORING.md)
   const tryPush = () => runProc("git", ["push", "-u", "origin", branch], worktreeCwd, env);
 
