@@ -859,6 +859,29 @@ test('fail closed: NESTED post-create assertion failure still fires the cleanup 
   }
 });
 
+test('fail closed: post-create head movement refuses the automatic close (oid gate)', { skip }, () => {
+  const repo = makeRepo();
+  try {
+    // View #2 (the post-label shape read) serves a FOREIGN headRefOid — a
+    // concurrent push. The nested assert fails, the trap fires, and the
+    // handler's own re-read still sees the foreign OID: it must refuse the
+    // close (never destroy a PR whose head this run does not own).
+    const r = runWitness(repo, {
+      createdPrAuthor: 'solidus-paperclip-delivery[bot]',
+      createdPrDraft: true,
+      viewMutateOidAfter: 1,
+      headSha: SHA_A,
+    });
+    assert.notEqual(r.status, 0, 'a moved head must fail the run');
+    assert.match(r.stderr, /insufficient for automatic close/,
+      'the cleanup must refuse to close a PR at a head this run did not push');
+    assert.deepEqual(closedPrs(repo), [], 'no close may occur on an unowned head');
+    assert.deepEqual(readyCalls(repo), []);
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
 test('fail closed: unreadable revalidation in the cleanup trap leaves the PR untouched (no blind close)', { skip }, () => {
   const repo = makeRepo();
   try {

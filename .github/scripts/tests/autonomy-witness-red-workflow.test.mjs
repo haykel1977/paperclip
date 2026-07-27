@@ -50,8 +50,12 @@ function hasMutatingGhRestCall(src) {
 // (close / edit --add-label / ready / create are the script's legitimate,
 // separately-asserted mutations and stay out of this deny-set.)
 function hasForbiddenGhPrMutation(src) {
-  if (/gh\s+pr\s+(merge|review|lock|unlock)\b/i.test(src)) return true;
-  if (/--auto\b/.test(src)) return true;
+  // A backslash-newline is the ONE multi-line form that is still a single
+  // shell command; normalize it away so a line-continued 'gh pr merge'
+  // cannot hide from the token separators below.
+  const flat = src.replace(/\\\n\s*/g, ' ');
+  if (/gh\s+pr\s+(merge|review|lock|unlock)\b/i.test(flat)) return true;
+  if (/--auto\b/.test(flat)) return true;
   return false;
 }
 
@@ -212,9 +216,13 @@ test('fix#1 teardown: ambiguous create failure closes nothing, verified post-cre
   assert.match(shCode, /gh pr close "\$pr_number" --repo "\$REPO"/, 'must be able to close a fresh PR');
   assert.match(shCode, /if \[ "\$create_status" -ne 0 \]; then[\s\S]*?recover_created_pr_after_failed_create/,
     'a failed create must attempt exact-identity recovery of a server-side-created PR');
-  assert.match(sh, /no server-side PR matching this run's branch was found — leaving any partial draft untouched and refusing further mutation/,
+  assert.match(sh, /no unambiguous server-side PR for this run's branch was identified — leaving any partial draft untouched and refusing further mutation/,
     'zero/ambiguous recovery candidates must leave everything untouched');
-  assert.match(shCode, /jq -e 'type == "array" and length == 1' <<<"\$nums"/,
+  assert.match(sh, /ambiguous — refusing recovery/,
+    'multi-candidate refusal must be reported as ambiguity, not absence');
+  assert.match(shCode, /jq -e 'type == "array"' <<<"\$nums"/,
+    'recovery must reject a malformed candidate payload');
+  assert.match(shCode, /if \[ "\$count" != "1" \]; then[\s\S]{0,400}?return 1/,
     'recovery must demand EXACTLY ONE open candidate — never guess between several');
   assert.match(shCode, /created_pr_number="\$\(extract_created_pr_number "\$create_output"\)"/,
     'successful create path should rely on the exact emitted PR number');
@@ -262,6 +270,8 @@ test('mutation guard helper catches gh api mutators across inline and continued 
     'gh pr review 7 --approve',
     'gh pr merge 7 --auto',
     'gh pr lock 7',
+    'gh pr \\\n      merge 7',
+    'gh \\\n      pr merge 7',
   ]) {
     assert.equal(hasForbiddenGhPrMutation(sample), true, `must detect ${JSON.stringify(sample)}`);
   }
