@@ -884,6 +884,16 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     return { delivered: false, prUrl: null, reason: "delivery_blocked: conflict marker scan failed" };
   }
 
+  // Mass-deletion guard (fail-closed): a partial/interrupted worktree checkout
+  // makes `git add -A` record the deletion of every absent file. Two real
+  // incidents (HAS-40, HAS-10 on 2026-07-27) each committed -6.4M lines this
+  // way. No legitimate agent task deletes hundreds of files silently.
+  const deletedFileCount = (status.stdout.match(/^(D.|.D) /gm) ?? []).length;
+  if (deletedFileCount > 200) {
+    await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="mass deletion guard: ${deletedFileCount} files deleted — likely partial worktree, abort, no force"\n`);
+    return { delivered: false, prUrl: null, reason: "delivery_blocked: mass deletion guard" };
+  }
+
   // ── 2. bot token check (autonomous lane only) ────────────────────────────
   const deliveryBotToken = autonomousDelivery ? readDeliveryBotToken(env) : null;
   if (autonomousDelivery && !deliveryBotToken) {
