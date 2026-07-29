@@ -6,7 +6,7 @@ export const label = "Codex (local)";
 export const SANDBOX_INSTALL_COMMAND = "npm install -g @openai/codex";
 
 const CODEX_LOCAL_FALLBACK_MODEL = "sovereign-gpt-5.3-codex";
-export const DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX = true;
+export const DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX = false;
 export const CODEX_LOCAL_FAST_MODE_SUPPORTED_MODELS = ["sovereign-gpt-5.4"] as const;
 
 function normalizeModelId(model: string | null | undefined): string {

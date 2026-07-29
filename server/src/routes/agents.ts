@@ -1382,6 +1382,35 @@ export function agentRoutes(
     );
   }
 
+  /**
+   * P0 escalation guard — prevents an agent from self-promoting via PATCH.
+   *
+   * Only the fields in AGENT_PATCH_ALLOWLIST may be modified through the
+   * automated PATCH /agents/:id path. Any attempt to change a privilege
+   * field (role, canCreateAgents, adapterType, heartbeat.enabled, etc.)
+   * is rejected with 403.
+   *
+   * Audit ref: 2026-07-29 contradictory audit, point 1.
+   */
+  const AGENT_PATCH_PRIVILEGE_FIELDS = new Set([
+    "role",
+    "canCreateAgents",
+    "adapterType",
+    "permissions",
+  ]);
+
+  function assertNoAgentPrivilegeEscalation(
+    patch: Record<string, unknown>,
+  ) {
+    const attempted = Object.keys(patch).filter((k) =>
+      AGENT_PATCH_PRIVILEGE_FIELDS.has(k),
+    );
+    if (attempted.length > 0) {
+      const msg = `Privilege escalation blocked: fields [${attempted.join(", ")}] cannot be modified via agent PATCH. Use the operator UI.`;
+      throw Object.assign(new Error(msg), { statusCode: 403 });
+    }
+  }
+
   function summarizeAgentUpdateDetails(patch: Record<string, unknown>) {
     const changedTopLevelKeys = Object.keys(patch).sort();
     const details: Record<string, unknown> = { changedTopLevelKeys };
@@ -2797,6 +2826,7 @@ export function agentRoutes(
       return;
     }
     await assertCanUpdateAgent(req, existing);
+    assertNoAgentPrivilegeEscalation(req.body as Record<string, unknown>);
 
     if (hasOwn(req.body as object, "permissions")) {
       res.status(422).json({ error: "Use /api/agents/:id/permissions for permission changes" });
