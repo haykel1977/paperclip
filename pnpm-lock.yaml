@@ -628,6 +628,7 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+<<<<<<< Updated upstream
   packages/skills-catalog:
     devDependencies:
       '@types/node':
@@ -639,6 +640,9 @@ importers:
       '@types/node':
         specifier: ^24.6.0
         version: 24.12.0
+=======
+  packages/skills-catalog: {}
+>>>>>>> Stashed changes
 
   server:
     dependencies:
