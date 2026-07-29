@@ -22,10 +22,11 @@
  */
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { REQUIRED_STATUS_CHECKS, ADVISORY_CHECKS } from './required-checks.mjs';
 
 // ── Pure evaluation (exported for testing) ────────────────────────────────────
 
-export const REQUIRED_STATUS_CHECKS = ['verify', 'gitleaks'];
+export { REQUIRED_STATUS_CHECKS, ADVISORY_CHECKS };
 
 function requiredCheckNames(protection) {
   const requiredStatusChecks = protection?.required_status_checks;
@@ -66,6 +67,15 @@ export const RECOMMENDED = [
     id: `required-check-${check}`,
     label: `Require status check \`${check}\``,
     ok: (p) => requiredCheckNames(p).has(check),
+  })),
+  // `verify` already aggregates these lanes, so requiring them separately makes
+  // branch protection wait twice on the same signal — and, worse, wedges a PR
+  // whenever the aggregate is green but a lane context was renamed. Flag them so
+  // a re-introduction is visible in the audit.
+  ...ADVISORY_CHECKS.map(check => ({
+    id: `advisory-check-not-required-${check}`,
+    label: `Do NOT require advisory status check \`${check}\` (aggregated by \`verify\`)`,
+    ok: (p) => !requiredCheckNames(p).has(check),
   })),
   {
     id: 'enforce-admins',

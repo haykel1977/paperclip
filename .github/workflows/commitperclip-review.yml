@@ -7,11 +7,26 @@ on:
 # Always runs from base branch context — never executes PR code.
 # pull_request_target gives access to secrets for untrusted fork PRs.
 
+# Least privilege for the ambient GITHUB_TOKEN. `contents: read` is all this job
+# needs — actions/checkout fetches the base ref, and nothing here writes to the
+# repository (the review comment, check runs, and the auto-merge mutation all go
+# through the minted commitperclip App token). `contents: write` was granted but
+# unused, so an expression-injection or a compromised action step had a
+# ready-made write primitive for no benefit.
+#
+# `administration: read` — required by enable-agent-automerge.mjs to read the
+# base branch's protection rule — deliberately does NOT appear here: GitHub does
+# not expose an `administration` scope to GITHUB_TOKEN. It must be granted to
+# the commitperclip GitHub App installation instead (Settings → GitHub Apps →
+# commitperclip → Permissions → Administration: Read-only, then re-approve the
+# installation). Until that is granted the branch-protection read returns 403,
+# and the auto-merge gate now reports that distinctly and fails closed rather
+# than mistaking it for "no protection configured".
 permissions:
   pull-requests: write
   security-events: write
   checks: write
-  contents: write
+  contents: read
 
 jobs:
   review:
@@ -73,22 +88,49 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
 
-      - name: Fail if quality gates failed
-        if: >-
-          github.event.pull_request.user.login != 'dependabot[bot]' &&
-          steps.quality.outcome == 'failure'
-        run: |
-          echo "One or more quality gates failed. See commitperclip comment on the PR for details."
-          exit 1
-
-      - name: Enable native auto-merge for eligible automation PRs
+      # MUST run before the quality/security failure gates below, and MUST run
+      # even when they failed. This step is not only "enable auto-merge" — it is
+      # the auto-merge DECISION, and its most safety-critical outcome is
+      # REVOCATION: when a PR that already has native auto-merge armed turns
+      # non-eligible (a blocking label appears, the head advances, the risk lane
+      # goes RED, branch protection becomes unreadable), this is the only code
+      # that calls disablePullRequestAutoMerge. Previously "Fail if quality gates
+      # failed" ran first and `exit 1` aborted the job, so precisely when a PR
+      # became unsafe the revocation never executed and a stale auto-merge stayed
+      # armed. `always()` makes the decision unconditional; the script itself
+      # fails closed, so running it after a failure can only ever revoke, never
+      # grant.
+      - name: Decide native auto-merge for automation PRs (enable or revoke)
+        if: ${{ always() && steps.token.outcome == 'success' }}
         run: node .github/scripts/enable-agent-automerge.mjs
         env:
           GH_TOKEN: ${{ steps.token.outputs.value }}
           GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           DEFAULT_BRANCH: main
-          REQUIRED_CHECKS: verify,Secret Scan
+          # The live required contexts, mirroring .github/scripts/required-checks.mjs.
+          # `Build` and `Typecheck + Release Registry` are absent on purpose:
+          # `verify` aggregates them, so requiring them here double-counts.
+          REQUIRED_CHECKS: verify,Secret Scan,paperclip-checker/app,paperclip-checker-runner
           # Independent SHA source: the event payload's head SHA, compared
           # against the freshly re-read API SHA to detect a mid-run head advance.
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # `.github/**` governance carve-out. Sourced from repository VARIABLES,
+          # which a pull request cannot modify — that PR-immutability is the whole
+          # reason the carve-out cannot amend its own judge. All three unset (the
+          # current state) means shadow mode, in which nothing is ever exempted.
+          PAPERCLIP_GITHUB_CARVEOUT_MODE: ${{ vars.PAPERCLIP_GITHUB_CARVEOUT_MODE }}
+          PAPERCLIP_GITHUB_CARVEOUT_JUDGE_APP_ID: ${{ vars.PAPERCLIP_GITHUB_CARVEOUT_JUDGE_APP_ID }}
+          PAPERCLIP_GITHUB_CARVEOUT_JUDGE_APP_SLUG: ${{ vars.PAPERCLIP_GITHUB_CARVEOUT_JUDGE_APP_SLUG }}
+
+      # Terminal gates. These run last so their `exit 1` cannot skip the
+      # revocation step above. `always()` keeps the diagnostic visible even when
+      # an earlier step already failed the job.
+      - name: Fail if quality gates failed
+        if: >-
+          always() &&
+          github.event.pull_request.user.login != 'dependabot[bot]' &&
+          steps.quality.outcome == 'failure'
+        run: |
+          echo "One or more quality gates failed. See commitperclip comment on the PR for details."
+          exit 1

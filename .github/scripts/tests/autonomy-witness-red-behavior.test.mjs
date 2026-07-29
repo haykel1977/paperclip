@@ -338,6 +338,11 @@ if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "create" ]; then
   if [ "\${GH_CREATE_LIST_APPEND:-1}" = "1" ]; then
     upsert_list_row "\$GH_CREATED_PR" "\$GH_STUB_OWNER"
   fi
+  # Models a racing second open PR appearing on this run's branch, so the
+  # recovery path's "exactly one candidate" requirement can be exercised.
+  if [ -n "\${GH_CREATE_EXTRA_PR:-}" ]; then
+    upsert_list_row "\$GH_CREATE_EXTRA_PR" "\$GH_STUB_OWNER"
+  fi
   if [ "\${GH_CREATE_STATE_APPEND:-1}" = "1" ]; then
     head_oid="\$(git rev-parse HEAD)"
     jq --argjson n "\$GH_CREATED_PR" \
@@ -401,6 +406,7 @@ function runWitness(repo, {
   createStateAppend = true,
   createEmitUrl = true,
   createStderrText = '',
+  createExtraPr = '',
   suppressLabel = false,
   readyExitCode = 0,
   listExitCode = 0,
@@ -455,6 +461,7 @@ function runWitness(repo, {
       GH_CREATE_STATE_APPEND: createStateAppend ? '1' : '0',
       GH_CREATE_EMIT_URL: createEmitUrl ? '1' : '0',
       GH_CREATE_STDERR_TEXT: createStderrText,
+      GH_CREATE_EXTRA_PR: createExtraPr,
       GH_SUPPRESS_LABEL: suppressLabel ? '1' : '0',
       GH_READY_EXIT_CODE: String(readyExitCode),
       GH_LIST_EXIT_CODE: String(listExitCode),
@@ -759,6 +766,77 @@ test('partial create failure: a server-side-created PR is recovered and fail-clo
     const pr = prState(repo, 1000);
     assert.deepEqual(pr.labels.map(l => l.name), [], 'no label mutation may occur on the recovery path');
     assert.deepEqual(readyCalls(repo), [], 'recovery must never ready the recovered PR');
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('recovery candidates = ZERO: nothing is adopted, closed, or readied', { skip }, () => {
+  // The create failed and left nothing behind. Recovery must return empty-handed
+  // and say so, rather than adopting some unrelated PR as "this run's artifact".
+  const repo = makeRepo();
+  try {
+    const r = runWitness(repo, {
+      prList: [],
+      prViews: {},
+      createExitCode: 1,
+      createEmitUrl: false,
+      createListAppend: false,
+      createStateAppend: false,
+    });
+    assert.notEqual(r.status, 0, 'a failed create must fail the run');
+    assert.match(r.stderr, /no unambiguous server-side PR for this run's branch was identified/);
+    assert.doesNotMatch(r.stderr, /running fail-closed cleanup/, 'nothing may be adopted');
+    assert.deepEqual(closedPrs(repo), []);
+    assert.deepEqual(readyCalls(repo), []);
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('recovery candidates = MULTIPLE: ambiguity refuses recovery and touches none of them', { skip }, () => {
+  // Two open PRs on this run-scoped branch. Because recovery's only means of
+  // identification is the branch tuple, a second candidate makes "which one did
+  // this run create?" unanswerable — and closing the wrong one is unrecoverable
+  // for whoever owns it. It must refuse rather than pick the first.
+  const repo = makeRepo();
+  try {
+    const r = runWitness(repo, {
+      prList: [],
+      prViews: {},
+      createExitCode: 1,
+      createEmitUrl: false,
+      createListAppend: true,
+      createStateAppend: true,
+      createExtraPr: '1001',
+    });
+    assert.notEqual(r.status, 0, 'ambiguous recovery must fail the run');
+    assert.match(r.stderr, /found 2 open PR\(s\)/, 'the audit line must state candidates WERE found…');
+    assert.match(r.stderr, /ambiguous — refusing recovery and leaving all of them untouched/,
+      '…and that they were refused, not reported as absent');
+    assert.match(r.stderr, /#1000/);
+    assert.match(r.stderr, /#1001/);
+    assert.deepEqual(closedPrs(repo), [], 'neither candidate may be closed');
+    assert.deepEqual(readyCalls(repo), [], 'neither candidate may be readied');
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('negative control stays negative: the RED witness never applies agent-pr or automerge', { skip }, () => {
+  // Its GREEN counterpart (autonomy-witness.sh) applies both opt-in labels to
+  // exercise the auto-merge gate. This one must apply ONLY `risk:red`: an
+  // `automerge` label here would arm the very gate the negative control exists
+  // to prove blocks it.
+  const repo = makeRepo();
+  try {
+    const r = runWitness(repo, { prList: [], prViews: {} });
+    assert.equal(r.status, 0, r.stderr);
+    const labels = prState(repo, 1000).labels.map(l => l.name);
+    assert.deepEqual(labels, ['risk:red']);
+    const script = readFileSync(SCRIPT, 'utf8');
+    assert.doesNotMatch(script, /agent-pr/, 'the RED producer must not reference the agent-pr label');
+    assert.doesNotMatch(script, /\bautomerge\b/, 'the RED producer must not reference the automerge label');
   } finally {
     rmSync(repo.root, { recursive: true, force: true });
   }

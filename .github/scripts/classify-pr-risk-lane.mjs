@@ -35,6 +35,7 @@ import {
   HARD_BLOCK_LABELS,
   isOpaqueTitle,
 } from './check-pr-governance.mjs';
+import { CI_EVIDENCE_CHECKS } from './required-checks.mjs';
 
 export const LANES = Object.freeze({ GREEN: 'GREEN', ORANGE: 'ORANGE', RED: 'RED' });
 
@@ -43,10 +44,13 @@ export const LANES = Object.freeze({ GREEN: 'GREEN', ORANGE: 'ORANGE', RED: 'RED
 export const MAX_GREEN_CHANGED_LINES = 200;
 export const MAX_GREEN_CHANGED_FILES = 10;
 
-// Baseline automated evidence that must be green before a PR can be GREEN. These
-// mirror the required branch-protection checks. Neutral/skipped/missing here is
+// Baseline automated evidence that must be green before a PR can be GREEN.
+// These are the CI-produced subset of the required branch-protection contexts
+// (see required-checks.mjs) — the two paperclip-checker keys are excluded
+// because the checker derives them FROM this classification, so requiring them
+// as evidence of it would be circular. Neutral/skipped/missing here is
 // fail-closed (RED), never treated as a pass.
-export const DEFAULT_REQUIRED_EVIDENCE = Object.freeze(['verify', 'gitleaks']);
+export const DEFAULT_REQUIRED_EVIDENCE = CI_EVIDENCE_CHECKS;
 const PASSING_EVIDENCE_CONCLUSIONS = new Set(['success']);
 
 // Actors permitted to reach an autonomous (GREEN) lane. An unknown actor is
