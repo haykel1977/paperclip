@@ -582,6 +582,28 @@ async function pushWithRetry(input: {
 }): Promise<{ exitCode: number; stderr: string }> {
   const { branch, worktreeCwd, env, log, ts, runProc, retryDelayMs = 3000 } = input;
 
+  // Mass-deletion guard, push-time variant (fail-closed): the status-based
+  // guard above only sees UNCOMMITTED deletions. A poisoned commit created by
+  // an earlier run (partial worktree) passes a clean status and would still be
+  // pushed on retry — observed live on 2026-07-27 (branch *-remote-ba402d89).
+  // Check the aggregate diff of the commits about to leave the machine.
+  const baseRefForGuard =
+    (await runProc("git", ["rev-parse", "--abbrev-ref", "origin/HEAD"], worktreeCwd, env)
+      .catch(() => null))?.stdout?.trim() || "origin/main";
+  const pushDiffStat = await runProc(
+    "git",
+    ["diff", "--shortstat", `${baseRefForGuard}...HEAD`],
+    worktreeCwd,
+    env,
+  ).catch(() => null);
+  const pushDeletions = Number(pushDiffStat?.stdout?.match(/(\d+) deletions?\(-\)/)?.[1] ?? 0);
+  const pushFilesChanged = Number(pushDiffStat?.stdout?.match(/(\d+) files? changed/)?.[1] ?? 0);
+  if (pushDeletions > 100000 || pushFilesChanged > 5000) {
+    const guardMsg = `mass deletion guard (push-time): ${pushFilesChanged} files / -${pushDeletions} lines vs ${baseRefForGuard} — poisoned commit, abort, no force`;
+    await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="${guardMsg}"\n`);
+    return { exitCode: 1, stderr: guardMsg };
+  }
+
   // paperclip:allow-git-push: delivery-hook pushes agent commits to the operator-configured remote (PAPA-432, see packages/adapters/AUTHORING.md)
   const tryPush = () => runProc("git", ["push", "-u", "origin", branch], worktreeCwd, env);
 
@@ -882,6 +904,16 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
   if (conflictMarkerScan.exitCode > 1) {
     await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="conflict marker scan failed" detail="${firstNonEmptyLine(conflictMarkerScan.stderr)}"\n`);
     return { delivered: false, prUrl: null, reason: "delivery_blocked: conflict marker scan failed" };
+  }
+
+  // Mass-deletion guard (fail-closed): a partial/interrupted worktree checkout
+  // makes `git add -A` record the deletion of every absent file. Two real
+  // incidents (HAS-40, HAS-10 on 2026-07-27) each committed -6.4M lines this
+  // way. No legitimate agent task deletes hundreds of files silently.
+  const deletedFileCount = (status.stdout.match(/^(D.|.D) /gm) ?? []).length;
+  if (deletedFileCount > 200) {
+    await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="mass deletion guard: ${deletedFileCount} files deleted — likely partial worktree, abort, no force"\n`);
+    return { delivered: false, prUrl: null, reason: "delivery_blocked: mass deletion guard" };
   }
 
   // ── 2. bot token check (autonomous lane only) ────────────────────────────
