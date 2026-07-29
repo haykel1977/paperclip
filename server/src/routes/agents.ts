@@ -2804,6 +2804,9 @@ export function agentRoutes(
     }
 
     const patchData = { ...(req.body as Record<string, unknown>) };
+    // Fail-closed AVANT toute application : identite, politique d'execution,
+    // budgets et confinement ne sont jamais self-modifiables par un agent.
+    assertNoAgentPrivilegeEscalation(req, patchData);
     const replaceAdapterConfig = patchData.replaceAdapterConfig === true;
     delete patchData.replaceAdapterConfig;
     if (hasOwn(patchData, "adapterConfig")) {
