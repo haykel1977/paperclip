@@ -1351,6 +1351,28 @@ export function agentRoutes(
     await assertBoardCanManageAgentsForCompany(req, targetAgent.companyId);
   }
 
+  // An agent may edit its own presentation fields, never the ones that decide what it
+  // is allowed to do or spend: `role` alone grants agent-creation authority through
+  // canCreateAgentsLegacy(), so a self-update of these keys is a privilege escalation.
+  const AGENT_PRIVILEGED_UPDATE_KEYS = [
+    "role",
+    "reportsTo",
+    "status",
+    "budgetMonthlyCents",
+    "spentMonthlyCents",
+    "adapterType",
+    "defaultEnvironmentId",
+  ] as const;
+
+  function assertNoAgentPrivilegedFieldMutation(req: Request, patchData: Record<string, unknown>) {
+    if (req.actor.type !== "agent") return;
+    const changedPrivilegedKeys = AGENT_PRIVILEGED_UPDATE_KEYS.filter((key) => hasOwn(patchData, key));
+    if (changedPrivilegedKeys.length === 0) return;
+    throw forbidden(
+      `Agent-authenticated callers cannot modify privileged agent fields (${changedPrivilegedKeys.join(", ")})`,
+    );
+  }
+
   function assertNoAgentInstructionsConfigMutation(
     req: Request,
     adapterConfig: Record<string, unknown> | null | undefined,
@@ -2804,6 +2826,7 @@ export function agentRoutes(
     }
 
     const patchData = { ...(req.body as Record<string, unknown>) };
+    assertNoAgentPrivilegedFieldMutation(req, patchData);
     const replaceAdapterConfig = patchData.replaceAdapterConfig === true;
     delete patchData.replaceAdapterConfig;
     if (hasOwn(patchData, "adapterConfig")) {
