@@ -6,7 +6,11 @@ export const label = "Codex (local)";
 export const SANDBOX_INSTALL_COMMAND = "npm install -g @openai/codex";
 
 const CODEX_LOCAL_FALLBACK_MODEL = "sovereign-gpt-5.3-codex";
-export const DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX = true;
+// Fail-closed par defaut (audit 2026-07-29, P0) : le sandbox et les
+// approbations ne sont plus contournes sauf activation explicite par
+// l'operateur dans la config de l'agent. Auparavant `true`, ce qui poussait
+// --dangerously-bypass-approvals-and-sandbox sur TOUS les runs locaux.
+export const DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX = false;
 export const CODEX_LOCAL_FAST_MODE_SUPPORTED_MODELS = ["sovereign-gpt-5.4"] as const;
 
 function normalizeModelId(model: string | null | undefined): string {
