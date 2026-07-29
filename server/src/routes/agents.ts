@@ -1370,6 +1370,61 @@ export function agentRoutes(
     return KNOWN_INSTRUCTIONS_BUNDLE_KEYS.some((key) => adapterConfig[key] !== undefined);
   }
 
+  // Privilege-escalation guard (audit 2026-07-29, P0).
+  //
+  // updateAgentSchema n'interdit QUE `permissions`. Un agent authentifie
+  // pouvait donc PATCH son propre `role` en "ceo" — et canCreateAgentsLegacy()
+  // accorde alors l'autorite createur (creation d'agents, PATCH des
+  // permissions d'autrui). Chaine d'escalade complete en deux requetes ;
+  // c'est aussi le mecanisme du vol d'issues observe le 29/07.
+  //
+  // Les champs ci-dessous decident QUI est l'agent, OU il s'execute et AVEC
+  // QUELS privileges : ils appartiennent au control plane (operateur/UI),
+  // jamais a l'agent lui-meme.
+  const AGENT_SELF_UPDATE_FORBIDDEN_FIELDS = [
+    "role",
+    "status",
+    "reportsTo",
+    "adapterType",
+    "defaultEnvironmentId",
+    "environmentId",
+    "budgetMonthlyCents",
+    "spentMonthlyCents",
+    "permissions",
+  ] as const;
+
+  // Champs d'adapterConfig directement executoires : les laisser mutables par
+  // l'agent revient a lui laisser reecrire son propre confinement.
+  const AGENT_SELF_UPDATE_FORBIDDEN_ADAPTER_KEYS = [
+    "command",
+    "extraArgs",
+    "env",
+    "cwd",
+    "dangerouslyBypassApprovalsAndSandbox",
+    "dangerouslySkipPermissions",
+  ] as const;
+
+  function assertNoAgentPrivilegeEscalation(req: Request, patch: Record<string, unknown>) {
+    if (req.actor.type !== "agent") return;
+    const changed = AGENT_SELF_UPDATE_FORBIDDEN_FIELDS.filter((k) => patch[k] !== undefined);
+    if (changed.length > 0) {
+      throw forbidden(
+        `Agent-authenticated callers cannot modify identity, execution policy or budget fields (${changed.join(", ")})`,
+      );
+    }
+    const adapterConfig = asRecord(patch.adapterConfig);
+    if (adapterConfig) {
+      const changedExec = AGENT_SELF_UPDATE_FORBIDDEN_ADAPTER_KEYS
+        .filter((k) => adapterConfig[k] !== undefined)
+        .map((k) => `adapterConfig.${k}`);
+      if (changedExec.length > 0) {
+        throw forbidden(
+          `Agent-authenticated callers cannot modify execution configuration (${changedExec.join(", ")})`,
+        );
+      }
+    }
+  }
+
   function assertNoAgentAdapterConfigMutation(
     req: Request,
     adapterConfig: Record<string, unknown>,
