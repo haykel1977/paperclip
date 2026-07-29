@@ -1391,6 +1391,10 @@ export function agentRoutes(
     "budgetMonthlyCents",
     "spentMonthlyCents",
     "permissions",
+    // Defense en profondeur : bloque aussi la forme a plat, au cas ou une
+    // route future accepterait ce champ hors de l'objet `permissions`
+    // (emprunte a l'implementation concurrente de la PR #79).
+    "canCreateAgents",
   ] as const;
 
   // Champs d'adapterConfig directement executoires : les laisser mutables par
