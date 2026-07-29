@@ -23,8 +23,9 @@ Enable the following on `main`
   > witness PR #75). This paragraph is the SSOT for that exception.
 - **Require status checks to pass before merging** — at minimum the `verify`
   check produced by `.github/workflows/pr.yml` and the `Secret Scan` check produced
-  by `.github/workflows/secret-scan.yml` (the gitleaks job renders under the
-  `Secret Scan` check name — verified live on merged PR #76).
+  by `.github/workflows/secret-scan.yml`. (Both `Secret Scan` and a separate
+  `gitleaks` check are emitted on PRs; the one enforced by live branch
+  protection is `Secret Scan` — verified against the API on 2026-07-29.)
 - **Require branches to be up to date before merging** — stale branches must
   re-run required checks against the current `main` tip before GitHub can merge.
 - **Dismiss stale approvals** when new commits are pushed.
