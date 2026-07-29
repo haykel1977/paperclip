@@ -1416,16 +1416,26 @@ export function agentRoutes(
         `Agent-authenticated callers cannot modify identity, execution policy or budget fields (${changed.join(", ")})`,
       );
     }
+    const changedExec: string[] = [];
     const adapterConfig = asRecord(patch.adapterConfig);
     if (adapterConfig) {
-      const changedExec = AGENT_SELF_UPDATE_FORBIDDEN_ADAPTER_KEYS
-        .filter((k) => adapterConfig[k] !== undefined)
-        .map((k) => `adapterConfig.${k}`);
-      if (changedExec.length > 0) {
-        throw forbidden(
-          `Agent-authenticated callers cannot modify execution configuration (${changedExec.join(", ")})`,
-        );
+      for (const key of AGENT_SELF_UPDATE_FORBIDDEN_ADAPTER_KEYS) {
+        if (adapterConfig[key] !== undefined) changedExec.push(`adapterConfig.${key}`);
       }
+    }
+    // Cheap/model profiles merge their adapterConfig at run time — same
+    // executable keys must be blocked under runtimeConfig.modelProfiles.*.
+    for (const entry of listRuntimeModelProfileAdapterConfigs(patch.runtimeConfig)) {
+      for (const key of AGENT_SELF_UPDATE_FORBIDDEN_ADAPTER_KEYS) {
+        if (entry.adapterConfig[key] !== undefined) {
+          changedExec.push(`${entry.path}.${key}`);
+        }
+      }
+    }
+    if (changedExec.length > 0) {
+      throw forbidden(
+        `Agent-authenticated callers cannot modify execution configuration (${changedExec.join(", ")})`,
+      );
     }
   }
 
