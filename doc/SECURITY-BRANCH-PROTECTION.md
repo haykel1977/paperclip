@@ -13,9 +13,18 @@ Enable the following on `main`
 
 - **Require a pull request before merging** — no direct pushes to `main`.
 - **Require at least one approving review** — `required_approving_review_count >= 1` when human review is required for the surface.
+
+  > **Autonomy-pilot posture (ratified 2026-07-25, verified live 2026-07-29):**
+  > on `main`, `required_approving_review_count` is intentionally **0**. Human
+  > review is replaced by the two-key machine gate — the required checks
+  > `paperclip-checker/app` and `paperclip-checker-runner` (distinct App
+  > identities) — while every PR touching `.github/**` remains structurally
+  > unmergeable without the operator's out-of-band Option A (RED lane,
+  > witness PR #75). This paragraph is the SSOT for that exception.
 - **Require status checks to pass before merging** — at minimum the `verify`
-  check produced by `.github/workflows/pr.yml` and the `gitleaks` check produced
-  by `.github/workflows/secret-scan.yml`.
+  check produced by `.github/workflows/pr.yml` and the `Secret Scan` check produced
+  by `.github/workflows/secret-scan.yml` (the gitleaks job renders under the
+  `Secret Scan` check name — verified live on merged PR #76).
 - **Require branches to be up to date before merging** — stale branches must
   re-run required checks against the current `main` tip before GitHub can merge.
 - **Dismiss stale approvals** when new commits are pushed.
@@ -80,7 +89,7 @@ Maintainers apply protection via the GitHub UI, or with the API:
 gh api -X PUT repos/haykel1977/paperclip/branches/main/protection \
   --input - <<'JSON'
 {
-  "required_status_checks": { "strict": true, "contexts": ["verify", "gitleaks"] },
+  "required_status_checks": { "strict": true, "contexts": ["verify", "Secret Scan"] },
   "enforce_admins": true,
   "required_pull_request_reviews": {
     "required_approving_review_count": 1,
