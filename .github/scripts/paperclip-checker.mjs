@@ -68,6 +68,11 @@ import {
   DEPENDENCY_MANIFEST_LABEL,
   isDependencyAutomationManifestOnly,
 } from './classify-pr-risk-lane.mjs';
+import { CI_EVIDENCE_CHECKS, GITHUB_ACTIONS_APP_ID } from './required-checks.mjs';
+import {
+  evaluateGithubGovernanceCarveout,
+  summarizeCarveout,
+} from './github-governance-carveout.mjs';
 
 // The checker's OWN bot identity. The real GitHub App is
 // `solidus-paperclip-checker` (App ID 4372695); its bot login is therefore
@@ -103,16 +108,20 @@ export const DEFAULT_RUNNER_CHECK_NAME = 'paperclip-checker-runner';
 // GitHub Actions' app id. Every check run written with the default GITHUB_TOKEN
 // is authored by this app, so the runner key is pinned to it (findAppCheckRun),
 // and a same-named runner check from any other identity is non-authoritative.
-export const GITHUB_ACTIONS_APP_ID = 15368;
+export { GITHUB_ACTIONS_APP_ID };
 
 // Default producer-bound policy. Each required check is pinned to the app that
 // is expected to produce it; a same-named check-run/status from any other app
 // CANNOT satisfy the gate (it is treated as a failure, not silently ignored).
 // Overridable by the committed .github/paperclip-checker.config.json on base.
-export const DEFAULT_REQUIRED_CHECK_POLICY = Object.freeze([
-  Object.freeze({ name: 'verify', type: 'check_run', appSlug: 'github-actions', appId: 15368 }),
-  Object.freeze({ name: 'gitleaks', type: 'check_run', appSlug: 'github-actions', appId: 15368 }),
-]);
+// The checker's OWN two keys (paperclip-checker/app, paperclip-checker-runner)
+// are deliberately absent: requiring the gate's own output as an input to the
+// gate deadlocks it. They are enforced by branch protection instead.
+export const DEFAULT_REQUIRED_CHECK_POLICY = Object.freeze(
+  CI_EVIDENCE_CHECKS.map(name =>
+    Object.freeze({ name, type: 'check_run', appSlug: 'github-actions', appId: GITHUB_ACTIONS_APP_ID }),
+  ),
+);
 
 export const STALE_INDUCING_ACTIONS = Object.freeze(
   new Set(['synchronize', 'reopened', 'ready_for_review', 'converted_to_draft', 'labeled', 'unlabeled', 'edited']),
@@ -321,6 +330,7 @@ export function evaluateChecker({
   lastPusherLogin = '',
   existingAppReview = null,
   defaultBranch = 'main',
+  env = process.env,
 } = {}) {
   if (!config?.active) {
     return {
@@ -408,9 +418,27 @@ export function evaluateChecker({
   // autonomy. The exemption is exactly one label and evaporates the moment any
   // source/workflow/sacred non-manifest path (or .npmrc/pnpmfile/pnpm-workspace,
   // which carry a distinct non-exemptable label) appears — fail closed to RED.
-  const exemptRedPathLabels = isDependencyAutomationManifestOnly(pr, files)
-    ? [DEPENDENCY_MANIFEST_LABEL]
-    : [];
+  //
+  // Second, narrower carve-out for `.github/**` governance. It defaults to
+  // SHADOW: `exemptRedPathLabels` comes back empty and `eligible` is always
+  // false, so the lane below is bit-for-bit what it was before this module
+  // existed. It only starts granting once the PR-immutable repository variables
+  // in REQUIRED_BOOTSTRAP_SETTINGS name an external judge App — an identity a
+  // PR cannot edit, which is what stops the carve-out amending its own judge.
+  // Evaluating it here (rather than leaving it unwired) is what makes the
+  // shadow verdict observable in the check output before anyone flips it on.
+  const governanceCarveout = evaluateGithubGovernanceCarveout({
+    pr,
+    files,
+    author: pr?.user?.login ? String(pr.user.login) : '',
+    headSha: currentHead,
+    expectedHeadSha: expected,
+    env,
+  });
+  const exemptRedPathLabels = [
+    ...(isDependencyAutomationManifestOnly(pr, files) ? [DEPENDENCY_MANIFEST_LABEL] : []),
+    ...governanceCarveout.exemptRedPathLabels,
+  ];
   const classification = classifyPrRiskLane({
     title: pr?.title ?? '',
     labels: labelNames(pr),
@@ -425,6 +453,9 @@ export function evaluateChecker({
   if (classification.lane !== LANES.GREEN) {
     reasons.push(`Risk lane is ${classification.lane}; only GREEN is eligible for App approval.`);
     reasons.push(...classification.reasons.map(reason => `lane: ${reason}`));
+    // Diagnostic only, and deliberately inside the already-rejecting branch: it
+    // explains WHY a `.github/**` PR stayed RED without being able to change it.
+    if (governanceCarveout.applicable) reasons.push(summarizeCarveout(governanceCarveout));
   }
 
   const checkSummary = summarizeRequiredChecks(checkRuns, statuses, requiredChecks);

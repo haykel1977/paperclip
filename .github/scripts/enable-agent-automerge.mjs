@@ -6,9 +6,11 @@
  * source of truth. Non-eligible PRs are skipped with exit 0.
  *
  * Env: GH_TOKEN, GH_REPO, PR_NUMBER, DEFAULT_BRANCH (optional, default: main),
- * REQUIRED_CHECKS (optional comma-separated list, default: verify,gitleaks),
- * EVENT_HEAD_SHA (optional; the event payload head SHA, compared against the
- * freshly-read API SHA to detect a stale/advanced head → RED).
+ * REQUIRED_CHECKS (optional comma-separated list of the branch-protection
+ * contexts that must be configured; default: the four contexts in
+ * required-checks.mjs), EVENT_HEAD_SHA (optional; the event payload head SHA,
+ * compared against the freshly-read API SHA to detect a stale/advanced head →
+ * RED).
  */
 import { fileURLToPath } from 'node:url';
 import { ghFetch } from './get-bot-token.mjs';
@@ -20,11 +22,26 @@ import {
   DEPENDENCY_MANIFEST_LABEL,
   isDependencyAutomationManifestOnly,
 } from './classify-pr-risk-lane.mjs';
+import { REQUIRED_STATUS_CHECKS, CI_EVIDENCE_CHECKS } from './required-checks.mjs';
+import { evaluateGithubGovernanceCarveout, summarizeCarveout } from './github-governance-carveout.mjs';
 
 export const AUTOMERGE_LABEL = 'automerge';
 export const AGENT_PR_LABEL = 'agent-pr';
 export const DEFAULT_MERGE_METHOD = 'SQUASH';
-export const DEFAULT_REQUIRED_CHECKS = ['verify', 'gitleaks'];
+
+/**
+ * Contexts branch protection must be configured to require before this gate
+ * will enable native auto-merge. Includes the two paperclip-checker keys: they
+ * are what actually stops a merge, so if they are not required the gate is
+ * decorative and we refuse to arm auto-merge at all.
+ */
+export const DEFAULT_REQUIRED_CHECKS = REQUIRED_STATUS_CHECKS;
+
+/**
+ * The subset consulted as risk-lane EVIDENCE on the PR head. Excludes the
+ * checker keys (circular — see required-checks.mjs).
+ */
+export const DEFAULT_EVIDENCE_CHECKS = CI_EVIDENCE_CHECKS;
 
 export const ALLOWED_AUTOMERGE_AUTHORS = new Set([
   // Dedicated autonomous delivery App (id 4384863) for this repo's witness PRs.
@@ -86,12 +103,44 @@ function requiredCheckNames(protection) {
   return new Set([...contexts, ...checks].map(check => String(check)));
 }
 
+/**
+ * Sentinel returned when the branch-protection endpoint answered 403. This is
+ * NOT the same fact as 404 and must never be collapsed into it: 403 means the
+ * token lacks `administration: read`, so protection may well be configured and
+ * strong — we simply cannot see it. Both outcomes fail closed, but only one of
+ * them is fixed by granting a permission, and an operator staring at "branch
+ * protection is not configured" while it demonstrably IS configured will chase
+ * the wrong thing for hours.
+ */
+export const BRANCH_PROTECTION_FORBIDDEN = Object.freeze({ __branchProtection: 'forbidden' });
+
+/** Reason string appended when protection is unreadable rather than absent. */
+export const BRANCH_PROTECTION_FORBIDDEN_REASON =
+  'Branch protection could not be READ (HTTP 403: the token lacks `administration: read`). ' +
+  'Failing closed — protection may be configured, but this gate cannot verify it. ' +
+  'Fix: grant the commitperclip GitHub App the repository permission `Administration: Read-only` ' +
+  'and re-approve the installation (Settings → GitHub Apps → commitperclip → Permissions). ' +
+  'Note: the workflow `permissions:` block cannot grant this — `administration` is not a ' +
+  'GITHUB_TOKEN scope, so it must be an App installation permission.';
+
+export function isBranchProtectionForbidden(protection) {
+  return protection?.__branchProtection === 'forbidden';
+}
+
 export function evaluateBranchProtection(protection, requiredChecks = DEFAULT_REQUIRED_CHECKS) {
   const failures = [];
+  if (isBranchProtectionForbidden(protection)) {
+    return { protected: false, failures: [BRANCH_PROTECTION_FORBIDDEN_REASON] };
+  }
   if (!protection) {
     return {
       protected: false,
-      failures: ['Branch protection is not configured or could not be read.'],
+      failures: [
+        'Branch protection is not configured on the base branch (HTTP 404: no protection rule). ' +
+        'Failing closed — auto-merge would be unguarded. ' +
+        `Fix: configure a protection rule requiring ${DEFAULT_REQUIRED_CHECKS.map(c => `\`${c}\``).join(', ')} ` +
+        'with "Require branches to be up to date" enabled (see doc/SECURITY-BRANCH-PROTECTION.md).',
+      ],
     };
   }
 
@@ -114,6 +163,29 @@ export function evaluateBranchProtection(protection, requiredChecks = DEFAULT_RE
   };
 }
 
+/**
+ * Best-effort HTTP status for a GitHub error. `ghFetch` attaches `statusCode`;
+ * a `gh api` shell fallback only has the message, so the message is a secondary
+ * source. Anything we cannot classify returns null and is re-thrown.
+ */
+export function branchProtectionErrorStatus(error) {
+  const code = Number(error?.statusCode ?? error?.status);
+  if (Number.isInteger(code) && code > 0) return code;
+  const message = String(error?.message ?? error);
+  if (/(→|\s)40[34]\b|\b40[34]:/.test(message)) {
+    return message.includes('403') ? 403 : 404;
+  }
+  if (message.includes('Resource not accessible by integration')) return 403;
+  if (message.includes('Not Found')) return 404;
+  return null;
+}
+
+/**
+ * Read the base branch's protection.
+ *   404 → null                          (genuinely unprotected)
+ *   403 → BRANCH_PROTECTION_FORBIDDEN   (unreadable: missing administration:read)
+ *   anything else → throw               (never guess; the caller fails closed)
+ */
 export async function fetchBranchProtection(fetchFromGitHub, repo, branch, token) {
   try {
     return await fetchFromGitHub(
@@ -121,17 +193,9 @@ export async function fetchBranchProtection(fetchFromGitHub, repo, branch, token
       token,
     );
   } catch (error) {
-    const message = String(error?.message ?? error);
-    if (
-      message.includes('→ 404') ||
-      message.includes(' 404:') ||
-      message.includes('Not Found') ||
-      message.includes('→ 403') ||
-      message.includes(' 403:') ||
-      message.includes('Resource not accessible by integration')
-    ) {
-      return null;
-    }
+    const status = branchProtectionErrorStatus(error);
+    if (status === 404) return null;
+    if (status === 403) return BRANCH_PROTECTION_FORBIDDEN;
     throw error;
   }
 }
@@ -361,8 +425,10 @@ export function planAutomerge({
   eventHeadSha = '',
   branchProtection,
   requiredChecks = DEFAULT_REQUIRED_CHECKS,
+  evidenceChecks = DEFAULT_EVIDENCE_CHECKS,
   defaultBranch = 'main',
   classificationError = false,
+  env = process.env,
 }) {
   const author = authorLogin(pr);
   // Bounded, verifiable dependency exemption: an approved lockfile-refresh or
@@ -373,10 +439,25 @@ export function planAutomerge({
   // apply the identical carve-out.
   const dependencyAutomation = isDependencyAutomationManifestOnly(pr, files);
 
+  // Narrow `.github/**` governance carve-out, evaluated IDENTICALLY to
+  // paperclip-checker.mjs so both gates reach the same lane — a split verdict
+  // would let the App approve a PR that auto-merge then silently never arms.
+  // It defaults to SHADOW, where `exemptRedPathLabels` comes back empty and a
+  // `.github/**` PR stays RED exactly as before; see
+  // github-governance-carveout.mjs for the settings that would arm it.
+  const carveout = evaluateGithubGovernanceCarveout({
+    pr,
+    files,
+    author,
+    headSha: pr?.head?.sha ?? '',
+    expectedHeadSha: eventHeadSha ?? '',
+    env,
+  });
+
   let riskLane = LANES.RED;
   let laneReasons = ['Risk-lane classification unavailable; failing closed to RED.'];
   if (!classificationError) {
-    const { evidence, requiredEvidenceNames } = buildRequiredEvidence(checkRuns, requiredChecks);
+    const { evidence, requiredEvidenceNames } = buildRequiredEvidence(checkRuns, evidenceChecks);
     try {
       const classification = classifyPrRiskLane({
         title: pr?.title ?? '',
@@ -387,7 +468,10 @@ export function planAutomerge({
         expectedHeadSha: eventHeadSha ?? '',
         evidence,
         requiredEvidence: requiredEvidenceNames,
-        exemptRedPathLabels: dependencyAutomation ? [DEPENDENCY_MANIFEST_LABEL] : [],
+        exemptRedPathLabels: [
+          ...(dependencyAutomation ? [DEPENDENCY_MANIFEST_LABEL] : []),
+          ...carveout.exemptRedPathLabels,
+        ],
       });
       riskLane = classification.lane;
       laneReasons = classification.reasons;
@@ -400,15 +484,15 @@ export function planAutomerge({
 
   const revocation = evaluateAutoMergeRevocation(pr, options);
   if (revocation.revoke) {
-    return { action: 'disable', riskLane, laneReasons, reasons: revocation.reasons };
+    return { action: 'disable', riskLane, laneReasons, carveout, reasons: revocation.reasons };
   }
 
   const eligibility = evaluateAutomergeEligibility(pr, options);
   if (!eligibility.eligible) {
-    return { action: 'skip', riskLane, laneReasons, reasons: eligibility.failures };
+    return { action: 'skip', riskLane, laneReasons, carveout, reasons: eligibility.failures };
   }
 
-  return { action: 'enable', riskLane, laneReasons, reasons: [] };
+  return { action: 'enable', riskLane, laneReasons, carveout, reasons: [] };
 }
 
 async function main() {
@@ -433,6 +517,11 @@ async function main() {
   const branch = pr?.base?.ref ?? defaultBranch;
   const requiredChecks = parseRequiredChecks(process.env.REQUIRED_CHECKS);
   const branchProtection = await fetchBranchProtection(ghFetch, GH_REPO, branch, GH_TOKEN);
+  if (isBranchProtectionForbidden(branchProtection)) {
+    console.log(`::warning::[automerge] ${BRANCH_PROTECTION_FORBIDDEN_REASON}`);
+  } else if (!branchProtection) {
+    console.log(`::warning::[automerge] Branch protection returned 404 for \`${branch}\`: no protection rule is configured. Failing closed.`);
+  }
 
   // The event payload's head SHA (captured when the workflow was triggered) is
   // an INDEPENDENT source from the freshly re-read pr.head.sha. If they differ,
@@ -470,6 +559,8 @@ async function main() {
     defaultBranch,
     classificationError,
   });
+
+  console.log(`::notice::[automerge] ${summarizeCarveout(plan.carveout)}`);
 
   if (plan.action === 'disable') {
     await disablePullRequestAutoMerge(fetch, GH_TOKEN, pr.node_id);

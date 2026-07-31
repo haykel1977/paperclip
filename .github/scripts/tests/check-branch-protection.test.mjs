@@ -1,14 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  ADVISORY_CHECKS,
   RECOMMENDED,
+  REQUIRED_STATUS_CHECKS,
   evaluateProtection,
   formatReport,
 } from '../check-branch-protection.mjs';
 
+// The live required contexts, from the single source of truth in
+// required-checks.mjs. Spelling them out here rather than reusing the import
+// would recreate exactly the drift this module was introduced to remove.
 const fullyProtected = {
   required_pull_request_reviews: { required_approving_review_count: 1 },
-  required_status_checks: { strict: true, contexts: ['verify', 'gitleaks'] },
+  required_status_checks: { strict: true, contexts: [...REQUIRED_STATUS_CHECKS] },
   enforce_admins: { enabled: true },
   allow_force_pushes: { enabled: false },
   allow_deletions: { enabled: false },
@@ -63,25 +68,58 @@ test('evaluateProtection: missing required_status_checks flagged', () => {
 test('evaluateProtection: detects non-strict required status checks', () => {
   const result = evaluateProtection({
     ...fullyProtected,
-    required_status_checks: { strict: false, contexts: ['verify', 'gitleaks'] },
+    required_status_checks: { strict: false, contexts: [...REQUIRED_STATUS_CHECKS] },
   });
   assert.ok(result.missing.some((m) => m.includes('up to date')));
 });
 
-test('evaluateProtection: detects missing required check context', () => {
-  const result = evaluateProtection({
-    ...fullyProtected,
-    required_status_checks: { strict: true, contexts: ['verify'] },
-  });
-  assert.ok(result.missing.some((m) => m.includes('`gitleaks`')));
+test('evaluateProtection: detects each missing required check context individually', () => {
+  for (const omitted of REQUIRED_STATUS_CHECKS) {
+    const result = evaluateProtection({
+      ...fullyProtected,
+      required_status_checks: {
+        strict: true,
+        contexts: REQUIRED_STATUS_CHECKS.filter(check => check !== omitted),
+      },
+    });
+    assert.ok(
+      result.missing.some((m) => m.includes(`\`${omitted}\``)),
+      `dropping ${omitted} from branch protection must be reported`,
+    );
+  }
 });
 
 test('evaluateProtection: accepts required checks declared via GitHub checks array', () => {
   const result = evaluateProtection({
     ...fullyProtected,
-    required_status_checks: { strict: true, checks: [{ context: 'verify' }, { context: 'gitleaks' }] },
+    required_status_checks: {
+      strict: true,
+      checks: REQUIRED_STATUS_CHECKS.map(context => ({ context })),
+    },
   });
   assert.equal(result.missing.length, 0);
+});
+
+test('evaluateProtection: requiring an advisory check is flagged (verify already aggregates it)', () => {
+  // `Build` and `Typecheck + Release Registry` are lanes that `verify` already
+  // waits on. Requiring them separately makes branch protection wait twice on
+  // one signal, and wedges every PR if such a lane context is ever renamed.
+  for (const advisory of ADVISORY_CHECKS) {
+    const result = evaluateProtection({
+      ...fullyProtected,
+      required_status_checks: { strict: true, contexts: [...REQUIRED_STATUS_CHECKS, advisory] },
+    });
+    assert.ok(
+      result.missing.some((m) => m.includes(`Do NOT require advisory status check \`${advisory}\``)),
+      `${advisory} must not be a required context`,
+    );
+  }
+});
+
+test('the required and advisory sets are disjoint', () => {
+  for (const advisory of ADVISORY_CHECKS) {
+    assert.ok(!REQUIRED_STATUS_CHECKS.includes(advisory), `${advisory} cannot be both`);
+  }
 });
 
 // ── formatReport ────────────────────────────────────────────────────────────────

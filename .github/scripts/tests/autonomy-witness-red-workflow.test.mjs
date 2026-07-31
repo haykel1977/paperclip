@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { planAutomerge } from '../enable-agent-automerge.mjs';
+import { DEFAULT_REQUIRED_CHECKS, planAutomerge } from '../enable-agent-automerge.mjs';
 
 // Static policy tests for the RED Autonomy Witness infrastructure. The workflow
 // (autonomy-witness-red.yml) is the trust boundary — trigger, permissions,
@@ -396,10 +396,10 @@ test('planAutomerge: a risk:red-labelled witness PR classifies RED and is skippe
     files: [{ filename: 'doc/autonomy-witness-red/123456.md', status: 'added', additions: 12, deletions: 0, changes: 12 }],
     checkRuns: [
       { name: 'verify', status: 'completed', conclusion: 'success' },
-      { name: 'gitleaks', status: 'completed', conclusion: 'success' },
+      { name: 'Secret Scan', status: 'completed', conclusion: 'success' },
     ],
     eventHeadSha: HEAD,
-    branchProtection: { required_status_checks: { strict: true, contexts: ['verify', 'gitleaks'] } },
+    branchProtection: { required_status_checks: { strict: true, contexts: [...DEFAULT_REQUIRED_CHECKS] } },
     defaultBranch: 'main',
   });
   assert.equal(result.riskLane, 'RED', 'the explicit risk:red label must force the RED lane');

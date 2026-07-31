@@ -251,7 +251,7 @@ test('RED: malformed head SHA fails closed', () => {
 
 test('RED: neutral required evidence fails closed', () => {
   const result = classifyPrRiskLane(basePr({
-    evidence: [{ name: 'verify', conclusion: 'neutral' }, { name: 'gitleaks', conclusion: 'success' }],
+    evidence: [{ name: 'verify', conclusion: 'neutral' }, { name: 'Secret Scan', conclusion: 'success' }],
   }));
   assert.equal(result.lane, LANES.RED);
   assert.ok(result.reasons.some(r => r.includes('neutral/skipped/failing')));
@@ -259,7 +259,7 @@ test('RED: neutral required evidence fails closed', () => {
 
 test('RED: skipped required evidence fails closed', () => {
   const result = classifyPrRiskLane(basePr({
-    evidence: [{ name: 'verify', conclusion: 'skipped' }, { name: 'gitleaks', conclusion: 'success' }],
+    evidence: [{ name: 'verify', conclusion: 'skipped' }, { name: 'Secret Scan', conclusion: 'success' }],
   }));
   assert.equal(result.lane, LANES.RED);
 });
@@ -440,9 +440,9 @@ test('matchRedPaths judges the rename source (previous_filename), not just the n
 test('evaluateEvidence flags missing and non-passing separately', () => {
   const result = evaluateEvidence(
     [{ name: 'verify', conclusion: 'neutral' }],
-    ['verify', 'gitleaks'],
+    ['verify', 'Secret Scan'],
   );
-  assert.deepEqual(result.missing, ['gitleaks']);
+  assert.deepEqual(result.missing, ['Secret Scan']);
   assert.equal(result.notPassing.length, 1);
   assert.equal(result.allPassing, false);
 });

@@ -28,6 +28,12 @@ import {
   resolveCheckerInstallationId,
   LEAST_PRIVILEGE_PERMISSIONS,
 } from '../paperclip-app-token.mjs';
+import { CI_EVIDENCE_CHECKS } from '../required-checks.mjs';
+import {
+  CARVEOUT_JUDGE_APP_ID_ENV,
+  CARVEOUT_JUDGE_APP_SLUG_ENV,
+  CARVEOUT_MODE_ENV,
+} from '../github-governance-carveout.mjs';
 
 const HEAD = 'a'.repeat(40);
 const OTHER = 'b'.repeat(40);
@@ -40,7 +46,7 @@ const activeConfig = () => ({ active: true, reasons: [], appId: '999', privateKe
 // Check-runs from the EXPECTED producer (github-actions, id 15368).
 const greenChecks = () => [
   { name: 'verify', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
-  { name: 'gitleaks', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
+  { name: 'Secret Scan', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
 ];
 
 function greenPr(overrides = {}) {
@@ -71,6 +77,7 @@ function evalGreen(overrides = {}) {
     lastPusherLogin: overrides.lastPusherLogin ?? 'paperclipai[bot]',
     existingAppReview: overrides.existingAppReview ?? null,
     ...('defaultBranch' in overrides ? { defaultBranch: overrides.defaultBranch } : {}),
+    ...('env' in overrides ? { env: overrides.env } : {}),
   });
 }
 
@@ -130,17 +137,17 @@ test('loadCheckerPolicy: env JSON policy wins and is producer-bound', () => {
 test('loadCheckerPolicy: reads committed config file when no env policy', () => {
   const fake = JSON.stringify({
     appSlug: 'paperclip-checker[bot]',
-    requiredChecks: [{ name: 'gitleaks', type: 'check_run', appSlug: 'github-actions', appId: 15368 }],
+    requiredChecks: [{ name: 'Secret Scan', type: 'check_run', appSlug: 'github-actions', appId: 15368 }],
   });
   const p = loadCheckerPolicy({ CHECKER_CONFIG_PATH: '/whatever.json' }, () => fake);
-  assert.equal(p.requiredChecks[0].name, 'gitleaks');
+  assert.equal(p.requiredChecks[0].name, 'Secret Scan');
   assert.equal(p.requiredChecks[0].appId, 15368);
 });
 
 test('loadCheckerPolicy: falls back to built-in default when file unreadable', () => {
   const p = loadCheckerPolicy({}, () => { throw new Error('ENOENT'); });
   assert.equal(p.appSlug, DEFAULT_APP_SLUG);
-  assert.deepEqual(p.requiredChecks.map(c => c.name), ['verify', 'gitleaks']);
+  assert.deepEqual(p.requiredChecks.map(c => c.name), [...CI_EVIDENCE_CHECKS]);
 });
 
 // ── summarizeRequiredChecks: only success from the EXPECTED producer passes ──
@@ -156,7 +163,7 @@ for (const conclusion of ['neutral', 'skipped', 'failure', 'cancelled', 'timed_o
     const r = summarizeRequiredChecks(
       [
         { name: 'verify', status: 'completed', conclusion, app: { ...GH_ACTIONS } },
-        { name: 'gitleaks', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
+        { name: 'Secret Scan', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
       ],
       [],
       POLICY,
@@ -173,14 +180,14 @@ test('summarizeRequiredChecks: missing required check → pending (not failed)',
     POLICY,
   );
   assert.equal(r.state, 'pending');
-  assert.deepEqual(r.pendingNames, ['gitleaks']);
+  assert.deepEqual(r.pendingNames, ['Secret Scan']);
 });
 
 test('summarizeRequiredChecks: in-progress check → pending', () => {
   const r = summarizeRequiredChecks(
     [
       { name: 'verify', status: 'in_progress', conclusion: null, app: { ...GH_ACTIONS } },
-      { name: 'gitleaks', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
+      { name: 'Secret Scan', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
     ],
     [], POLICY,
   );
@@ -193,7 +200,7 @@ test('summarizeRequiredChecks: newest run wins over stale success', () => {
     [
       { name: 'verify', status: 'completed', conclusion: 'success', completed_at: '2024-01-01T00:00:00Z', app: { ...GH_ACTIONS } },
       { name: 'verify', status: 'completed', conclusion: 'failure', completed_at: '2024-02-01T00:00:00Z', app: { ...GH_ACTIONS } },
-      { name: 'gitleaks', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
+      { name: 'Secret Scan', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
     ],
     [], POLICY,
   );
@@ -206,7 +213,7 @@ test('summarizeRequiredChecks: same-name check-run from WRONG app → failed (sp
   const r = summarizeRequiredChecks(
     [
       { name: 'verify', status: 'completed', conclusion: 'success', app: { slug: 'evil-app', id: 99999 } },
-      { name: 'gitleaks', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
+      { name: 'Secret Scan', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
     ],
     [], POLICY,
   );
@@ -218,7 +225,7 @@ test('summarizeRequiredChecks: no producer app info → not matched (spoof block
   const r = summarizeRequiredChecks(
     [
       { name: 'verify', status: 'completed', conclusion: 'success' },
-      { name: 'gitleaks', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
+      { name: 'Secret Scan', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
     ],
     [], POLICY,
   );
@@ -231,7 +238,7 @@ test('summarizeRequiredChecks: commit status for a check_run-typed requirement d
   // same-named commit status is ignored and the requirement stays pending.
   const r = summarizeRequiredChecks(
     [],
-    [{ context: 'verify', state: 'success' }, { context: 'gitleaks', state: 'success' }],
+    [{ context: 'verify', state: 'success' }, { context: 'Secret Scan', state: 'success' }],
     POLICY,
   );
   assert.equal(r.state, 'pending');
@@ -316,6 +323,116 @@ test('evaluateChecker: manifest-only but UNTRUSTED author → RED, rejected (exe
   });
   assert.equal(r.decision, 'rejected', r.reasons.join('; '));
   assert.equal(r.riskLane, 'RED');
+});
+
+// ── .github/** governance carve-out, as wired into the checker ────────────────
+
+const carveoutPr = () => greenPr({
+  user: { login: 'solidus-paperclip-delivery[bot]' },
+  head: { sha: HEAD, ref: 'agent/tweak-ci', repo: { full_name: 'paperclipai/paperclip' } },
+});
+
+const enforceEnv = {
+  [CARVEOUT_MODE_ENV]: 'enforce',
+  [CARVEOUT_JUDGE_APP_ID_ENV]: '4372695',
+  [CARVEOUT_JUDGE_APP_SLUG_ENV]: 'solidus-paperclip-checker',
+};
+
+// A single, in-bounds, non-escalating workflow edit — the ONLY shape the
+// carve-out is ever meant to pass. Every test below mutates one property of it.
+const carveoutFiles = () => [{
+  filename: '.github/workflows/nightly-cache-warm.yml',
+  additions: 2,
+  deletions: 1,
+  changes: 3,
+  patch: '@@ -3,3 +3,4 @@\n-  schedule: "0 3 * * *"\n+  schedule: "0 4 * * *"\n+  # retimed\n',
+}];
+
+test('carve-out: default (unset env) is shadow — a .github/** PR is still RED', () => {
+  const r = evalGreen({ pr: carveoutPr(), files: carveoutFiles(), env: {} });
+  assert.equal(r.decision, 'rejected', r.reasons.join('; '));
+  assert.equal(r.riskLane, 'RED');
+  assert.match(r.reasons.join(' '), /governance carve-out: withheld \(shadow/);
+});
+
+test('carve-out: shadow reports would-be eligibility without granting it', () => {
+  const r = evalGreen({
+    pr: carveoutPr(),
+    files: carveoutFiles(),
+    env: { ...enforceEnv, [CARVEOUT_MODE_ENV]: 'shadow' },
+  });
+  assert.equal(r.riskLane, 'RED', 'shadow must never change the lane');
+  assert.match(r.reasons.join(' '), /would-be eligible/);
+});
+
+test('carve-out: enforce with an external judge lets one bounded .github edit through', () => {
+  // The positive control. Without it every assertion below would pass vacuously.
+  const r = evalGreen({ pr: carveoutPr(), files: carveoutFiles(), env: enforceEnv });
+  assert.equal(r.riskLane, 'GREEN', r.reasons.join('; '));
+  assert.equal(r.decision, 'approved', r.reasons.join('; '));
+});
+
+test('carve-out: cannot amend its own judge even in enforce mode', () => {
+  for (const filename of [
+    '.github/scripts/github-governance-carveout.mjs',
+    '.github/scripts/tests/github-governance-carveout.test.mjs',
+    '.github/scripts/paperclip-checker.mjs',
+    '.github/paperclip-checker.config.json',
+    '.github/workflows/paperclip-checker.yml',
+    '.github/CODEOWNERS',
+  ]) {
+    const r = evalGreen({
+      pr: carveoutPr(),
+      files: [{ ...carveoutFiles()[0], filename }],
+      env: enforceEnv,
+    });
+    assert.equal(r.riskLane, 'RED', `${filename} must stay RED`);
+    assert.equal(r.decision, 'rejected');
+  }
+});
+
+test('carve-out: enforce still refuses a permission-broadening workflow edit', () => {
+  const r = evalGreen({
+    pr: carveoutPr(),
+    files: [{
+      ...carveoutFiles()[0],
+      patch: '@@ -1,3 +1,3 @@\n permissions:\n-  contents: read\n+  contents: write\n',
+    }],
+    env: enforceEnv,
+  });
+  assert.equal(r.riskLane, 'RED', r.reasons.join('; '));
+});
+
+test('carve-out: enforce still refuses an oversized .github diff', () => {
+  const r = evalGreen({
+    pr: carveoutPr(),
+    files: [{ ...carveoutFiles()[0], additions: 400, deletions: 0, changes: 400 }],
+    env: enforceEnv,
+  });
+  assert.equal(r.riskLane, 'RED', r.reasons.join('; '));
+});
+
+test('carve-out: enforce still refuses an unknown actor', () => {
+  const r = evalGreen({
+    pr: greenPr({
+      user: { login: 'mallory' },
+      head: { sha: HEAD, ref: 'agent/tweak-ci', repo: { full_name: 'paperclipai/paperclip' } },
+    }),
+    files: carveoutFiles(),
+    headCommitAuthorLogin: 'mallory',
+    lastPusherLogin: 'mallory',
+    env: enforceEnv,
+  });
+  assert.equal(r.riskLane, 'RED', r.reasons.join('; '));
+});
+
+test('carve-out: a non-.github file alongside the exempted edit revokes the exemption', () => {
+  const r = evalGreen({
+    pr: carveoutPr(),
+    files: [...carveoutFiles(), { filename: 'server/src/auth/session.ts', additions: 1, deletions: 0, changes: 1 }],
+    env: enforceEnv,
+  });
+  assert.equal(r.riskLane, 'RED', r.reasons.join('; '));
 });
 
 test('evaluateChecker: Dependabot touching .npmrc (non-exemptable label) → RED, rejected', () => {
@@ -488,7 +605,7 @@ test('evaluateChecker: malformed head SHA → rejected', () => {
 test('evaluateChecker: neutral required check → rejected', () => {
   const r = evalGreen({ checkRuns: [
     { name: 'verify', status: 'completed', conclusion: 'neutral', app: { ...GH_ACTIONS } },
-    { name: 'gitleaks', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
+    { name: 'Secret Scan', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
   ] });
   assert.equal(r.decision, 'rejected');
 });
@@ -496,13 +613,13 @@ test('evaluateChecker: neutral required check → rejected', () => {
 test('evaluateChecker: missing required check → pending (not approved, not rejected)', () => {
   const r = evalGreen({ checkRuns: [{ name: 'verify', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } }] });
   assert.equal(r.decision, 'pending');
-  assert.match(r.reasons.join(' '), /gitleaks/);
+  assert.match(r.reasons.join(' '), /Secret Scan/);
 });
 
 test('evaluateChecker: spoofed same-name wrong-app check → rejected (blocked, never pending)', () => {
   const r = evalGreen({ checkRuns: [
     { name: 'verify', status: 'completed', conclusion: 'success', app: { slug: 'evil-app', id: 99999 } },
-    { name: 'gitleaks', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
+    { name: 'Secret Scan', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
   ] });
   assert.equal(r.decision, 'rejected');
   assert.match(r.reasons.join(' '), /unexpected app/i);
@@ -511,10 +628,10 @@ test('evaluateChecker: spoofed same-name wrong-app check → rejected (blocked, 
 // ── evaluateChecker: pending → approval after last check turns green ─────────
 
 test('evaluateChecker: pending initially, then approved once last check completes green', () => {
-  // First evaluation: gitleaks still in-progress → pending (no approval).
+  // First evaluation: the secret scan is still in-progress → pending (no approval).
   const first = evalGreen({ checkRuns: [
     { name: 'verify', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
-    { name: 'gitleaks', status: 'in_progress', conclusion: null, app: { ...GH_ACTIONS } },
+    { name: 'Secret Scan', status: 'in_progress', conclusion: null, app: { ...GH_ACTIONS } },
   ] });
   assert.equal(first.decision, 'pending');
 
@@ -593,7 +710,7 @@ test('evaluateChecker: workflow_run re-run now failing at same SHA → rejected 
     existingAppReview: { id: 13, commit_id: HEAD, state: 'APPROVED' },
     checkRuns: [
       { name: 'verify', status: 'completed', conclusion: 'failure', app: { ...GH_ACTIONS } },
-      { name: 'gitleaks', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
+      { name: 'Secret Scan', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
     ],
   });
   assert.equal(r.decision, 'rejected');
@@ -860,13 +977,13 @@ test('integration(mocked): new push after evidence (stale event SHA / race) reje
 });
 
 test('integration(mocked): workflow_run completion — pending then approved after last check green', async () => {
-  // Pass 1: gitleaks still running → pending (no approval).
+  // Pass 1: the secret scan is still running → pending (no approval).
   const pending = await drive({
     pr: greenPr(),
     files: [{ filename: 'server/src/services/cursor.ts', additions: 4, deletions: 1, changes: 5 }],
     checkRuns: [
       { name: 'verify', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
-      { name: 'gitleaks', status: 'in_progress', conclusion: null, app: { ...GH_ACTIONS } },
+      { name: 'Secret Scan', status: 'in_progress', conclusion: null, app: { ...GH_ACTIONS } },
     ],
     statuses: [],
     reviews: [],
@@ -874,7 +991,7 @@ test('integration(mocked): workflow_run completion — pending then approved aft
   }, { eventAction: 'workflow_run' });
   assert.equal(pending.decision, 'pending');
 
-  // Pass 2: the Secret Scan workflow_run completes, gitleaks now green → approved.
+  // Pass 2: the Secret Scan workflow_run completes green → approved.
   const approved = await drive({
     pr: greenPr(),
     files: [{ filename: 'server/src/services/cursor.ts', additions: 4, deletions: 1, changes: 5 }],
@@ -892,7 +1009,7 @@ test('integration(mocked): spoofed same-name check from wrong app is rejected en
     files: [{ filename: 'server/src/services/cursor.ts', additions: 4, deletions: 1, changes: 5 }],
     checkRuns: [
       { name: 'verify', status: 'completed', conclusion: 'success', app: { slug: 'evil-app', id: 99999 } },
-      { name: 'gitleaks', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
+      { name: 'Secret Scan', status: 'completed', conclusion: 'success', app: { ...GH_ACTIONS } },
     ],
     statuses: [],
     reviews: [],
@@ -906,7 +1023,7 @@ test('integration(mocked): spoofed same-name check from wrong app is rejected en
 
 test('fetchAllPagesFromKey: follows pages until a short page and concatenates the keyed arrays', async () => {
   const pageOne = Array.from({ length: 100 }, (_, i) => ({ name: `verify-${i}` }));
-  const pageTwo = [{ name: 'gitleaks' }];
+  const pageTwo = [{ name: 'Secret Scan' }];
   const calls = [];
   const gh = async (path) => {
     calls.push(path);
@@ -915,7 +1032,7 @@ test('fetchAllPagesFromKey: follows pages until a short page and concatenates th
   };
   const all = await fetchAllPagesFromKey(gh, '/repos/o/r/commits/abc/check-runs', 'tok', 'check_runs');
   assert.equal(all.length, 101);
-  assert.equal(all[100].name, 'gitleaks');
+  assert.equal(all[100].name, 'Secret Scan');
   // Stopped after the short page 2; did not request page 3.
   assert.equal(calls.length, 2);
   assert.match(calls[0], /per_page=100&page=1/);
@@ -969,10 +1086,13 @@ test('workflow: runner job name is DISTINCT from the App-authored required check
 });
 
 // ── secret-scan workflow: required "Secret Scan" context must be produced ──
-// Branch protection on `main` requires the context "Secret Scan", while
-// internal tooling (producer binding, classifier, automerge, protection audit)
-// binds to "gitleaks". Both contexts must exist: the scanning job keeps its
-// `gitleaks` id/context, and a gate job publishes "Secret Scan" gated on it.
+// Branch protection on `main` requires the context "Secret Scan", and internal
+// tooling (producer binding, classifier, automerge, protection audit) now binds
+// to that same name via required-checks.mjs. Previously those four bound to
+// "gitleaks" — the scanning job's id, which is NOT the context branch protection
+// requires — so each side asserted a different check. Both contexts still exist:
+// the scanning job keeps its `gitleaks` id so the underlying signal stays
+// separately visible, and a gate job publishes "Secret Scan" gated on it.
 
 function secretScanBlock(jobKey) {
   const wfPath = fileURLToPath(new URL('../../workflows/secret-scan.yml', import.meta.url));
@@ -987,14 +1107,23 @@ function secretScanBlock(jobKey) {
   return lines.slice(start, end).join('\n');
 }
 
-test('secret-scan: gitleaks job/context is preserved for internal producer binding', () => {
-  // The checker producer binding, classifier, automerge, and protection audit
-  // all key on the check-run name `gitleaks`. Renaming this job would silently
-  // break every one of those bindings, so the id (== emitted context) must
+test('secret-scan: the gitleaks scanning job keeps its own separately-visible context', () => {
+  // The gate job below is only a pass/fail relay, so the underlying scan must
+  // stay visible under its own context. The job id (== emitted context) must
   // remain `gitleaks` with no overriding `name:`.
   const block = secretScanBlock('gitleaks');
   assert.ok(block, 'secret-scan workflow must keep a jobs.gitleaks block');
   assert.doesNotMatch(block, /^ {4}name:\s/m, 'gitleaks job must not override its context name');
+});
+
+test('secret-scan: internal tooling binds to "Secret Scan", the context branch protection requires', () => {
+  // The drift this replaced: branch protection required "Secret Scan" while the
+  // producer binding, classifier, automerge and protection audit all keyed on
+  // "gitleaks", so the two sides asserted different checks and neither noticed.
+  assert.ok(CI_EVIDENCE_CHECKS.includes('Secret Scan'));
+  assert.ok(!CI_EVIDENCE_CHECKS.includes('gitleaks'), 'the job id is not a required context');
+  assert.ok(DEFAULT_REQUIRED_CHECK_POLICY.some(check => check.name === 'Secret Scan'));
+  assert.ok(!DEFAULT_REQUIRED_CHECK_POLICY.some(check => check.name === 'gitleaks'));
 });
 
 test('secret-scan: a gate job publishes the "Secret Scan" required context, gated on gitleaks', () => {
@@ -1504,15 +1633,15 @@ test('finalize SSOT: TOCTOU + dismiss failure publishes a FAILURE whose summary 
 test('finalize SSOT: pending publishes an in_progress check whose summary reflects the pending reasons', async () => {
   const { calls, deps } = recordingDeps();
   const outcome = await executeDecision(baseArgs({
-    result: { decision: 'pending', dismissStale: false, riskLane: 'GREEN', reasons: ['awaiting verify + gitleaks'] },
+    result: { decision: 'pending', dismissStale: false, riskLane: 'GREEN', reasons: ['awaiting verify + Secret Scan'] },
     deps,
   }));
   assert.equal(outcome.status, 'pending');
   assert.equal(calls.upsert.length, 1);
   assert.equal(calls.upsert[0].status, 'in_progress');
   assert.equal(calls.upsert[0].conclusion, undefined);
-  assert.match(calls.upsert[0].summary, /awaiting verify \+ gitleaks/);
-  assert.match(outcome.reasons.join(' '), /awaiting verify \+ gitleaks/);
+  assert.match(calls.upsert[0].summary, /awaiting verify \+ Secret Scan/);
+  assert.match(outcome.reasons.join(' '), /awaiting verify \+ Secret Scan/);
 });
 
 test('finalize SSOT: rejected/blocked default publishes a FAILURE whose summary reflects the decision reasons', async () => {

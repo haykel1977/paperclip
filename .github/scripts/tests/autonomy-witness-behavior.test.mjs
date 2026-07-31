@@ -57,14 +57,20 @@ function makeRepo() {
   mkdirSync(binDir);
   const listJson = join(root, 'pr-list.json');
   const createLog = join(root, 'gh-create.log');
+  const labelsJson = join(root, 'pr-labels.json');
+  writeFileSync(labelsJson, '[]');
   // gh stub: faithfully applies the script's `--jq` via system jq to a fixture.
   //   pr list   → runs the script's owner-scoping jq against the fixture.
   //   pr create → records the call AND appends an owner-scoped row to the fixture
   //               so the script's post-create `pr list` resolves the new number
   //               (mirrors reality: a just-created PR is immediately listable).
   //   pr view   → for `--json author` echoes GH_PR_AUTHOR (the identity under
-  //               test); otherwise echoes a URL. This is what the fail-closed
-  //               author guard reads.
+  //               test); for `--json labels` applies the script's --jq to the
+  //               accumulated label state; otherwise echoes a URL.
+  //   pr edit   → records --add-label values into the label state, UNLESS
+  //               GH_LABEL_APPLY_FAIL=1, which models the real failure mode the
+  //               script guards against: the edit exits 0 but the label never
+  //               actually lands.
   const stub = `#!/usr/bin/env bash
 set -euo pipefail
 jq_expr() {
@@ -89,8 +95,24 @@ if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "view" ]; then
   fields="\$(json_fields "\$@")"
   if [[ "\$fields" == *author* ]]; then
     echo "\${GH_PR_AUTHOR}"
+  elif [[ "\$fields" == *labels* ]]; then
+    jq -r "{labels: [.[] | {name: .}]} | \$(jq_expr "\$@")" "\$GH_PR_LABELS_JSON"
   else
     echo "https://example.test/pr/\${3:-0}"
+  fi
+  exit 0
+fi
+if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "edit" ]; then
+  echo "edit $*" >> "\$GH_EDIT_LOG"
+  if [ "\${GH_LABEL_APPLY_FAIL:-0}" != "1" ]; then
+    args=("\$@")
+    for ((i=0;i<\${#args[@]};i++)); do
+      if [ "\${args[\$i]}" = "--add-label" ]; then
+        tmp="\$(mktemp)"
+        jq --arg l "\${args[\$((i+1))]}" '. + [\$l] | unique' "\$GH_PR_LABELS_JSON" > "\$tmp"
+        mv "\$tmp" "\$GH_PR_LABELS_JSON"
+      fi
+    done
   fi
   exit 0
 fi
@@ -115,7 +137,7 @@ exit 1
   writeFileSync(ghPath, stub);
   chmodSync(ghPath, 0o755);
 
-  return { root, origin, binDir, listJson, createLog };
+  return { root, origin, binDir, listJson, createLog, labelsJson, editLog: join(root, 'gh-edit.log') };
 }
 
 /** Run the witness script from a FRESH clone (each dispatch is a fresh checkout).
@@ -132,6 +154,7 @@ function runWitness(repo, {
   prList = [],
   prAuthor = 'app/solidus-paperclip-delivery',
   createdPr = '1000',
+  labelApplyFail = false,
 } = {}) {
   writeFileSync(repo.listJson, JSON.stringify(prList));
   const wd = mkdtempSync(join(repo.root, 'wd-'));
@@ -152,6 +175,9 @@ function runWitness(repo, {
       GH_PR_AUTHOR: prAuthor,
       GH_STUB_OWNER: OWNER,
       GH_CREATED_PR: createdPr,
+      GH_PR_LABELS_JSON: repo.labelsJson,
+      GH_EDIT_LOG: repo.editLog,
+      GH_LABEL_APPLY_FAIL: labelApplyFail ? '1' : '0',
     },
   });
   return r;
@@ -168,6 +194,16 @@ function createCount(repo) {
 
 function commitCountOnBranch(repo) {
   return Number(run('git', ['-C', repo.origin, 'rev-list', '--count', BRANCH_REF]).stdout.trim());
+}
+
+function appliedLabels(repo) {
+  return JSON.parse(readFileSync(repo.labelsJson, 'utf8'));
+}
+
+function editLines(repo) {
+  return existsSync(repo.editLog)
+    ? readFileSync(repo.editLog, 'utf8').trim().split('\n').filter(Boolean)
+    : [];
 }
 
 test('branch absent: creates run-id branch, one docs commit, opens a PR', { skip }, () => {
@@ -417,6 +453,69 @@ test('fail closed: near-lookalike App logins are rejected (exact match, no prefi
     } finally {
       rmSync(repo.root, { recursive: true, force: true });
     }
+  }
+});
+
+test('positive control: both opt-in labels are applied so the real auto-merge gate is exercised', { skip }, () => {
+  // A witness that only opens a PR proves the App can create one, not that the
+  // autonomy gate would clear it. evaluateAutomergeEligibility requires BOTH
+  // `agent-pr` and `automerge`, so without them the gate would SKIP this PR and
+  // the skip would be indistinguishable from a rejection.
+  const repo = makeRepo();
+  try {
+    const r = runWitness(repo, { prList: [] });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(appliedLabels(repo).sort(), ['agent-pr', 'automerge']);
+    assert.match(r.stdout, /labelled agent-pr \+ automerge/);
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('positive control: labels are applied to a REUSED PR too, idempotently', { skip }, () => {
+  const repo = makeRepo();
+  try {
+    runWitness(repo, { prList: [] });
+    const r = runWitness(repo, {
+      prList: [{ number: 303, headRepositoryOwner: { login: OWNER } }],
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /Reusing existing witness PR #303/);
+    // `--add-label` is idempotent, so the re-run adds nothing new.
+    assert.deepEqual(appliedLabels(repo).sort(), ['agent-pr', 'automerge']);
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('fail closed: a silently-dropped label fails the witness instead of proving the opposite', { skip }, () => {
+  // `gh pr edit` can exit 0 while a label never lands (label definition missing,
+  // permission scope). A witness quietly missing `automerge` would be SKIPPED by
+  // the gate, and a skip masquerading as a pass is exactly the false green the
+  // verification step exists to prevent.
+  const repo = makeRepo();
+  try {
+    const r = runWitness(repo, { prList: [], labelApplyFail: true });
+    assert.notEqual(r.status, 0, 'a silently-dropped label must fail the witness');
+    assert.match(r.stderr, /missing the required opt-in label 'agent-pr'/);
+    assert.deepEqual(appliedLabels(repo), [], 'the stub modelled the silent drop');
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('escalation guard: a non-allowlisted author is never labelled `automerge`', { skip }, () => {
+  // Labelling a PR from an unexpected identity `automerge` is precisely the
+  // privilege escalation the author guard exists to prevent, so the label step
+  // MUST sit after that guard — not merely alongside it.
+  const repo = makeRepo();
+  try {
+    const r = runWitness(repo, { prList: [], prAuthor: 'some-other-app[bot]' });
+    assert.notEqual(r.status, 0);
+    assert.deepEqual(appliedLabels(repo), [], 'no label may be applied to a rejected identity');
+    assert.deepEqual(editLines(repo), [], '`gh pr edit` must never even be invoked');
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
   }
 });
 

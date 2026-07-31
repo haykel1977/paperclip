@@ -38,7 +38,7 @@ on:
     types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, labeled, unlabeled, edited]
   workflow_run:
     # The base-branch CI workflows that produce the required checks (verify from
-    # "PR", gitleaks from "Secret Scan"). On completion the checker re-evaluates
+    # "PR", "Secret Scan" from workflow "Secret Scan"). On completion the checker
     # the PR at that head SHA, so a pending gate can turn into an approval once
     # the last required check turns green.
     workflows: ["PR", "Secret Scan"]
@@ -141,3 +141,12 @@ jobs:
           # workflow_run input (empty on pull_request_target): the head SHA of the
           # completed CI run; the script resolves the open PR from it.
           WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          # `.github/**` governance carve-out. Repository VARIABLES, not secrets:
+          # a pull request cannot modify them, and that PR-immutability is what
+          # stops the carve-out amending its own judge. All three unset (the
+          # current state) means shadow mode, where nothing is ever exempted.
+          # Must stay identical to commitperclip-review.yml or the App gate and
+          # the auto-merge gate would reach different lanes for the same PR.
+          PAPERCLIP_GITHUB_CARVEOUT_MODE: ${{ vars.PAPERCLIP_GITHUB_CARVEOUT_MODE }}
+          PAPERCLIP_GITHUB_CARVEOUT_JUDGE_APP_ID: ${{ vars.PAPERCLIP_GITHUB_CARVEOUT_JUDGE_APP_ID }}
+          PAPERCLIP_GITHUB_CARVEOUT_JUDGE_APP_SLUG: ${{ vars.PAPERCLIP_GITHUB_CARVEOUT_JUDGE_APP_SLUG }}

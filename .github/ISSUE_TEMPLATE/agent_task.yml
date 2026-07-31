@@ -90,9 +90,9 @@ body:
     id: evidence
     attributes:
       label: Required evidence
-      description: The checks/evidence that must be green for autonomy (e.g. `verify`, `gitleaks`). Neutral/skipped/missing fails closed.
+      description: The checks/evidence that must be green for autonomy (e.g. `verify`, `Secret Scan`). Neutral/skipped/missing fails closed.
       value: |
         - verify
-        - gitleaks
+        - Secret Scan
     validations:
       required: true

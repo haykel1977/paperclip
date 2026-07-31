@@ -131,7 +131,7 @@ if [ -n "$pr_number" ]; then
 else
   gh pr create --repo "$REPO" --base "$DEFAULT_BRANCH" --head "$BRANCH" \
     --title "docs(autonomy-witness): witness run ${RUN_ID}" \
-    --body "Permanent operational witness infrastructure. This docs-only PR was opened by an allowlisted autonomous App identity, using an App installation token (NOT the built-in GITHUB_TOKEN) so the required PR workflows actually run on the exact head. It validates that autonomous identity can open a green PR through branch protection. It changes only doc/autonomy-witness/${RUN_ID}.md. Do NOT auto-merge or auto-approve. Cleanup: close this PR and delete branch ${BRANCH} after witnessing."
+    --body "Permanent operational witness infrastructure. This docs-only PR was opened by an allowlisted autonomous App identity, using an App installation token (NOT the built-in GITHUB_TOKEN) so the required PR workflows actually run on the exact head. It is the POSITIVE control for autonomy: it carries the \`agent-pr\` + \`automerge\` opt-in labels so the full gate (risk lane, required checks, branch protection, native auto-merge) is exercised end to end. It changes only doc/autonomy-witness/${RUN_ID}.md. This script never merges and never approves — GitHub's own branch protection decides. Cleanup: close this PR and delete branch ${BRANCH} after witnessing."
   pr_number="$(resolve_pr_number)"
   if [ -z "$pr_number" ]; then
     echo "ERROR: could not resolve the witness PR number after creation." >&2
@@ -150,5 +150,34 @@ if [ "$author" != "$EXPECTED_AUTHOR_GRAPHQL" ] && [ "$author" != "$EXPECTED_AUTH
   exit 1
 fi
 
-echo "Witness PR #${pr_number} authored by ${author} (App/bot identity; required PR workflows will run on the exact head)."
+# Positive control. A witness that merely opens is a weak proof: it shows the App
+# can create a PR, not that the autonomy gate would actually clear one. The
+# automerge gate requires BOTH opt-in labels (see evaluateAutomergeEligibility),
+# so applying them here is what makes this witness exercise the real decision
+# path — risk lane, required-check evidence, branch protection, and the native
+# auto-merge mutation — instead of a bypassed one.
+#
+# Applied only AFTER the author guard above: labelling a PR from an unexpected
+# identity `automerge` is precisely the escalation that guard exists to prevent.
+# The RED counterpart (autonomy-witness-red.sh) deliberately applies only
+# `risk:red` and never these, so the negative control stays negative.
+# `--add-label` is idempotent, so a re-run adds nothing.
+AGENT_PR_LABEL="agent-pr"
+AUTOMERGE_LABEL="automerge"
+gh pr edit "$pr_number" --repo "$REPO" --add-label "$AGENT_PR_LABEL" --add-label "$AUTOMERGE_LABEL"
+
+# Verify the labels actually landed. `gh pr edit` can report success while a
+# label silently fails to apply (missing label definition, permission scope), and
+# a witness quietly missing `automerge` would prove the opposite of what it
+# claims — the gate skipping it would look like the gate rejecting it.
+for required_label in "$AGENT_PR_LABEL" "$AUTOMERGE_LABEL"; do
+  present="$(gh pr view "$pr_number" --repo "$REPO" --json labels \
+    --jq "[.labels[].name] | index(\"${required_label}\") // empty")"
+  if [ -z "$present" ]; then
+    echo "ERROR: witness PR #${pr_number} is missing the required opt-in label '${required_label}'. The positive control cannot exercise the auto-merge gate without both 'agent-pr' and 'automerge'. Create the label in the repository and re-run." >&2
+    exit 1
+  fi
+done
+
+echo "Witness PR #${pr_number} authored by ${author} (App/bot identity; required PR workflows will run on the exact head), labelled ${AGENT_PR_LABEL} + ${AUTOMERGE_LABEL}."
 gh pr view "$pr_number" --repo "$REPO" --json url --jq .url

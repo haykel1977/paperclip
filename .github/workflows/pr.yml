@@ -124,6 +124,31 @@ jobs:
       - name: Test autonomy-witness (RED) runtime behavior
         run: node --test ./.github/scripts/tests/autonomy-witness-red-behavior.test.mjs
 
+      # Every suite under .github/scripts/tests must appear here; a test CI never
+      # invokes is not evidence. Pinned by autonomy-workflow-policy.test.mjs.
+      - name: Test PR quality-gate helpers
+        run: |
+          node --test \
+            ./.github/scripts/tests/check-pr-dedup-search.test.mjs \
+            ./.github/scripts/tests/check-pr-dependencies.test.mjs \
+            ./.github/scripts/tests/check-pr-governance.test.mjs \
+            ./.github/scripts/tests/check-pr-linked-issue.test.mjs \
+            ./.github/scripts/tests/check-pr-lockfile.test.mjs \
+            ./.github/scripts/tests/check-pr-template.test.mjs \
+            ./.github/scripts/tests/check-pr-test-coverage.test.mjs \
+            ./.github/scripts/tests/fetch-pr-files.test.mjs \
+            ./.github/scripts/tests/get-bot-token.test.mjs \
+            ./.github/scripts/tests/paperclip-delivery-token.test.mjs
+
+      - name: Test autonomy workflow policy
+        run: node --test ./.github/scripts/tests/autonomy-workflow-policy.test.mjs
+
+      - name: Test .github governance carve-out
+        run: node --test ./.github/scripts/tests/github-governance-carveout.test.mjs
+
+      - name: Test branch protection evaluator
+        run: node --test ./.github/scripts/tests/check-branch-protection.test.mjs
+
       - name: Test quality-gates orchestrator
         run: node --test ./.github/scripts/tests/run-quality-gates.test.mjs
 
@@ -243,10 +268,30 @@ jobs:
         run: pnpm test:run:general -- --group '${{ matrix.group }}'
 
   verify:
-    # Preserve the legacy required-check name while the underlying work runs in parallel.
+    # `verify` is the single required status context for this whole workflow, so
+    # it must aggregate EVERY lane. It previously waited on only three of the
+    # six: `verify_serialized_server`, `canary_dry_run`, and `e2e` could all fail
+    # while `verify` reported success, and because branch protection requires
+    # only `verify`, such a PR was mergeable — the aggregate asserted less than
+    # it appeared to. Adding them here is also why `Build` and
+    # `Typecheck + Release Registry` stay ADVISORY contexts (see
+    # .github/scripts/required-checks.mjs): requiring them separately would
+    # double-count lanes this job already covers.
+    #
+    # `if: always()` plus an explicit result comparison per lane guarantees a
+    # terminal conclusion: a skipped or cancelled dependency yields
+    # "skipped"/"cancelled", which is not "success", so `verify` fails rather
+    # than being skipped itself. A skipped required context stays pending in
+    # branch protection forever, which is indistinguishable from "still running".
     name: verify
     if: ${{ always() }}
-    needs: [typecheck_release_registry, general_tests, build]
+    needs:
+      - typecheck_release_registry
+      - general_tests
+      - build
+      - verify_serialized_server
+      - canary_dry_run
+      - e2e
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -256,10 +301,32 @@ jobs:
           TYPECHECK_RELEASE_REGISTRY_RESULT: ${{ needs.typecheck_release_registry.result }}
           GENERAL_TESTS_RESULT: ${{ needs.general_tests.result }}
           BUILD_RESULT: ${{ needs.build.result }}
+          VERIFY_SERIALIZED_SERVER_RESULT: ${{ needs.verify_serialized_server.result }}
+          CANARY_DRY_RUN_RESULT: ${{ needs.canary_dry_run.result }}
+          E2E_RESULT: ${{ needs.e2e.result }}
         run: |
-          test "$TYPECHECK_RELEASE_REGISTRY_RESULT" = "success"
-          test "$GENERAL_TESTS_RESULT" = "success"
-          test "$BUILD_RESULT" = "success"
+          failed=0
+          for lane in \
+            "Typecheck + Release Registry=$TYPECHECK_RELEASE_REGISTRY_RESULT" \
+            "General tests=$GENERAL_TESTS_RESULT" \
+            "Build=$BUILD_RESULT" \
+            "Verify serialized server suites=$VERIFY_SERIALIZED_SERVER_RESULT" \
+            "Canary Dry Run=$CANARY_DRY_RUN_RESULT" \
+            "e2e=$E2E_RESULT"; do
+            name="${lane%%=*}"
+            result="${lane#*=}"
+            if [ "$result" = "success" ]; then
+              echo "verify: ${name} = ${result}"
+            else
+              echo "verify: ${name} = ${result} (expected 'success')"
+              failed=1
+            fi
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "verify: at least one aggregated lane did not succeed; failing closed."
+            exit 1
+          fi
+          echo "verify: all aggregated lanes succeeded."
 
   build:
     name: Build
