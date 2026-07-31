@@ -1048,7 +1048,17 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     return { delivered: false, prUrl: null, reason: "git_add_failed" };
   }
 
-  const commitArgs = ["commit", ...(signingPlan.signCommit ? ["-S"] : []), "-m", title, "-m", body];
+  // Identite bot forcee (audit 2026-07-29) : sans cela, git herite de la
+  // config globale de la machine hote et des commits d'agents se sont
+  // retrouves signes de l'identite personnelle de l'operateur — brouillant
+  // la frontiere humain/machine que toute la gouvernance suppose nette.
+  const botName = nonEmpty(env.GIT_AUTHOR_NAME) ?? "Paperclip Agent";
+  const botEmail = nonEmpty(env.GIT_AUTHOR_EMAIL) ?? "noreply@paperclip.ing";
+  const commitArgs = [
+    "-c", `user.name=${botName}`,
+    "-c", `user.email=${botEmail}`,
+    "commit", ...(signingPlan.signCommit ? ["-S"] : []), "-m", title, "-m", body,
+  ];
   const commit = await runProc("git", commitArgs, worktreeCwd, env);
   if (commit.exitCode !== 0) {
     await log("stderr", `[delivery ${ts()}] git_commit_failed: ${commit.stderr}\n`);
