@@ -666,6 +666,22 @@ function parseGitWorktreeListPorcelain(raw: string): GitWorktreeListEntry[] {
   return entries;
 }
 
+// Un checkout de worktree interrompu laisse un arbre quasi vide : git y voit
+// des milliers de suppressions, et tout commit "git add -A" y devient
+// destructeur. Ne JAMAIS reutiliser un tel worktree.
+async function isPoisonedWorktree(worktreePath: string): Promise<number> {
+  const st = await runGit(["status", "--porcelain"], worktreePath).catch(() => "");
+  return (st.match(/^.D /gm) ?? []).length;
+}
+
+async function destroyPoisonedWorktree(repoRoot: string, worktreePath: string, branchName: string | null) {
+  await runGit(["worktree", "remove", "--force", worktreePath], repoRoot).catch(() => null);
+  await runGit(["worktree", "prune"], repoRoot).catch(() => null);
+  if (branchName) {
+    await runGit(["branch", "-D", branchName], repoRoot).catch(() => null);
+  }
+}
+
 async function resolveGitOwnerRepoRoot(cwd: string): Promise<string> {
   const checkoutRoot = path.resolve(await runGit(["rev-parse", "--show-toplevel"], cwd));
   const commonDir = await runGit(["rev-parse", "--git-common-dir"], checkoutRoot).catch(() => null);
@@ -1206,10 +1222,16 @@ export async function realizeExecutionWorkspace(input: {
   if (existingWorktree) {
     const validation = await validateReusableWorktree(worktreePath);
     if (validation?.valid) {
-      return await reuseExistingWorktree(worktreePath);
+      const poisonedDeletions = await isPoisonedWorktree(worktreePath);
+      if (poisonedDeletions > 1000) {
+        await destroyPoisonedWorktree(repoRoot, worktreePath, branchName);
+      } else {
+        return await reuseExistingWorktree(worktreePath);
+      }
+    } else {
+      const reason = validation && !validation.valid ? ` (${validation.reason})` : "";
+      throw new Error(`Configured worktree path "${worktreePath}" already exists and is not a reusable git worktree${reason}.`);
     }
-    const reason = validation && !validation.valid ? ` (${validation.reason})` : "";
-    throw new Error(`Configured worktree path "${worktreePath}" already exists and is not a reusable git worktree${reason}.`);
   }
 
   const registeredBranchWorktree = await findRegisteredGitWorktreeByBranch(repoRoot, branchName);
