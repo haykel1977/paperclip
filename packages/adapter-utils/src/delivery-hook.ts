@@ -579,6 +579,22 @@ async function pushWithRetry(input: {
   const { branch, worktreeCwd, env, log, ts, runProc, retryDelayMs = 3000 } = input;
 
   // paperclip:allow-git-push: delivery-hook pushes agent commits to the operator-configured remote (PAPA-432, see packages/adapters/AUTHORING.md)
+  // Variante push-time : le garde status-time ne voit que les suppressions
+  // NON commitees. Un commit empoisonne cree par un run anterieur presente un
+  // status propre et serait pousse au retry.
+  const guardBaseRef =
+    (await runProc("git", ["rev-parse", "--abbrev-ref", "origin/HEAD"], worktreeCwd, env)
+      .catch(() => null))?.stdout?.trim() || "origin/main";
+  const guardDiff = await runProc("git", ["diff", "--shortstat", `${guardBaseRef}...HEAD`], worktreeCwd, env)
+    .catch(() => null);
+  const guardDeletions = Number(guardDiff?.stdout?.match(/(\d+) deletions?\(-\)/)?.[1] ?? 0);
+  const guardFiles = Number(guardDiff?.stdout?.match(/(\d+) files? changed/)?.[1] ?? 0);
+  if (guardDeletions > 100000 || guardFiles > 5000) {
+    const guardMsg = `mass deletion guard (push-time): ${guardFiles} files / -${guardDeletions} lines vs ${guardBaseRef} — poisoned commit, abort, no force`;
+    await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="${guardMsg}"\n`);
+    return { exitCode: 1, stderr: guardMsg };
+  }
+
   const tryPush = () => runProc("git", ["push", "-u", "origin", branch], worktreeCwd, env);
 
   const first = await tryPush();
@@ -875,6 +891,16 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     await log("stderr", `[delivery ${ts()}] result=conflict reason="conflict marker in tracked or untracked file — abort, no force"\n`);
     return { delivered: false, prUrl: null, reason: "conflict" };
   }
+  // Mass-deletion guard (fail-closed) : un checkout de worktree interrompu
+  // laisse un arbre quasi vide ; `git add -A` y enregistre la suppression de
+  // tout ce qui manque. Deux incidents reels le 2026-07-27 (-6,4 M lignes).
+  const massDelStatus = await runProc("git", ["status", "--porcelain"], worktreeCwd, env);
+  const massDeletedCount = (massDelStatus.stdout.match(/^(D.|.D) /gm) ?? []).length;
+  if (massDeletedCount > 200) {
+    await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="mass deletion guard: ${massDeletedCount} files deleted — likely partial worktree, abort, no force"\n`);
+    return { delivered: false, prUrl: null, reason: "delivery_blocked: mass deletion guard" };
+  }
+
   if (conflictMarkerScan.exitCode > 1) {
     await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="conflict marker scan failed" detail="${firstNonEmptyLine(conflictMarkerScan.stderr)}"\n`);
     return { delivered: false, prUrl: null, reason: "delivery_blocked: conflict marker scan failed" };
