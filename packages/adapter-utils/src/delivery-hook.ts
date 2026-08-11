@@ -578,7 +578,6 @@ async function pushWithRetry(input: {
 }): Promise<{ exitCode: number; stderr: string }> {
   const { branch, worktreeCwd, env, log, ts, runProc, retryDelayMs = 3000 } = input;
 
-  // paperclip:allow-git-push: delivery-hook pushes agent commits to the operator-configured remote (PAPA-432, see packages/adapters/AUTHORING.md)
   // Variante push-time : le garde status-time ne voit que les suppressions
   // NON commitees. Un commit empoisonne cree par un run anterieur presente un
   // status propre et serait pousse au retry.
@@ -595,6 +594,7 @@ async function pushWithRetry(input: {
     return { exitCode: 1, stderr: guardMsg };
   }
 
+  // paperclip:allow-git-push: delivery-hook pushes agent commits to the operator-configured remote (PAPA-432, see packages/adapters/AUTHORING.md)
   const tryPush = () => runProc("git", ["push", "-u", "origin", branch], worktreeCwd, env);
 
   const first = await tryPush();
