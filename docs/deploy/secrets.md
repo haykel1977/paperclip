@@ -391,7 +391,7 @@ Agent environment variables use secret references:
   "env": {
     "ANTHROPIC_API_KEY": {
       "type": "secret_ref",
-      "secretId": "8f884973-c29b-44e4-8ea3-6413437f8081",
+      "secretId": "00000000-0000-4000-8000-000000000001",
       "version": "latest"
     }
   }

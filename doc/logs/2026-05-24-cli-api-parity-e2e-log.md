@@ -31,8 +31,8 @@ Full Paperclip CLI/API parity smoke pass against a disposable local source-tree 
 - Issue ID: `f0250734-95f1-4c28-9e10-f1954649fffb` (`CLI-1`)
 - Checkout/release Issue ID: `1f7540d3-a3d3-48d2-b6c5-00d72c064e8f`
 - Prompt Issue ID: `38b89e46-a775-43bc-a39a-c44ccd1f7f30`
-- Board token ID: `45d843a2-9334-4dda-b53a-cd6f7e62149a` (revoked)
-- Agent token ID: `d464c3fe-c760-4c1c-b6cd-f8f0cd6c1797` (revoked)
+- Board token ID: `00000000-0000-4000-8000-0000000000b1` (revoked)
+- Agent token ID: `00000000-0000-4000-8000-0000000000a1` (revoked)
 
 ## Command Log
 
@@ -141,7 +141,7 @@ Full Paperclip CLI/API parity smoke pass against a disposable local source-tree 
 - Purpose: Exercise board token creation/use/list/revoke; agent token creation/list/use/revoke; verify agent tokens cannot use board-only company list.
 - Prerequisites/IDs used: company `12e9db4b-f66c-459b-959e-d645002240fb`; agent `1dd601a1-031a-4225-b005-419427fd059f`.
 - Expected result: Board token works for `whoami`; agent token works for agent persona commands and company-scoped issue list; board-only command fails with clear 403; both tokens are revoked.
-- Actual result: Board token `45d843a2-9334-4dda-b53a-cd6f7e62149a` was listed and `whoami` reported `source: board_key`. Agent token `d464c3fe-c760-4c1c-b6cd-f8f0cd6c1797` was listed; `agent me`, `agent inbox`, and issue list succeeded; `company list` failed with `API error 403: Board access required`; both tokens were revoked and later list output showed `revokedAt`.
+- Actual result: Board token `00000000-0000-4000-8000-0000000000b1` was listed and `whoami` reported `source: board_key`. Agent token `00000000-0000-4000-8000-0000000000a1` was listed; `agent me`, `agent inbox`, and issue list succeeded; `company list` failed with `API error 403: Board access required`; both tokens were revoked and later list output showed `revokedAt`.
 - Status: PASS.
 - Output summary: Plaintext token values were captured only in shell variables and were not written to repo files or this log.
 - Follow-up: Exercise prompt/wake/run and safe ancillary surfaces.

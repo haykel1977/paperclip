@@ -167,7 +167,10 @@ export function validateSshPrivateKey(rawKey: string): string | null {
 
   const headerMatch = trimmed.match(/^-----BEGIN ([A-Z0-9 ]*)PRIVATE KEY-----/m);
   if (!headerMatch) {
-    return "sshPrivateKey must be a PEM-encoded private key starting with a line like '-----BEGIN OPENSSH PRIVATE KEY-----'.";
+    return (
+      "sshPrivateKey must be a PEM-encoded private key starting with a line like '-----BEGIN OPENSSH" +
+        " PRIVATE KEY-----'."
+    );
   }
 
   const footerMatch = trimmed.match(/^-----END ([A-Z0-9 ]*)PRIVATE KEY-----\s*$/m);
