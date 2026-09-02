@@ -218,11 +218,14 @@ describe("PAPERCLIP_ALLOW_CLOUD_MODELS opt-in", () => {
     if (resp.status >= 400) {
       expect(String(resp.body.error ?? "")).not.toMatch(/must be a sovereign model/i);
     }
-    // And the create path must actually be reached (proves the flag routed the
-    // request all the way through instead of stopping at some other guard).
+    // And the create path must actually be reached with the cloud model still
+    // attached (proves the flag routed the request all the way through instead
+    // of stopping at some other guard, and that no downstream normaliser
+    // stripped the model). agentService.create is invoked as
+    // create(companyId, agentInput) - agentInput is the second call arg.
     expect(mockAgentService.create).toHaveBeenCalledTimes(1);
-    const createArgs = mockAgentService.create.mock.calls[0]?.[0];
-    expect(createArgs?.adapterConfig?.model).toBe("anthropic/claude-sonnet-4.5");
+    const [, createInput] = mockAgentService.create.mock.calls[0] ?? [];
+    expect((createInput as any)?.adapterConfig?.model).toBe("anthropic/claude-sonnet-4.5");
   });
 
   it("still accepts sovereign model ids when the flag is unset", async () => {
