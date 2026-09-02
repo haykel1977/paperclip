@@ -23,6 +23,75 @@ export const SUCCESSFUL_RUN_HANDOFF_OPTIONS = [
   "delegate_or_continue_from_checkpoint",
 ] as const;
 
+/**
+ * Detect strong "no-op done" self-report from an agent's run summary.
+ *
+ * Some agent AGENTS.md prompts require a PR-creation workflow as the only
+ * valid success path, so when the acceptance criteria are already satisfied
+ * (nothing to commit), the agent quits with a text summary like
+ * "no implementation needed - fix already complete" without invoking the
+ * PATCH status=done tool. That leaves the run in successful_run_missing_state
+ * and triggers a handoff-wake that loops because the same AGENTS.md prompt
+ * fires again.
+ *
+ * To be defensive, we only recognize this signal when MULTIPLE distinct
+ * phrases co-occur in the same summary. A single "no changes" is not enough.
+ *
+ * Behavior is off unless PAPERCLIP_ENABLE_NOOP_DONE_AUTO_DISPOSITION=1 is set.
+ */
+const NOOP_DONE_PRIMARY_PHRASES = [
+  "no implementation needed",
+  "no changes to commit",
+  "no changes needed",
+  "already resolved",
+  "already complete",
+  "already satisfied",
+  "already fixed",
+  "fix already complete",
+  "fix already in place",
+] as const;
+
+const NOOP_DONE_CORROBORATING_PHRASES = [
+  "acceptance criteria",
+  "already implemented",
+  "already in the repo",
+  "already on main",
+  "file already contains",
+  "no pr needed",
+  "no pr will be created",
+  "no pr created",
+  "zero diff",
+  "zero changes",
+  "nothing to change",
+  "nothing to implement",
+] as const;
+
+function normalizeNoOpText(text: string) {
+  return text.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+export function matchesNoOpDoneSelfReport(summary: string | null | undefined): boolean {
+  if (!summary || typeof summary !== "string") return false;
+  const normalized = normalizeNoOpText(summary);
+  if (normalized.length < 20) return false;
+  const primaryHit = NOOP_DONE_PRIMARY_PHRASES.some((phrase) => normalized.includes(phrase));
+  if (!primaryHit) return false;
+  const corroboratingHit = NOOP_DONE_CORROBORATING_PHRASES.some((phrase) =>
+    normalized.includes(phrase),
+  );
+  return corroboratingHit;
+}
+
+export const NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG =
+  "PAPERCLIP_ENABLE_NOOP_DONE_AUTO_DISPOSITION";
+
+export function isNoOpDoneAutoDispositionEnabled(env: NodeJS.ProcessEnv = process.env) {
+  const raw = env[NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG];
+  if (!raw) return false;
+  const normalized = raw.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
 const PRODUCTIVE_SUCCESS_LIVENESS_STATES = new Set<RunLivenessState>([
   "advanced",
   "completed",
@@ -369,6 +438,16 @@ export function decideSuccessfulRunHandoff(input: {
   }
   if (!isProductiveSuccessfulRun(input)) {
     return { kind: "skip", reason: "successful run did not produce handoff-relevant progress" };
+  }
+  if (
+    isNoOpDoneAutoDispositionEnabled() &&
+    matchesNoOpDoneSelfReport(input.detectedProgressSummary)
+  ) {
+    return {
+      kind: "skip",
+      reason:
+        "successful run self-reported no-op done (agent stated acceptance criteria were already satisfied); disposition will be applied by no-op-done auto handler",
+    };
   }
   if (input.hasActiveExecutionPath) return { kind: "skip", reason: "issue already has an active execution path" };
   if (input.hasQueuedWake) return { kind: "skip", reason: "issue already has a queued or deferred wake" };

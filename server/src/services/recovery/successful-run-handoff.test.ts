@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   FINISH_SUCCESSFUL_RUN_HANDOFF_REASON,
+  NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG,
   SUCCESSFUL_RUN_HANDOFF_EXHAUSTED_NOTICE_BODY,
   SUCCESSFUL_RUN_HANDOFF_REQUIRED_NOTICE_BODY,
   SUCCESSFUL_RUN_MISSING_STATE_REASON,
@@ -9,7 +10,9 @@ import {
   buildSuccessfulRunHandoffRequiredNotice,
   decideSuccessfulRunHandoff,
   isIdempotentFinishSuccessfulRunHandoffWakeStatus,
+  isNoOpDoneAutoDispositionEnabled,
   isSuccessfulRunHandoffRequiredNoticeBody,
+  matchesNoOpDoneSelfReport,
   noticeMetadataReferencesRecoveryAction,
 } from "./successful-run-handoff.js";
 
@@ -303,5 +306,96 @@ describe("successful run handoff decision", () => {
     expect(isSuccessfulRunHandoffRequiredNoticeBody("## Successful run missing issue disposition\n\nold body")).toBe(true);
     expect(isSuccessfulRunHandoffRequiredNoticeBody("## This issue still needs a next step\n\nold body")).toBe(true);
     expect(isSuccessfulRunHandoffRequiredNoticeBody("Unrelated comment")).toBe(false);
+  });
+});
+
+describe("matchesNoOpDoneSelfReport", () => {
+  it("requires both a primary phrase and a corroborating phrase", () => {
+    expect(matchesNoOpDoneSelfReport(null)).toBe(false);
+    expect(matchesNoOpDoneSelfReport("")).toBe(false);
+    expect(matchesNoOpDoneSelfReport("short")).toBe(false);
+    // primary only
+    expect(matchesNoOpDoneSelfReport("no changes needed here, moving on")).toBe(false);
+    // corroborating only
+    expect(matchesNoOpDoneSelfReport("acceptance criteria seem partially covered")).toBe(false);
+    // both phrases co-occur
+    expect(matchesNoOpDoneSelfReport(
+      "no implementation needed - fix already complete; acceptance criteria satisfied",
+    )).toBe(true);
+    expect(matchesNoOpDoneSelfReport(
+      "Already resolved: the file already contains User=quantum on line 15",
+    )).toBe(true);
+    expect(matchesNoOpDoneSelfReport(
+      "result=created pr_url=null (no implementation needed - no PR needed, zero diff)",
+    )).toBe(true);
+  });
+
+  it("is case-insensitive and tolerant of whitespace", () => {
+    expect(matchesNoOpDoneSelfReport(
+      "NO   IMPLEMENTATION   NEEDED\n\nacceptance criteria already met",
+    )).toBe(true);
+  });
+
+  it("does not match unrelated productive-run summaries", () => {
+    expect(matchesNoOpDoneSelfReport(
+      "Run produced concrete action evidence: 1 issue comment(s)",
+    )).toBe(false);
+    expect(matchesNoOpDoneSelfReport(
+      "Wrote 3 files, opened PR #42, tests green",
+    )).toBe(false);
+  });
+});
+
+describe("isNoOpDoneAutoDispositionEnabled", () => {
+  it("reads the env flag", () => {
+    expect(isNoOpDoneAutoDispositionEnabled({})).toBe(false);
+    expect(isNoOpDoneAutoDispositionEnabled({ [NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG]: "0" })).toBe(false);
+    expect(isNoOpDoneAutoDispositionEnabled({ [NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG]: "1" })).toBe(true);
+    expect(isNoOpDoneAutoDispositionEnabled({ [NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG]: "true" })).toBe(true);
+    expect(isNoOpDoneAutoDispositionEnabled({ [NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG]: "yes" })).toBe(true);
+    expect(isNoOpDoneAutoDispositionEnabled({ [NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG]: "maybe" })).toBe(false);
+  });
+});
+
+describe("decideSuccessfulRunHandoff no-op-done skip", () => {
+  const originalEnvValue = process.env[NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG];
+
+  beforeEach(() => {
+    process.env[NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG] = "1";
+  });
+
+  afterEach(() => {
+    if (originalEnvValue === undefined) {
+      delete process.env[NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG];
+    } else {
+      process.env[NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG] = originalEnvValue;
+    }
+  });
+
+  it("skips the handoff when the run self-reports a no-op done", () => {
+    const result = decide({
+      detectedProgressSummary:
+        "no implementation needed - fix already complete; acceptance criteria are satisfied",
+    });
+    expect(result).toEqual({
+      kind: "skip",
+      reason: expect.stringContaining("no-op done"),
+    });
+  });
+
+  it("still enqueues a handoff when only a primary phrase matches", () => {
+    const result = decide({
+      detectedProgressSummary: "no changes needed but need to verify further",
+    });
+    expect(result.kind).toBe("enqueue");
+  });
+
+  it("does not short-circuit when the env flag is disabled", () => {
+    delete process.env[NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG];
+    const result = decide({
+      detectedProgressSummary:
+        "no implementation needed - fix already complete; acceptance criteria are satisfied",
+    });
+    expect(result.kind).toBe("enqueue");
   });
 });
