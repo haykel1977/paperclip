@@ -1251,6 +1251,7 @@ export function agentRoutes(
       : undefined;
     if (knownModel && isSovereignAgentModel(knownModel)) return;
 
+    console.error("[DIAG-THROW]", JSON.stringify({model, pathLabel, cloudAllowed, envRaw: process.env.PAPERCLIP_ALLOW_CLOUD_MODELS, stack: new Error("here").stack?.split("\n").slice(0,6).join("|")}));
     throw unprocessable(
       `${pathLabel} must be a sovereign model. Use a model id or label containing "sovereign" or "souverain".`,
     );
