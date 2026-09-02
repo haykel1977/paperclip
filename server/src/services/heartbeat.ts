@@ -12,6 +12,7 @@ import {
   envBindingSchema,
   isEnvironmentDriverSupportedForAdapter,
   isSovereignAgentModel,
+  isCloudModelsAllowed,
   isSovereignAgentModelValue,
   type BillingType,
   type EnvironmentLeaseStatus,
@@ -1527,6 +1528,8 @@ async function assertSovereignRuntimeModel(
   adapterType: string,
   config: Record<string, unknown>,
 ): Promise<void> {
+  // See docs/agents/cloud-models.md - opt-in flag turns this guard into a no-op.
+  if (isCloudModelsAllowed()) return;
   if (!SOVEREIGN_MODEL_REQUIRED_ADAPTER_TYPES.has(adapterType)) return;
 
   const model = readNonEmptyString(config.model);
@@ -1641,7 +1644,7 @@ export function resolveModelProfileApplication(input: {
     ...runtimeProfile.adapterConfig,
   };
   const model = readNonEmptyString(adapterConfig.model);
-  if (model && !isSovereignAgentModelValue(model)) {
+  if (model && !isSovereignAgentModelValue(model) && !isCloudModelsAllowed()) {
     return {
       requested,
       requestedBy,
@@ -1668,7 +1671,11 @@ export function mergeModelProfileAdapterConfig(input: {
   issueAdapterConfig: Record<string, unknown> | null | undefined;
 }): Record<string, unknown> {
   const issueAdapterConfig = { ...(input.issueAdapterConfig ?? {}) };
-  if ("model" in issueAdapterConfig && !isSovereignAgentModelValue(issueAdapterConfig.model)) {
+  if (
+    "model" in issueAdapterConfig
+    && !isSovereignAgentModelValue(issueAdapterConfig.model)
+    && !isCloudModelsAllowed()
+  ) {
     delete issueAdapterConfig.model;
   }
 

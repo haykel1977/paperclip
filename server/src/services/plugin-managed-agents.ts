@@ -12,7 +12,7 @@ import type {
   PluginManagedAgentDeclaration,
   PluginManagedAgentResolution,
 } from "@paperclipai/shared";
-import { isSovereignAgentModelValue, normalizeAgentRoleValue } from "@paperclipai/shared";
+import { isCloudModelsAllowed, isSovereignAgentModelValue, normalizeAgentRoleValue } from "@paperclipai/shared";
 import { notFound, unprocessable } from "../errors.js";
 
 import { agentService } from "./agents.js";
@@ -150,7 +150,7 @@ function managedAgentAdapterConfig(
   const adapterConfig = { ...(declaration.adapterConfig ?? {}) };
   const model = typeof adapterConfig.model === "string" ? adapterConfig.model.trim() : "";
   if (model) {
-    if (isSovereignAgentModelValue(model)) {
+    if (isSovereignAgentModelValue(model) || isCloudModelsAllowed()) {
       adapterConfig.model = model;
       return adapterConfig;
     }
@@ -186,7 +186,11 @@ function managedAgentRuntimeConfig(
       continue;
     }
     const adapterConfig = { ...(profile.adapterConfig as Record<string, unknown>) };
-    if ("model" in adapterConfig && !isSovereignAgentModelValue(adapterConfig.model)) {
+    if (
+      "model" in adapterConfig
+      && !isSovereignAgentModelValue(adapterConfig.model)
+      && !isCloudModelsAllowed()
+    ) {
       delete adapterConfig.model;
     }
     normalizedProfiles[profileKey] = { ...profile, adapterConfig };

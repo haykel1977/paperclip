@@ -14,7 +14,15 @@ silently pipe traffic to a paid third-party API.
 Set `PAPERCLIP_ALLOW_CLOUD_MODELS=1` in the server environment. When the flag
 is enabled:
 
-- `POST /api/agents` and `PATCH /api/agents/:id` accept any adapter model id.
+- `POST /api/companies/:companyId/agents` and `PATCH /api/agents/:id` accept
+  any adapter model id (the sovereign-only check is skipped).
+- Runtime execution: `assertSovereignRuntimeModel` in
+  `server/src/services/heartbeat.ts` also becomes a no-op, so agents saved
+  with a cloud model actually run.
+- Model profile merging (`applyRuntimeModelProfile`,
+  `mergeModelProfileAdapterConfig`) and company portability import stop
+  dropping non-sovereign models.
+- Plugin-managed agent declarations accept cloud models too.
 - `GET /api/companies/:id/adapters/:type/models` returns the full adapter
   catalog (Anthropic, OpenAI, Moonshot, DeepSeek, Z.AI, ...) instead of the
   sovereign-filtered subset.

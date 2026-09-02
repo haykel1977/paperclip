@@ -26,6 +26,7 @@ import {
   updateAgentSchema,
   supportedEnvironmentDriversForAdapter,
   filterSovereignAgentModels,
+  isCloudModelsAllowed,
   isSovereignAgentModel,
   isSovereignAgentModelValue,
   LOW_TRUST_REVIEW_PRESET,
@@ -1218,16 +1219,6 @@ export function agentRoutes(
       return ensureGatewayDeviceKey(adapterType, next);
     }
     return ensureGatewayDeviceKey(adapterType, next);
-  }
-
-  // Opt-in escape hatch: when PAPERCLIP_ALLOW_CLOUD_MODELS=1, the sovereign model
-  // requirement is lifted. Default behaviour remains sovereign-only so nothing
-  // changes for operators who don't set the flag. Intentional trade-off: this
-  // flag exists so a company can deliberately mix cloud adapters (Anthropic,
-  // OpenAI, Moonshot, DeepSeek, Z.AI) alongside the sovereign gateway without
-  // patching the codebase. See docs/agents/cloud-models.md.
-  function isCloudModelsAllowed(): boolean {
-    return process.env.PAPERCLIP_ALLOW_CLOUD_MODELS === "1";
   }
 
   async function assertSovereignAgentModel(

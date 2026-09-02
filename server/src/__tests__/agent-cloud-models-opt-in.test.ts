@@ -213,12 +213,16 @@ describe("PAPERCLIP_ALLOW_CLOUD_MODELS opt-in", () => {
         adapterType: cloudAdapter.type,
         adapterConfig: { model: "anthropic/claude-sonnet-4.5" },
       });
-    // The important assertion is that we did NOT trip the sovereign guard.
-    // Any downstream 4xx/5xx from other guards is not what we test here.
+    // Sovereign guard must be silent.
     expect(resp.status).not.toBe(422);
     if (resp.status >= 400) {
       expect(String(resp.body.error ?? "")).not.toMatch(/must be a sovereign model/i);
     }
+    // And the create path must actually be reached (proves the flag routed the
+    // request all the way through instead of stopping at some other guard).
+    expect(mockAgentService.create).toHaveBeenCalledTimes(1);
+    const createArgs = mockAgentService.create.mock.calls[0]?.[0];
+    expect(createArgs?.adapterConfig?.model).toBe("anthropic/claude-sonnet-4.5");
   });
 
   it("still accepts sovereign model ids when the flag is unset", async () => {

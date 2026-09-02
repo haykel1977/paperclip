@@ -1,6 +1,7 @@
 export { agentAdapterTypeSchema, optionalAgentAdapterTypeSchema } from "./adapter-type.js";
 export {
   filterSovereignAgentModels,
+  isCloudModelsAllowed,
   isSovereignAgentModel,
   isSovereignAgentModelValue,
   type AgentModelLike,
