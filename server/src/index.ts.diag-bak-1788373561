@@ -1,4 +1,3 @@
-console.error("[DIAG-STARTUP]", JSON.stringify({ALLOW_CLOUD: process.env.PAPERCLIP_ALLOW_CLOUD_MODELS, NOOP: process.env.PAPERCLIP_ENABLE_NOOP_DONE_AUTO_DISPOSITION, INSTANCE: process.env.PAPERCLIP_INSTANCE, PATH_HEAD: (process.env.PATH || "").slice(0,60)}));
 /// <reference path="./types/express.d.ts" />
 import "./instance-guard";
 import { existsSync, readFileSync, rmSync } from "node:fs";
