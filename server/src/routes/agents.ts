@@ -1220,11 +1220,23 @@ export function agentRoutes(
     return ensureGatewayDeviceKey(adapterType, next);
   }
 
+  // Opt-in escape hatch: when PAPERCLIP_ALLOW_CLOUD_MODELS=1, the sovereign model
+  // requirement is lifted. Default behaviour remains sovereign-only so nothing
+  // changes for operators who don't set the flag. Intentional trade-off: this
+  // flag exists so a company can deliberately mix cloud adapters (Anthropic,
+  // OpenAI, Moonshot, DeepSeek, Z.AI) alongside the sovereign gateway without
+  // patching the codebase. See docs/agents/cloud-models.md.
+  function isCloudModelsAllowed(): boolean {
+    return process.env.PAPERCLIP_ALLOW_CLOUD_MODELS === "1";
+  }
+
   async function assertSovereignAgentModel(
     adapterType: string | null | undefined,
     adapterConfig: Record<string, unknown>,
     pathLabel = "adapterConfig.model",
   ) {
+    if (isCloudModelsAllowed()) return;
+
     const model = asNonEmptyString(adapterConfig.model);
     if (!model) {
       if (adapterType && SOVEREIGN_MODEL_REQUIRED_ADAPTER_TYPES.has(adapterType)) {
@@ -1634,15 +1646,17 @@ export function agentRoutes(
       res.status(404).json({ error: "Environment not found" });
       return;
     }
+    const cloudAllowed = isCloudModelsAllowed();
     if (type === "opencode_local" && environment && environment.driver !== "local") {
       const adapter = requireServerAdapter(type);
-      res.json(filterSovereignAgentModels(adapter.models ?? []));
+      const raw = adapter.models ?? [];
+      res.json(cloudAllowed ? raw : filterSovereignAgentModels(raw));
       return;
     }
     const models = refresh
       ? await refreshAdapterModels(type)
       : await listAdapterModels(type);
-    res.json(filterSovereignAgentModels(models));
+    res.json(cloudAllowed ? models : filterSovereignAgentModels(models));
   });
 
   router.get("/companies/:companyId/adapters/:type/model-profiles", async (req, res) => {
@@ -1650,6 +1664,10 @@ export function agentRoutes(
     assertCompanyAccess(req, companyId);
     const type = assertKnownAdapterType(req.params.type as string);
     const profiles = await listAdapterModelProfiles(type);
+    if (isCloudModelsAllowed()) {
+      res.json(profiles);
+      return;
+    }
     res.json(profiles.filter((profile) => {
       const adapterConfig = profile.adapterConfig && typeof profile.adapterConfig === "object"
         ? profile.adapterConfig as Record<string, unknown>
@@ -1664,6 +1682,10 @@ export function agentRoutes(
     const type = assertKnownAdapterType(req.params.type as string);
 
     const detected = await detectAdapterModel(type);
+    if (isCloudModelsAllowed()) {
+      res.json(detected ?? null);
+      return;
+    }
     res.json(detected && isSovereignAgentModelValue(detected.model) ? detected : null);
   });
 
