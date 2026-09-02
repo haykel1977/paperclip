@@ -26,6 +26,7 @@ import {
   updateAgentSchema,
   supportedEnvironmentDriversForAdapter,
   filterSovereignAgentModels,
+  isCloudModelsAllowed,
   isSovereignAgentModel,
   isSovereignAgentModelValue,
   LOW_TRUST_REVIEW_PRESET,
@@ -1225,15 +1226,22 @@ export function agentRoutes(
     adapterConfig: Record<string, unknown>,
     pathLabel = "adapterConfig.model",
   ) {
+    const cloudAllowed = isCloudModelsAllowed();
     const model = asNonEmptyString(adapterConfig.model);
+
     if (!model) {
+      // The presence check runs even when the opt-in flag is on: adapters that
+      // require an explicit model must never be saved with a blank one.
       if (adapterType && SOVEREIGN_MODEL_REQUIRED_ADAPTER_TYPES.has(adapterType)) {
-        throw unprocessable(
-          `${pathLabel} is required for ${adapterType}. Use a sovereign model id or label containing "sovereign" or "souverain".`,
-        );
+        const suffix = cloudAllowed
+          ? ""
+          : ' Use a model id or label containing "sovereign" or "souverain".';
+        throw unprocessable(`${pathLabel} is required for ${adapterType}.${suffix}`);
       }
       return;
     }
+    // Only the sovereign-only content check is lifted by the opt-in flag.
+    if (cloudAllowed) return;
     if (isSovereignAgentModelValue(model)) return;
 
     const knownModel = adapterType
@@ -1634,15 +1642,17 @@ export function agentRoutes(
       res.status(404).json({ error: "Environment not found" });
       return;
     }
+    const cloudAllowed = isCloudModelsAllowed();
     if (type === "opencode_local" && environment && environment.driver !== "local") {
       const adapter = requireServerAdapter(type);
-      res.json(filterSovereignAgentModels(adapter.models ?? []));
+      const raw = adapter.models ?? [];
+      res.json(cloudAllowed ? raw : filterSovereignAgentModels(raw));
       return;
     }
     const models = refresh
       ? await refreshAdapterModels(type)
       : await listAdapterModels(type);
-    res.json(filterSovereignAgentModels(models));
+    res.json(cloudAllowed ? models : filterSovereignAgentModels(models));
   });
 
   router.get("/companies/:companyId/adapters/:type/model-profiles", async (req, res) => {
@@ -1650,6 +1660,10 @@ export function agentRoutes(
     assertCompanyAccess(req, companyId);
     const type = assertKnownAdapterType(req.params.type as string);
     const profiles = await listAdapterModelProfiles(type);
+    if (isCloudModelsAllowed()) {
+      res.json(profiles);
+      return;
+    }
     res.json(profiles.filter((profile) => {
       const adapterConfig = profile.adapterConfig && typeof profile.adapterConfig === "object"
         ? profile.adapterConfig as Record<string, unknown>
@@ -1664,6 +1678,10 @@ export function agentRoutes(
     const type = assertKnownAdapterType(req.params.type as string);
 
     const detected = await detectAdapterModel(type);
+    if (isCloudModelsAllowed()) {
+      res.json(detected ?? null);
+      return;
+    }
     res.json(detected && isSovereignAgentModelValue(detected.model) ? detected : null);
   });
 

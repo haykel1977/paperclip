@@ -12,6 +12,7 @@ import {
   envBindingSchema,
   isEnvironmentDriverSupportedForAdapter,
   isSovereignAgentModel,
+  isCloudModelsAllowed,
   isSovereignAgentModelValue,
   type BillingType,
   type EnvironmentLeaseStatus,
@@ -1529,12 +1530,18 @@ async function assertSovereignRuntimeModel(
 ): Promise<void> {
   if (!SOVEREIGN_MODEL_REQUIRED_ADAPTER_TYPES.has(adapterType)) return;
 
+  // The presence check runs even when PAPERCLIP_ALLOW_CLOUD_MODELS is on:
+  // an adapter that requires an explicit model must never boot with a blank
+  // one. See docs/agents/cloud-models.md.
   const model = readNonEmptyString(config.model);
   if (!model) {
     throw new Error(
-      `Agent adapter ${adapterType} requires an explicit sovereign model before execution.`,
+      `Agent adapter ${adapterType} requires an explicit model before execution.`,
     );
   }
+
+  // Only the sovereign-only content check is lifted by the opt-in flag.
+  if (isCloudModelsAllowed()) return;
   if (isSovereignAgentModelValue(model)) return;
 
   const knownModel = (await listAdapterModels(adapterType)).find((entry) => entry.id === model);
@@ -1641,7 +1648,7 @@ export function resolveModelProfileApplication(input: {
     ...runtimeProfile.adapterConfig,
   };
   const model = readNonEmptyString(adapterConfig.model);
-  if (model && !isSovereignAgentModelValue(model)) {
+  if (model && !isSovereignAgentModelValue(model) && !isCloudModelsAllowed()) {
     return {
       requested,
       requestedBy,
@@ -1668,8 +1675,17 @@ export function mergeModelProfileAdapterConfig(input: {
   issueAdapterConfig: Record<string, unknown> | null | undefined;
 }): Record<string, unknown> {
   const issueAdapterConfig = { ...(input.issueAdapterConfig ?? {}) };
-  if ("model" in issueAdapterConfig && !isSovereignAgentModelValue(issueAdapterConfig.model)) {
-    delete issueAdapterConfig.model;
+  if ("model" in issueAdapterConfig) {
+    const overrideModel = issueAdapterConfig.model;
+    // Always drop empty / non-string overrides - they must never blank out the
+    // agent's saved model at merge time. Sovereign guard runs on non-empty
+    // strings only, and is skipped when PAPERCLIP_ALLOW_CLOUD_MODELS=1.
+    const isNonEmptyString = typeof overrideModel === "string" && overrideModel.trim().length > 0;
+    if (!isNonEmptyString) {
+      delete issueAdapterConfig.model;
+    } else if (!isSovereignAgentModelValue(overrideModel) && !isCloudModelsAllowed()) {
+      delete issueAdapterConfig.model;
+    }
   }
 
   return {

@@ -48,6 +48,7 @@ import {
   issueCommentMetadataSchema,
   issueCommentPresentationSchema,
   isSovereignAgentModel,
+  isCloudModelsAllowed,
   isSovereignAgentModelValue,
   normalizeAgentUrlKey,
 } from "@paperclipai/shared";
@@ -3026,11 +3027,14 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
     adapterType: string,
     adapterConfig: Record<string, unknown>,
   ) {
+    const cloudAllowed = isCloudModelsAllowed();
     const model = typeof adapterConfig.model === "string" ? adapterConfig.model.trim() : "";
+    // Presence check always applies for adapters that require an explicit model,
+    // regardless of the opt-in flag - a blank model must never boot.
     if (!model && SOVEREIGN_MODEL_REQUIRED_ADAPTER_TYPES.has(adapterType)) {
       throw unprocessable(`adapterConfig.model is required for ${adapterType}`);
     }
-    if (model && !isSovereignAgentModelValue(model)) {
+    if (model && !cloudAllowed && !isSovereignAgentModelValue(model)) {
       const knownModel = (await listAdapterModels(adapterType)).find((entry) => entry.id === model);
       if (!knownModel || !isSovereignAgentModel(knownModel)) {
         throw unprocessable("adapterConfig.model must be a sovereign model");

@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { filterSovereignAgentModels, isSovereignAgentModelValue } from "./sovereign-models.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  filterSovereignAgentModels,
+  isCloudModelsAllowed,
+  isSovereignAgentModelValue,
+} from "./sovereign-models.js";
 
 describe("sovereign agent model detection", () => {
   it.each([
@@ -31,4 +35,37 @@ describe("sovereign agent model detection", () => {
       { id: "qwen2.5-coder:32b", label: "Sovereign qwen2.5-coder:32b" },
     ]);
   });
+});
+
+describe("isCloudModelsAllowed", () => {
+  const original = process.env.PAPERCLIP_ALLOW_CLOUD_MODELS;
+
+  beforeEach(() => {
+    delete process.env.PAPERCLIP_ALLOW_CLOUD_MODELS;
+  });
+
+  afterEach(() => {
+    if (original === undefined) {
+      delete process.env.PAPERCLIP_ALLOW_CLOUD_MODELS;
+    } else {
+      process.env.PAPERCLIP_ALLOW_CLOUD_MODELS = original;
+    }
+  });
+
+  it("returns false by default", () => {
+    expect(isCloudModelsAllowed()).toBe(false);
+  });
+
+  it("returns true only for the literal string '1'", () => {
+    process.env.PAPERCLIP_ALLOW_CLOUD_MODELS = "1";
+    expect(isCloudModelsAllowed()).toBe(true);
+  });
+
+  it.each(["true", "yes", "on", "0", "", " 1 "])(
+    "returns false for defensive value %s",
+    (value) => {
+      process.env.PAPERCLIP_ALLOW_CLOUD_MODELS = value;
+      expect(isCloudModelsAllowed()).toBe(false);
+    },
+  );
 });
