@@ -3029,7 +3029,9 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
   ) {
     const cloudAllowed = isCloudModelsAllowed();
     const model = typeof adapterConfig.model === "string" ? adapterConfig.model.trim() : "";
-    if (!model && !cloudAllowed && SOVEREIGN_MODEL_REQUIRED_ADAPTER_TYPES.has(adapterType)) {
+    // Presence check always applies for adapters that require an explicit model,
+    // regardless of the opt-in flag - a blank model must never boot.
+    if (!model && SOVEREIGN_MODEL_REQUIRED_ADAPTER_TYPES.has(adapterType)) {
       throw unprocessable(`adapterConfig.model is required for ${adapterType}`);
     }
     if (model && !cloudAllowed && !isSovereignAgentModelValue(model)) {

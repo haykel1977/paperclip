@@ -186,12 +186,16 @@ function managedAgentRuntimeConfig(
       continue;
     }
     const adapterConfig = { ...(profile.adapterConfig as Record<string, unknown>) };
-    if (
-      "model" in adapterConfig
-      && !isSovereignAgentModelValue(adapterConfig.model)
-      && !isCloudModelsAllowed()
-    ) {
-      delete adapterConfig.model;
+    if ("model" in adapterConfig) {
+      const overrideModel = adapterConfig.model;
+      const isNonEmptyString = typeof overrideModel === "string" && overrideModel.trim().length > 0;
+      if (!isNonEmptyString) {
+        // Always drop empty / non-string overrides so the agent's real model is
+        // never blanked out at profile merge time.
+        delete adapterConfig.model;
+      } else if (!isSovereignAgentModelValue(overrideModel) && !isCloudModelsAllowed()) {
+        delete adapterConfig.model;
+      }
     }
     normalizedProfiles[profileKey] = { ...profile, adapterConfig };
   }

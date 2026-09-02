@@ -1226,17 +1226,22 @@ export function agentRoutes(
     adapterConfig: Record<string, unknown>,
     pathLabel = "adapterConfig.model",
   ) {
-    if (isCloudModelsAllowed()) return;
-
+    const cloudAllowed = isCloudModelsAllowed();
     const model = asNonEmptyString(adapterConfig.model);
+
     if (!model) {
+      // The presence check runs even when the opt-in flag is on: adapters that
+      // require an explicit model must never be saved with a blank one.
       if (adapterType && SOVEREIGN_MODEL_REQUIRED_ADAPTER_TYPES.has(adapterType)) {
-        throw unprocessable(
-          `${pathLabel} is required for ${adapterType}. Use a sovereign model id or label containing "sovereign" or "souverain".`,
-        );
+        const suffix = cloudAllowed
+          ? ""
+          : ' Use a model id or label containing "sovereign" or "souverain".';
+        throw unprocessable(`${pathLabel} is required for ${adapterType}.${suffix}`);
       }
       return;
     }
+    // Only the sovereign-only content check is lifted by the opt-in flag.
+    if (cloudAllowed) return;
     if (isSovereignAgentModelValue(model)) return;
 
     const knownModel = adapterType
