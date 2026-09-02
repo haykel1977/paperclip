@@ -1226,8 +1226,6 @@ export function agentRoutes(
     adapterConfig: Record<string, unknown>,
     pathLabel = "adapterConfig.model",
   ) {
-    console.error("[DIAG-GUARD]", JSON.stringify({allow: process.env.PAPERCLIP_ALLOW_CLOUD_MODELS, model: adapterConfig?.model, adapterType, pathLabel, pid: process.pid}));
-
     const cloudAllowed = isCloudModelsAllowed();
     const model = asNonEmptyString(adapterConfig.model);
 
