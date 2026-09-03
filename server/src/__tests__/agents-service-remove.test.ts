@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { costEvents, companies, createDb, agents, issues } from "@paperclipai/db";
+import { costEvents, companies, createDb, agents, issues, financeEvents } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
   startEmbeddedPostgresTestDatabase,
@@ -29,6 +29,7 @@ describeEmbeddedPostgres("agentService.remove FK cleanup", () => {
   }, 20_000);
 
   afterEach(async () => {
+    await db.delete(financeEvents);
     await db.delete(costEvents);
     await db.delete(issues);
     await db.delete(agents);
@@ -39,7 +40,7 @@ describeEmbeddedPostgres("agentService.remove FK cleanup", () => {
     await tempDb?.cleanup();
   });
 
-  it("deletes an agent that has cost_events and clears ghost issue assignees", async () => {
+  it("nulls cost and finance agent ids instead of deleting spend history", async () => {
     const companyId = randomUUID();
     const agentId = randomUUID();
     const issueId = randomUUID();
@@ -69,7 +70,7 @@ describeEmbeddedPostgres("agentService.remove FK cleanup", () => {
       priority: "medium",
       assigneeAgentId: agentId,
     });
-    await db.insert(costEvents).values({
+    const [costRow] = await db.insert(costEvents).values({
       companyId,
       agentId,
       issueId,
@@ -79,14 +80,43 @@ describeEmbeddedPostgres("agentService.remove FK cleanup", () => {
       model: "qwen3-coder-sovereign",
       costCents: 12,
       occurredAt: new Date(),
+    }).returning({ id: costEvents.id });
+    await db.insert(financeEvents).values({
+      companyId,
+      agentId,
+      issueId,
+      costEventId: costRow.id,
+      eventKind: "usage",
+      biller: "openrouter",
+      amountCents: 12,
+      occurredAt: new Date(),
     });
 
     await svc.terminate(agentId);
     const removed = await svc.remove(agentId);
     expect(removed?.id).toBe(agentId);
 
-    const leftoverCosts = await db.select({ id: costEvents.id }).from(costEvents);
-    expect(leftoverCosts).toEqual([]);
+    const leftoverCosts = await db
+      .select({
+        id: costEvents.id,
+        agentId: costEvents.agentId,
+        costCents: costEvents.costCents,
+      })
+      .from(costEvents);
+    expect(leftoverCosts).toEqual([
+      { id: costRow.id, agentId: null, costCents: 12 },
+    ]);
+
+    const leftoverFinance = await db
+      .select({
+        agentId: financeEvents.agentId,
+        amountCents: financeEvents.amountCents,
+        costEventId: financeEvents.costEventId,
+      })
+      .from(financeEvents);
+    expect(leftoverFinance).toEqual([
+      { agentId: null, amountCents: 12, costEventId: costRow.id },
+    ]);
 
     const leftoverAgents = await db.select({ id: agents.id }).from(agents);
     expect(leftoverAgents).toEqual([]);

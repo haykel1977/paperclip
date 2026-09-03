@@ -845,6 +845,9 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                       nextValues.dangerouslyBypassSandbox =
                         DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
                     }
+                    if (t === "opencode_local") {
+                      nextValues.dangerouslySkipPermissions = false;
+                    }
                     set!(nextValues);
                   } else {
                     // Clear all adapter config and explicitly blank out model + effort/mode keys

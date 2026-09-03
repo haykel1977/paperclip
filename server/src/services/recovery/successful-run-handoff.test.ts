@@ -344,6 +344,15 @@ describe("matchesNoOpDoneSelfReport", () => {
       "Wrote 3 files, opened PR #42, tests green",
     )).toBe(false);
   });
+
+  it("does not skip a real needs-more-work summary even if other no-op phrases appear", () => {
+    expect(matchesNoOpDoneSelfReport(
+      "needs more work on the remaining tests; acceptance criteria not yet satisfied",
+    )).toBe(false);
+    expect(matchesNoOpDoneSelfReport(
+      "no implementation needed yet — needs more work on the remaining tests; acceptance criteria not yet satisfied",
+    )).toBe(false);
+  });
 });
 
 describe("isNoOpDoneAutoDispositionEnabled", () => {

@@ -54,11 +54,11 @@ export function OpenCodeLocalConfigFields({
         hint={help.dangerouslySkipPermissions}
         checked={
           isCreate
-            ? values!.dangerouslySkipPermissions
+            ? values!.dangerouslySkipPermissions === true
             : eff(
                 "adapterConfig",
                 "dangerouslySkipPermissions",
-                config.dangerouslySkipPermissions !== false,
+                config.dangerouslySkipPermissions === true,
               )
         }
         onChange={(v) =>

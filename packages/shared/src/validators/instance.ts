@@ -5,6 +5,7 @@ import {
   WEEKLY_RETENTION_PRESETS,
   MONTHLY_RETENTION_PRESETS,
   DEFAULT_BACKUP_RETENTION,
+  DEFAULT_ENABLE_ISOLATED_WORKSPACES,
   DEFAULT_ISSUE_GRAPH_LIVENESS_AUTO_RECOVERY_LOOKBACK_HOURS,
   MAX_ISSUE_GRAPH_LIVENESS_AUTO_RECOVERY_LOOKBACK_HOURS,
   MIN_ISSUE_GRAPH_LIVENESS_AUTO_RECOVERY_LOOKBACK_HOURS,
@@ -37,7 +38,7 @@ export const patchInstanceGeneralSettingsSchema = instanceGeneralSettingsSchema.
 
 export const instanceExperimentalSettingsSchema = z.object({
   enableEnvironments: z.boolean().default(false),
-  enableIsolatedWorkspaces: z.boolean().default(false),
+  enableIsolatedWorkspaces: z.boolean().default(DEFAULT_ENABLE_ISOLATED_WORKSPACES),
   enableStreamlinedLeftNavigation: z.boolean().default(false),
   enableIssuePlanDecompositions: z.boolean().default(false),
   enableCloudSync: z.boolean().default(false),

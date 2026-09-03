@@ -68,6 +68,18 @@ const NOOP_DONE_CORROBORATING_PHRASES = [
   "nothing to implement",
 ] as const;
 
+const NOOP_DONE_VETO_PHRASES = [
+  "needs more work",
+  "need more work",
+  "more work needed",
+  "not yet satisfied",
+  "not yet complete",
+  "not yet done",
+  "still needs work",
+  "still need work",
+  "remaining work",
+] as const;
+
 function normalizeNoOpText(text: string) {
   return text.toLowerCase().replace(/\s+/g, " ").trim();
 }
@@ -76,6 +88,9 @@ export function matchesNoOpDoneSelfReport(summary: string | null | undefined): b
   if (!summary || typeof summary !== "string") return false;
   const normalized = normalizeNoOpText(summary);
   if (normalized.length < 20) return false;
+  if (NOOP_DONE_VETO_PHRASES.some((phrase) => normalized.includes(phrase))) {
+    return false;
+  }
   const primaryHit = NOOP_DONE_PRIMARY_PHRASES.some((phrase) => normalized.includes(phrase));
   if (!primaryHit) return false;
   const corroboratingHit = NOOP_DONE_CORROBORATING_PHRASES.some((phrase) =>
