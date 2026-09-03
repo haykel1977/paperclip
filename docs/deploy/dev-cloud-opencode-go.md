@@ -3,7 +3,7 @@ title: Déploiement cloud de développement
 summary: État constaté, ce qui est fait, ce qui ne l'est pas, retour au souverain, vérifications, rollback
 ---
 
-> Language: French — operator-facing runbook. English summary: this page describes the development Paperclip deployment that runs four agents on OpenCode Go cloud models in deviation from the sovereign doctrine (see ADR-IA-018). It records what was observed on 2026-09-03, what is done, what is not, the return-to-sovereign procedure, verification commands and rollback. It authorizes nothing.
+> Language: French : operator-facing runbook. English summary: this page describes the development Paperclip deployment that runs four agents on OpenCode Go cloud models in deviation from the sovereign doctrine (see ADR-IA-018). It records what was observed on 2026-09-03, what is done, what is not, the return-to-sovereign procedure, verification commands and rollback. It authorizes nothing.
 
 Ce runbook décrit le déploiement Paperclip de développement qui fait tourner des agents sur des modèles cloud OpenCode Go, en déviation de la doctrine souveraine. La déviation est décrite dans [ADR-IA-018](/adr/ADR-IA-018-mode-cloud-rnd). Ce runbook ne l'autorise pas. Il dit ce qui est, ce qui manque, et comment revenir en arrière.
 
@@ -32,7 +32,7 @@ Les tableaux « État constaté » et « Ce qui n'est PAS fait » décrivent l'�
 | Agents | 20 lignes : 4 `idle` (Q-Gov, Q-Impl, Q-Web, QA-Tests), 16 `terminated` le 2026-09-02 | VERIFIED |
 | Modèles des 4 agents | `opencode-go/deepseek-v4-pro` (Q-Gov), `opencode-go/kimi-k2.7-code` (Q-Impl, Q-Web), `opencode-go/glm-5.3-flash` (QA-Tests) ; small model `opencode-go/glm-5.3-flash` | VERIFIED |
 | Répertoire de travail des agents | checkout local du dépôt quantum (racine ; `apps/web` pour Q-Web) | VERIFIED |
-| `adapter_config.env` des 4 agents (noms) | `HOME`, `AGENT_PR_WRAPPER_REQUIRED`, `OPENCODE_ALLOW_ALL_MODELS`, `PAPERCLIP_OPENCODE_SMALL_MODEL` — injectés dans l'environnement de chaque run, indépendamment de l'environnement du conteneur | VERIFIED (FACTS ; R3) |
+| `adapter_config.env` des 4 agents (noms) | `HOME`, `AGENT_PR_WRAPPER_REQUIRED`, `OPENCODE_ALLOW_ALL_MODELS`, `PAPERCLIP_OPENCODE_SMALL_MODEL` : injectés dans l'environnement de chaque run, indépendamment de l'environnement du conteneur | VERIFIED (FACTS ; R3) |
 | Budgets | `budget_monthly_cents = 0` pour les 4 : aucune limite | VERIFIED |
 | Dépense déclarée depuis le 02/09 (cents, coût déclaré par le CLI) | Q-Gov 589, Q-Impl 946, Q-Web 236, QA-Tests 25 | VERIFIED en base ; exactitude économique UNVERIFIABLE |
 | Runs depuis le 02/09 (total / ok) | Q-Gov 32/29, Q-Impl 62/61, Q-Web 68/45, QA-Tests 36/26 | VERIFIED |
@@ -46,7 +46,7 @@ Les tableaux « État constaté » et « Ce qui n'est PAS fait » décrivent l'�
 ## Ce qui est déjà fait
 
 - Flag cloud : `PAPERCLIP_ALLOW_CLOUD_MODELS=1` dans l'environnement du conteneur. Il est lu à chaque requête. Seule la valeur littérale `1` l'active.
-- Secrets : présents dans l'environnement du conteneur (noms connus, valeurs non reproduites) — VERIFIED. Mode d'injection (fichier d'environnement 0600, `-e`, orchestrateur) et exposition via `docker inspect` ou l'unité de lancement : UNVERIFIABLE, à constater lors de la prochaine recréation du conteneur.
+- Secrets : présents dans l'environnement du conteneur (noms connus, valeurs non reproduites) : VERIFIED. Mode d'injection (fichier d'environnement 0600, `-e`, orchestrateur) et exposition via `docker inspect` ou l'unité de lancement : UNVERIFIABLE, à constater lors de la prochaine recréation du conteneur.
 - Modèles des 4 agents posés sur les trois ids ci-dessus. Ils n'ont pas pu l'être via le formulaire de l'interface (qui filtre côté client sans lire le flag) ; le canal exact (API, import, SQL) est UNVERIFIABLE.
 - Clés d'accès renouvelées, clé OpenRouter retirée de l'environnement.
 - Bifrost : authentification par clé virtuelle active, content logging désactivé.
@@ -73,7 +73,7 @@ Les tableaux « État constaté » et « Ce qui n'est PAS fait » décrivent l'�
 
 ## Procédure de retour au souverain
 
-Préalables : vLLM en ligne sur le GPU souverain (VERIFIED le 2026-09-03) ; provider `vllm` configuré dans Bifrost (VERIFIED) ; `opencode models` dans le conteneur liste le provider `bifrost/*` (VERIFIED) — la présence de l'id exact `bifrost/qwen3-coder-30b-sovereign` est à confirmer par la commande de la section Vérifications avant l'étape 2 (la sonde pré-run échoue sinon, bruyamment). Si l'un manque, corriger avant.
+Préalables : vLLM en ligne sur le GPU souverain (VERIFIED le 2026-09-03) ; provider `vllm` configuré dans Bifrost (VERIFIED) ; `opencode models` dans le conteneur liste le provider `bifrost/*` (VERIFIED) : la présence de l'id exact `bifrost/qwen3-coder-30b-sovereign` est à confirmer par la commande de la section Vérifications avant l'étape 2 (la sonde pré-run échoue sinon, bruyamment). Si l'un manque, corriger avant.
 
 Ordre déduit du code du fork (R3). Toutes les routes sont réservées au board.
 
@@ -142,7 +142,7 @@ done
 
 5. Vérifier les heartbeats (section suivante). Attendre au moins un run `ok` par agent. Critères de sortie : des requêtes du conteneur réapparaissent côté Bifrost ; le dashboard OpenCode affiche zéro requête sur le workspace agents pendant 24 h après reprise.
 
-Ce que la terminaison des 16 agents souverains implique : `POST /api/agents/:id/resume` refuse un agent `terminated` (409, `server/src/services/agents.ts` l.510 — VERIFIED). Le retour de ces rôles passe obligatoirement par `POST /api/companies/:id/agents` (recréation, avec `budgetMonthlyCents > 0` dès la création : ce chemin crée la politique de budget). Ne pas utiliser `DELETE /api/agents/:id` sur les agents terminés : suppression physique, perte de l'historique des runs.
+Ce que la terminaison des 16 agents souverains implique : `POST /api/agents/:id/resume` refuse un agent `terminated` (409, `server/src/services/agents.ts` l.510 : VERIFIED). Le retour de ces rôles passe obligatoirement par `POST /api/companies/:id/agents` (recréation, avec `budgetMonthlyCents > 0` dès la création : ce chemin crée la politique de budget). Ne pas utiliser `DELETE /api/agents/:id` sur les agents terminés : suppression physique, perte de l'historique des runs.
 
 ## Vérifications
 
