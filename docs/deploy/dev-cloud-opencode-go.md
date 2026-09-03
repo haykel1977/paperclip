@@ -20,6 +20,9 @@ Changements appliqués sur l'hôte par l'assistant sur instruction écrite de l'
 - Catalogue du CLI : `enabled_providers = ["opencode-go", "bifrost"]` dans la config opencode ; le provider Zen (`opencode/*`, dont `claude-*` et `gpt-*`) n'est plus listé ; 26 modèles `opencode-go/*` restent listés (restriction par modèle non offerte par la config du CLI). VERIFIED (`opencode models` relu).
 - Small model effectif : celui de la config opencode, `bifrost/qwen3-coder-30b-sovereign` ; la variable qui annonçait `opencode-go/glm-5.3-flash` était inerte. VERIFIED.
 - Budgets : `budget_monthly_cents` posé (Q-Gov 800, Q-Impl 900, Q-Web 900, QA-Tests 800) et une politique `budget_policies` par agent (`calendar_month_utc`, warn 80 %, hard stop actif). VERIFIED (API 200 ×12 ; SQL).
+- Console OpenCode (session de l'opérateur, vers 15:35 UTC) : « Use balance » était ACTIVÉ, désactivé ; usage hebdomadaire Go 100,5 % (GLM 5.3 : 7,54 $ sur 7,50 $), mensuel 50,3 % ; « modèles à entraînement » désactivé (constat) ; « modèles hébergés en Chine » ACTIVÉ, laissé en l'état ; deux clés (`quantum` = agents, `Default API Key` = poste) ; solde 52,87 $, aucune limite mensuelle de compte, recharge automatique désactivée. VERIFIED.
+- Comptabilité : la table `cost_events` montre 97 appels OpenRouter (dont 54 vers Claude Sonnet 4.5) par les quatre agents le 2026-09-03 de 07:58 à 13:25 UTC (17,95 $) et un seul événement OpenCode Go : Paperclip ne capture pas l'usage Go, les budgets posés ne le limitent pas. VERIFIED.
+- Incidents : Q-Impl mis en pause `budget` à 15:27 UTC (dépensé 9,46 $ > plafond 9 $), résolu par `raise_budget_and_resume` à 12 $ ; QA-Tests mis en pause manuelle à 15:39 UTC (D10.6, quota hebdomadaire GLM 5.3 atteint). VERIFIED.
 
 Les tableaux « État constaté » et « Ce qui n'est PAS fait » décrivent l'état AVANT cette mise à jour (14:00 UTC) ; les lignes touchées portent la mention « corrigé 15:27 ».
 
@@ -62,7 +65,7 @@ Les tableaux « État constaté » et « Ce qui n'est PAS fait » décrivent l'�
 | Renommages (Q-Gov → Q-Infra, agent-5 → Reviewer, Documentation → Librarian) | Non faits. agent-5 n'existe pas. Documentation est `terminated`. | VERIFIED |
 | Suspension des agents souverains (état conservé) | Terminaison, pas suspension. 16 agents `terminated` ; la route de terminaison révoque les clés (code) ; révocation effective en base non constatée. | VERIFIED (statut) ; révocation UNVERIFIABLE |
 | Étiquette `PAPERCLIP_LLM_MODE` alignée sur la réalité | Valait `sovereign` (14:00). Corrigé 15:27 : `cloud-opencode-go`. | VERIFIED |
-| Bloc provider `openrouter` retiré | Déclaré, clé absente (14:00). Corrigé 15:27 : retiré. | VERIFIED |
+| Bloc provider `openrouter` retiré | Déclaré, clé absente à 14:00, mais UTILISÉ le matin même (97 appels de 07:58 à 13:25 UTC, dont 54 vers Claude Sonnet 4.5 : voir Comptabilité). Corrigé 15:27 : retiré. | VERIFIED |
 | Catalogue fermé aux trois modèles utiles | 28 modèles Go + Zen (14:00). Partiellement corrigé 15:27 : Zen retiré, 26 modèles Go listés ; la restriction aux trois ids n'est pas offerte par la config du CLI. | VERIFIED |
 | Agent reviewer sur un modèle différent des coders | Aucun agent reviewer. Aucune revue humaine systématique non plus : posture dev full-auto du dépôt quantum (ADR-GOV-015 §3.1). | VERIFIED |
 | Embeddings `bge-m3` hors GPU souverain | Non traité ici. | UNVERIFIABLE |
