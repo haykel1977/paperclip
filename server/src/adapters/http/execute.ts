@@ -3,14 +3,14 @@ import { asString, asNumber, parseObject } from "../utils.js";
 import {
   assertHttpAdapterResponseNotRedirect,
   assertSafeHttpAdapterUrl,
-  httpAdapterFetchInit,
+  httpAdapterFetch,
 } from "./url-guard.js";
 
 export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
   const { config, runId, agent, context } = ctx;
   const url = asString(config.url, "");
   if (!url) throw new Error("HTTP adapter missing url");
-  const safeUrl = await assertSafeHttpAdapterUrl(url);
+  const target = await assertSafeHttpAdapterUrl(url);
 
   const method = asString(config.method, "POST");
   const timeoutMs = asNumber(config.timeoutMs, 0);
@@ -22,18 +22,16 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const timer = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null;
 
   try {
-    const res = await fetch(
-      safeUrl,
-      httpAdapterFetchInit({
-        method,
-        headers: {
-          "content-type": "application/json",
-          ...headers,
-        },
-        body: JSON.stringify(body),
-        ...(timer ? { signal: controller.signal } : {}),
-      }),
-    );
+    const res = await httpAdapterFetch(target.url, {
+      method,
+      headers: {
+        "content-type": "application/json",
+        ...headers,
+      },
+      body: JSON.stringify(body),
+      pinnedAddress: target.pinnedAddress,
+      ...(timer ? { signal: controller.signal } : {}),
+    });
     assertHttpAdapterResponseNotRedirect(res);
 
     if (!res.ok) {

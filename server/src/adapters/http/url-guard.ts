@@ -1,5 +1,7 @@
 import { isIP } from "node:net";
 import { promises as dns } from "node:dns";
+import http from "node:http";
+import https from "node:https";
 
 export const HTTP_ADAPTER_ALLOWED_HOSTS_ENV = "PAPERCLIP_HTTP_ADAPTER_ALLOWED_HOSTS";
 
@@ -116,6 +118,136 @@ export function httpAdapterFetchInit<T extends RequestInit>(init: T): T & { redi
   return { ...init, redirect: HTTP_ADAPTER_FETCH_REDIRECT };
 }
 
+export type SafeHttpAdapterTarget = {
+  url: URL;
+  /** Address used for the TCP connect so fetch cannot re-resolve DNS. */
+  pinnedAddress: string;
+};
+
+export type HttpAdapterFetchInit = RequestInit & {
+  pinnedAddress?: string | null;
+};
+
+/** Test-only override. Production code must leave this null. */
+export const httpAdapterFetchHook: {
+  current: ((url: URL, init: HttpAdapterFetchInit) => Promise<Response>) | null;
+} = { current: null };
+
+export function pinnedHttpAdapterLookup(address: string): NonNullable<https.RequestOptions["lookup"]> {
+  const family = (isIP(address) === 6 ? 6 : 4) as 4 | 6;
+  return ((
+    _hostname: string,
+    options: unknown,
+    callback?: (
+      err: NodeJS.ErrnoException | null,
+      address: string | Array<{ address: string; family: number }>,
+      family?: number,
+    ) => void,
+  ) => {
+    const cb = (typeof options === "function" ? options : callback)!;
+    const opts = typeof options === "object" && options !== null ? (options as { all?: boolean }) : {};
+    if (opts.all) {
+      cb(null, [{ address, family }]);
+      return;
+    }
+    cb(null, address, family);
+  }) as NonNullable<https.RequestOptions["lookup"]>;
+}
+
+function toNodeHeaders(headersInit?: HeadersInit): http.OutgoingHttpHeaders {
+  const headers = new Headers(headersInit);
+  const out: http.OutgoingHttpHeaders = {};
+  headers.forEach((value, key) => {
+    out[key] = value;
+  });
+  return out;
+}
+
+function requestBody(init: RequestInit): string | Buffer | undefined {
+  if (init.body == null) return undefined;
+  if (typeof init.body === "string") return init.body;
+  if (init.body instanceof Uint8Array) return Buffer.from(init.body);
+  throw new Error("HTTP adapter only supports string or buffer request bodies");
+}
+
+async function fetchPinnedToAddress(
+  url: URL,
+  init: RequestInit,
+  pinnedAddress: string,
+): Promise<Response> {
+  const lib = url.protocol === "https:" ? https : http;
+  const body = requestBody(init);
+  const headers = toNodeHeaders(init.headers);
+  if (headers.host == null && headers.Host == null) {
+    headers.host = url.host;
+  }
+
+  return new Promise((resolve, reject) => {
+    const req = lib.request(
+      {
+        protocol: url.protocol,
+        hostname: url.hostname,
+        port: url.port || undefined,
+        path: `${url.pathname}${url.search}`,
+        method: (init.method ?? "GET").toString(),
+        headers,
+        lookup: pinnedHttpAdapterLookup(pinnedAddress),
+      },
+      (incoming) => {
+        const chunks: Buffer[] = [];
+        incoming.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        incoming.on("end", () => {
+          const responseHeaders = new Headers();
+          for (const [key, value] of Object.entries(incoming.headers)) {
+            if (value == null) continue;
+            if (Array.isArray(value)) {
+              for (const item of value) responseHeaders.append(key, item);
+            } else {
+              responseHeaders.set(key, value);
+            }
+          }
+          resolve(
+            new Response(Buffer.concat(chunks), {
+              status: incoming.statusCode ?? 0,
+              statusText: incoming.statusMessage ?? "",
+              headers: responseHeaders,
+            }),
+          );
+        });
+        incoming.on("error", reject);
+      },
+    );
+    req.on("error", reject);
+    if (init.signal) {
+      const signal = init.signal;
+      if (signal.aborted) {
+        req.destroy();
+        reject(signal.reason instanceof Error ? signal.reason : new Error("Aborted"));
+        return;
+      }
+      const onAbort = () => {
+        req.destroy();
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      req.on("close", () => signal.removeEventListener("abort", onAbort));
+    }
+    if (body != null) req.write(body);
+    req.end();
+  });
+}
+
+export async function httpAdapterFetch(url: URL, init: HttpAdapterFetchInit = {}): Promise<Response> {
+  if (httpAdapterFetchHook.current) {
+    return httpAdapterFetchHook.current(url, httpAdapterFetchInit(init));
+  }
+  const { pinnedAddress, ...rest } = init;
+  const fetchInit = httpAdapterFetchInit(rest);
+  if (!pinnedAddress) {
+    return fetch(url, fetchInit);
+  }
+  return fetchPinnedToAddress(url, fetchInit, pinnedAddress);
+}
+
 export function assertHttpAdapterResponseNotRedirect(res: Response): void {
   if (res.type === "opaqueredirect" || (res.status >= 300 && res.status < 400)) {
     throw new HttpAdapterSsrfError(
@@ -127,12 +259,11 @@ export function assertHttpAdapterResponseNotRedirect(res: Response): void {
 export async function assertSafeHttpAdapterUrl(
   rawUrl: string,
   env: NodeJS.ProcessEnv = process.env,
-): Promise<URL> {
+): Promise<SafeHttpAdapterTarget> {
   const parsed = assertSafeHttpAdapterUrlSync(rawUrl, env);
   const hostname = normalizeHostname(parsed.hostname);
-  const allowed = parseHttpAdapterAllowedHosts(env[HTTP_ADAPTER_ALLOWED_HOSTS_ENV]);
-  if (allowed.has(hostname) || isIP(hostname)) {
-    return parsed;
+  if (isIP(hostname)) {
+    return { url: parsed, pinnedAddress: hostname };
   }
 
   let addresses: Array<{ address: string }>;
@@ -143,12 +274,18 @@ export async function assertSafeHttpAdapterUrl(
       `HTTP adapter url host could not be resolved: ${hostname} (${err instanceof Error ? err.message : String(err)})`,
     );
   }
+  if (addresses.length === 0) {
+    throw new Error(`HTTP adapter url host could not be resolved: ${hostname}`);
+  }
 
-  for (const entry of addresses) {
-    if (isBlockedHttpAdapterIp(entry.address)) {
-      throw new Error(`HTTP adapter url resolves to a blocked address: ${entry.address}`);
+  const allowed = parseHttpAdapterAllowedHosts(env[HTTP_ADAPTER_ALLOWED_HOSTS_ENV]);
+  if (!allowed.has(hostname)) {
+    for (const entry of addresses) {
+      if (isBlockedHttpAdapterIp(entry.address)) {
+        throw new Error(`HTTP adapter url resolves to a blocked address: ${entry.address}`);
+      }
     }
   }
 
-  return parsed;
+  return { url: parsed, pinnedAddress: addresses[0].address };
 }

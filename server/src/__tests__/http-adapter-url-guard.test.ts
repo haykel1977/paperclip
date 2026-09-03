@@ -1,3 +1,5 @@
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const dnsLookup = vi.fn();
@@ -14,16 +16,20 @@ const {
   assertSafeHttpAdapterUrlSync,
   HttpAdapterSsrfError,
   HTTP_ADAPTER_FETCH_REDIRECT,
+  httpAdapterFetch,
+  httpAdapterFetchHook,
   httpAdapterFetchInit,
   isBlockedHttpAdapterHostname,
   isBlockedHttpAdapterIp,
   parseHttpAdapterAllowedHosts,
+  pinnedHttpAdapterLookup,
 } = await import("../adapters/http/url-guard.js");
 const { testEnvironment } = await import("../adapters/http/test.js");
 
 describe("HTTP adapter URL guard", () => {
   afterEach(() => {
     dnsLookup.mockReset();
+    httpAdapterFetchHook.current = null;
   });
 
   it("blocks loopback and metadata hostnames", () => {
@@ -68,10 +74,50 @@ describe("HTTP adapter URL guard", () => {
     expect(dnsLookup).toHaveBeenCalled();
   });
 
-  it("accepts a public hostname whose DNS is public", async () => {
+  it("accepts a public hostname whose DNS is public and pins that address", async () => {
     dnsLookup.mockResolvedValueOnce([{ address: "203.0.113.10", family: 4 }]);
     const parsed = await assertSafeHttpAdapterUrl("https://agents.example.com/wakeup");
-    expect(parsed.hostname).toBe("agents.example.com");
+    expect(parsed.url.hostname).toBe("agents.example.com");
+    expect(parsed.pinnedAddress).toBe("203.0.113.10");
+  });
+
+  it("pins an allowlisted private hostname without blocking the resolved IP", async () => {
+    dnsLookup.mockResolvedValueOnce([{ address: "10.0.0.8", family: 4 }]);
+    const env = { PAPERCLIP_HTTP_ADAPTER_ALLOWED_HOSTS: "hooks.internal" };
+    const parsed = await assertSafeHttpAdapterUrl("https://hooks.internal/wakeup", env);
+    expect(parsed.url.hostname).toBe("hooks.internal");
+    expect(parsed.pinnedAddress).toBe("10.0.0.8");
+  });
+
+  it("keeps lookup pinned to the checked address", () => {
+    const lookup = pinnedHttpAdapterLookup("203.0.113.10");
+    const single = vi.fn();
+    lookup("evil.example", {}, single);
+    expect(single).toHaveBeenCalledWith(null, "203.0.113.10", 4);
+    const all = vi.fn();
+    lookup("evil.example", { all: true }, all);
+    expect(all).toHaveBeenCalledWith(null, [{ address: "203.0.113.10", family: 4 }]);
+  });
+
+  it("connects to the pinned address while sending the original Host header", async () => {
+    const seen: string[] = [];
+    const server = http.createServer((req, res) => {
+      seen.push(String(req.headers.host));
+      res.writeHead(204);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    const { port } = server.address() as AddressInfo;
+    try {
+      const url = new URL(`http://webhook.example:${port}/wakeup`);
+      const res = await httpAdapterFetch(url, { method: "HEAD", pinnedAddress: "127.0.0.1" });
+      expect(res.status).toBe(204);
+      expect(seen[0]).toBe(`webhook.example:${port}`);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
   });
 
   it("forces fetch redirect=manual and rejects 3xx / opaque redirects", () => {
@@ -97,24 +143,20 @@ describe("HTTP adapter URL guard", () => {
       ok: false,
       headers: new Headers({ location: "http://127.0.0.1/" }),
     });
-    vi.stubGlobal("fetch", fetchMock);
-    try {
-      const result = await testEnvironment({
-        companyId: "00000000-0000-0000-0000-000000000001",
-        adapterType: "http",
-        config: { url: "https://public.example/hook" },
-      });
-      expect(fetchMock).toHaveBeenCalledWith(
-        expect.any(URL),
-        expect.objectContaining({ method: "HEAD", redirect: "manual" }),
-      );
-      expect(result.status).toBe("fail");
-      expect(result.checks.some((check) => check.code === "http_url_ssrf_blocked" && check.level === "error")).toBe(
-        true,
-      );
-      expect(result.checks.some((check) => check.code === "http_endpoint_probe_failed")).toBe(false);
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    httpAdapterFetchHook.current = fetchMock;
+    const result = await testEnvironment({
+      companyId: "00000000-0000-0000-0000-000000000001",
+      adapterType: "http",
+      config: { url: "https://public.example/hook" },
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.any(URL),
+      expect.objectContaining({ method: "HEAD", redirect: "manual", pinnedAddress: "203.0.113.10" }),
+    );
+    expect(result.status).toBe("fail");
+    expect(result.checks.some((check) => check.code === "http_url_ssrf_blocked" && check.level === "error")).toBe(
+      true,
+    );
+    expect(result.checks.some((check) => check.code === "http_endpoint_probe_failed")).toBe(false);
   });
 });

@@ -7,7 +7,7 @@ import {
   runChildProcess,
 } from "@paperclipai/adapter-utils/server-utils";
 import { isValidOpenCodeModelId } from "../index.js";
-import { resolveOpenCodeHomeDir } from "./home.js";
+import { readUserInfoHomedir, resolveOpenCodeHomeDir } from "./home.js";
 
 const MODELS_CACHE_TTL_MS = 60_000;
 const MODELS_DISCOVERY_TIMEOUT_MS = 20_000;
@@ -123,18 +123,10 @@ export async function discoverOpenCodeModels(input: {
   // When the server is started via `runuser -u <user>`, HOME may still
   // reflect the parent process (e.g. /root), causing OpenCode to miss
   // provider auth credentials stored under the target user's home.
-  let userInfoHomedir: string | undefined;
-  try {
-    userInfoHomedir = os.userInfo().homedir || undefined;
-  } catch {
-    // os.userInfo() throws a SystemError when the current UID has no
-    // /etc/passwd entry (e.g. `docker run --user 1234` with a minimal
-    // image). Fall back to process.env.HOME / os.homedir().
-  }
   const resolvedHome = resolveOpenCodeHomeDir({
+    userInfoHomedir: readUserInfoHomedir(),
     envHome: env.HOME ?? process.env.HOME,
     osHomedir: os.homedir(),
-    userInfoHomedir,
   });
   // Prevent OpenCode from writing an opencode.json into the working directory.
   const runtimeEnv = normalizeEnv(ensurePathInEnv({
