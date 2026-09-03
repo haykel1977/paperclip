@@ -224,18 +224,20 @@ async function fetchPinnedToAddress(
       reject(err instanceof Error ? err : new Error(String(err)));
     };
 
+    const requestOptions: https.RequestOptions = {
+      protocol: url.protocol,
+      hostname: url.hostname,
+      path: `${url.pathname}${url.search}`,
+      method: (init.method ?? "GET").toString(),
+      headers,
+      lookup: pinnedHttpAdapterLookup(pinnedAddress),
+    };
+    if (url.port) requestOptions.port = url.port;
+    if (auth) requestOptions.auth = auth;
+    if (init.signal) requestOptions.signal = init.signal;
+
     const req = lib.request(
-      {
-        protocol: url.protocol,
-        hostname: url.hostname,
-        port: url.port || undefined,
-        path: `${url.pathname}${url.search}`,
-        method: (init.method ?? "GET").toString(),
-        headers,
-        auth,
-        signal: init.signal,
-        lookup: pinnedHttpAdapterLookup(pinnedAddress),
-      },
+      requestOptions,
       (incoming) => {
         if (init.signal?.aborted) {
           incoming.destroy();
