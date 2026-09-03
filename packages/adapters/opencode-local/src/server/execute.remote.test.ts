@@ -139,6 +139,7 @@ describe("opencode remote execution", () => {
       config: {
         command: "opencode",
         model: "opencode/gpt-5-nano",
+        dangerouslySkipPermissions: true,
       },
       context: {
         paperclipWorkspace: {
