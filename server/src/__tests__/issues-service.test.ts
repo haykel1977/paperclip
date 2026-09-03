@@ -318,6 +318,33 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
     expect(persisted?.executionWorkspaceSettings).toBeNull();
   });
 
+  it("does not 422 when isolated workspace fields are explicitly null while the flag is off", async () => {
+    const companyId = await seedAssignableAgentCompany();
+    await instanceSettingsService(db).updateExperimental({ enableIsolatedWorkspaces: false });
+
+    const created = await svc.create(companyId, {
+      title: "Clear workspace fields is not a write",
+      description: null,
+      status: "todo",
+      priority: "medium",
+      executionWorkspaceId: null,
+      executionWorkspacePreference: null,
+      executionWorkspaceSettings: null,
+    });
+    expect(created.executionWorkspaceId).toBeNull();
+    expect(created.executionWorkspacePreference).toBeNull();
+    expect(created.executionWorkspaceSettings).toBeNull();
+
+    const updated = await svc.update(created.id, {
+      executionWorkspaceId: null,
+      executionWorkspacePreference: null,
+      executionWorkspaceSettings: null,
+    });
+    expect(updated.executionWorkspaceId).toBeNull();
+    expect(updated.executionWorkspacePreference).toBeNull();
+    expect(updated.executionWorkspaceSettings).toBeNull();
+  });
+
   it("rejects checkout by a terminated agent before assigning the issue", async () => {
     const companyId = await seedAssignableAgentCompany();
     const terminatedAgentId = randomUUID();

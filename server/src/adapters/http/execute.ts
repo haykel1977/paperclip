@@ -1,6 +1,10 @@
 import type { AdapterExecutionContext, AdapterExecutionResult } from "../types.js";
 import { asString, asNumber, parseObject } from "../utils.js";
-import { assertSafeHttpAdapterUrl } from "./url-guard.js";
+import {
+  assertHttpAdapterResponseNotRedirect,
+  assertSafeHttpAdapterUrl,
+  httpAdapterFetchInit,
+} from "./url-guard.js";
 
 export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
   const { config, runId, agent, context } = ctx;
@@ -18,15 +22,19 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const timer = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null;
 
   try {
-    const res = await fetch(safeUrl, {
-      method,
-      headers: {
-        "content-type": "application/json",
-        ...headers,
-      },
-      body: JSON.stringify(body),
-      ...(timer ? { signal: controller.signal } : {}),
-    });
+    const res = await fetch(
+      safeUrl,
+      httpAdapterFetchInit({
+        method,
+        headers: {
+          "content-type": "application/json",
+          ...headers,
+        },
+        body: JSON.stringify(body),
+        ...(timer ? { signal: controller.signal } : {}),
+      }),
+    );
+    assertHttpAdapterResponseNotRedirect(res);
 
     if (!res.ok) {
       throw new Error(`HTTP invoke failed with status ${res.status}`);

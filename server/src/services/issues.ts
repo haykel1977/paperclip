@@ -158,7 +158,7 @@ function assertIsolatedWorkspaceFieldsAllowed(
       ["executionWorkspaceSettings", fields.executionWorkspaceSettings],
     ] as const
   )
-    .filter(([, value]) => value !== undefined)
+    .filter(([, value]) => value != null)
     .map(([name]) => name);
   if (provided.length === 0) return;
   throw unprocessable(

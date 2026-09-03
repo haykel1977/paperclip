@@ -563,10 +563,8 @@ export function agentService(db: Db) {
 
       return db.transaction(async (tx) => {
         await tx.update(agents).set({ reportsTo: null }).where(eq(agents.reportsTo, id));
-        await tx
-          .update(issues)
-          .set({ assigneeAgentId: null, createdByAgentId: null })
-          .where(or(eq(issues.assigneeAgentId, id), eq(issues.createdByAgentId, id)));
+        await tx.update(issues).set({ assigneeAgentId: null }).where(eq(issues.assigneeAgentId, id));
+        await tx.update(issues).set({ createdByAgentId: null }).where(eq(issues.createdByAgentId, id));
         await tx
           .update(projects)
           .set({ leadAgentId: null })

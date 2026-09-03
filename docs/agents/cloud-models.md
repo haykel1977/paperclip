@@ -51,8 +51,9 @@ recommended pattern is:
 
 - `PAPERCLIP_ENABLE_NOOP_DONE_AUTO_DISPOSITION` — Recovery no-op-done skip
   (PR #98). **Default on** as of 2026-09-03 so `successful_run_missing_state`
-  loops do not clone-storm. Set to `0`/`false`/`off` to restore the old
-  enqueue-handoff behavior.
+  loops do not clone-storm. When the variable is set, only explicit truthy
+  values (`1`/`true`/`yes`/`on`) keep the skip enabled. Unknown values
+  (`maybe`, `disable`, …) disable it.
 
 `PAPERCLIP_ALLOW_CLOUD_MODELS` stays fail-closed (unset = sovereign-only).
 The recovery flag is the opposite polarity: unset = skip handoff on a

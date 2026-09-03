@@ -9,12 +9,17 @@ vi.mock("node:dns", () => ({
 }));
 
 const {
+  assertHttpAdapterResponseNotRedirect,
   assertSafeHttpAdapterUrl,
   assertSafeHttpAdapterUrlSync,
+  HttpAdapterSsrfError,
+  HTTP_ADAPTER_FETCH_REDIRECT,
+  httpAdapterFetchInit,
   isBlockedHttpAdapterHostname,
   isBlockedHttpAdapterIp,
   parseHttpAdapterAllowedHosts,
 } = await import("../adapters/http/url-guard.js");
+const { testEnvironment } = await import("../adapters/http/test.js");
 
 describe("HTTP adapter URL guard", () => {
   afterEach(() => {
@@ -67,5 +72,49 @@ describe("HTTP adapter URL guard", () => {
     dnsLookup.mockResolvedValueOnce([{ address: "203.0.113.10", family: 4 }]);
     const parsed = await assertSafeHttpAdapterUrl("https://agents.example.com/wakeup");
     expect(parsed.hostname).toBe("agents.example.com");
+  });
+
+  it("forces fetch redirect=manual and rejects 3xx / opaque redirects", () => {
+    expect(httpAdapterFetchInit({ method: "HEAD", redirect: "follow" }).redirect).toBe(
+      HTTP_ADAPTER_FETCH_REDIRECT,
+    );
+    expect(() =>
+      assertHttpAdapterResponseNotRedirect({ type: "basic", status: 200 } as Response),
+    ).not.toThrow();
+    expect(() =>
+      assertHttpAdapterResponseNotRedirect({ type: "basic", status: 302 } as Response),
+    ).toThrow(HttpAdapterSsrfError);
+    expect(() =>
+      assertHttpAdapterResponseNotRedirect({ type: "opaqueredirect", status: 0 } as Response),
+    ).toThrow(/refused redirect/i);
+  });
+
+  it("treats a redirect HEAD probe as an SSRF error, not a connectivity warn", async () => {
+    dnsLookup.mockResolvedValueOnce([{ address: "203.0.113.10", family: 4 }]);
+    const fetchMock = vi.fn().mockResolvedValue({
+      type: "basic",
+      status: 302,
+      ok: false,
+      headers: new Headers({ location: "http://127.0.0.1/" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const result = await testEnvironment({
+        companyId: "00000000-0000-0000-0000-000000000001",
+        adapterType: "http",
+        config: { url: "https://public.example/hook" },
+      });
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.any(URL),
+        expect.objectContaining({ method: "HEAD", redirect: "manual" }),
+      );
+      expect(result.status).toBe("fail");
+      expect(result.checks.some((check) => check.code === "http_url_ssrf_blocked" && check.level === "error")).toBe(
+        true,
+      );
+      expect(result.checks.some((check) => check.code === "http_endpoint_probe_failed")).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

@@ -4,7 +4,12 @@ import type {
   AdapterEnvironmentTestResult,
 } from "../types.js";
 import { asString, parseObject } from "../utils.js";
-import { assertSafeHttpAdapterUrl } from "./url-guard.js";
+import {
+  assertHttpAdapterResponseNotRedirect,
+  assertSafeHttpAdapterUrl,
+  HttpAdapterSsrfError,
+  httpAdapterFetchInit,
+} from "./url-guard.js";
 
 function summarizeStatus(checks: AdapterEnvironmentCheck[]): AdapterEnvironmentTestResult["status"] {
   if (checks.some((check) => check.level === "error")) return "fail";
@@ -95,10 +100,14 @@ export async function testEnvironment(
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3000);
     try {
-      const response = await fetch(url, {
-        method: "HEAD",
-        signal: controller.signal,
-      });
+      const response = await fetch(
+        url,
+        httpAdapterFetchInit({
+          method: "HEAD",
+          signal: controller.signal,
+        }),
+      );
+      assertHttpAdapterResponseNotRedirect(response);
       if (!response.ok && response.status !== 405 && response.status !== 501) {
         checks.push({
           code: "http_endpoint_probe_unexpected_status",
@@ -114,12 +123,21 @@ export async function testEnvironment(
         });
       }
     } catch (err) {
-      checks.push({
-        code: "http_endpoint_probe_failed",
-        level: "warn",
-        message: err instanceof Error ? err.message : "Endpoint probe failed",
-        hint: "This may be expected in restricted networks; verify connectivity when invoking runs.",
-      });
+      if (err instanceof HttpAdapterSsrfError) {
+        checks.push({
+          code: "http_url_ssrf_blocked",
+          level: "error",
+          message: err.message,
+          hint: "The HTTP adapter does not follow redirects. Point url at the final public endpoint, or set PAPERCLIP_HTTP_ADAPTER_ALLOWED_HOSTS for a specific private host.",
+        });
+      } else {
+        checks.push({
+          code: "http_endpoint_probe_failed",
+          level: "warn",
+          message: err instanceof Error ? err.message : "Endpoint probe failed",
+          hint: "This may be expected in restricted networks; verify connectivity when invoking runs.",
+        });
+      }
     } finally {
       clearTimeout(timeout);
     }

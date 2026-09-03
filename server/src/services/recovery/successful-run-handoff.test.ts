@@ -355,7 +355,9 @@ describe("isNoOpDoneAutoDispositionEnabled", () => {
     expect(isNoOpDoneAutoDispositionEnabled({ [NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG]: "1" })).toBe(true);
     expect(isNoOpDoneAutoDispositionEnabled({ [NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG]: "true" })).toBe(true);
     expect(isNoOpDoneAutoDispositionEnabled({ [NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG]: "yes" })).toBe(true);
-    expect(isNoOpDoneAutoDispositionEnabled({ [NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG]: "maybe" })).toBe(true);
+    expect(isNoOpDoneAutoDispositionEnabled({ [NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG]: "on" })).toBe(true);
+    expect(isNoOpDoneAutoDispositionEnabled({ [NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG]: "maybe" })).toBe(false);
+    expect(isNoOpDoneAutoDispositionEnabled({ [NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG]: "disable" })).toBe(false);
   });
 });
 

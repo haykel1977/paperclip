@@ -32,12 +32,17 @@ The server resolves the configured URL before `fetch`. It rejects:
 - `localhost`, `*.localhost`, and cloud metadata hostnames
 - literal private / loopback / link-local / CGNAT / unique-local IPs
 - DNS answers that resolve to those address ranges
+- HTTP redirects (`redirect: "manual"`). A public URL that 30x's to localhost,
+  RFC1918, or metadata is refused instead of being followed
 
 Operators who intentionally invoke an internal webhook can set
 `PAPERCLIP_HTTP_ADAPTER_ALLOWED_HOSTS=hooks.internal.example` (comma-separated exact hostnames).
-The allowlist is fail-closed: unset means no private targets.
+The allowlist is fail-closed: unset means no private targets. The allowlist
+does not authorize following redirects.
 
-Environment-test HEAD probes use the same guard, so a blocked URL fails the adapter test instead of probing the internal network.
+Environment-test HEAD probes use the same guard, so a blocked URL or a redirect
+fails the adapter test (`http_url_ssrf_blocked`) instead of probing the internal
+network or warning as a connectivity miss.
 
 ## How It Works
 
