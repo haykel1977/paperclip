@@ -121,6 +121,48 @@ describe("HTTP adapter URL guard", () => {
     }
   });
 
+  it("aborts a pinned request as AbortError so execute can map timeout", async () => {
+    const server = http.createServer(() => {
+      // Hold the socket open until the client aborts.
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    const { port } = server.address() as AddressInfo;
+    const controller = new AbortController();
+    const url = new URL(`http://webhook.example:${port}/wakeup`);
+    const pending = httpAdapterFetch(url, {
+      method: "GET",
+      pinnedAddress: "127.0.0.1",
+      signal: controller.signal,
+    });
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    server.closeAllConnections?.();
+    await new Promise<void>((resolve, reject) =>
+      server.close((err) => (err ? reject(err) : resolve())),
+    );
+  });
+
+  it("copies URL userinfo into Basic authorization on the pinned request", async () => {
+    const seen: Array<string | undefined> = [];
+    const server = http.createServer((req, res) => {
+      seen.push(req.headers.authorization);
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("ok");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    const { port } = server.address() as AddressInfo;
+    try {
+      const url = new URL(`http://alice:p%40ss@webhook.example:${port}/wakeup`);
+      const res = await httpAdapterFetch(url, { method: "GET", pinnedAddress: "127.0.0.1" });
+      expect(res.status).toBe(200);
+      expect(seen[0]).toBe(`Basic ${Buffer.from("alice:p@ss").toString("base64")}`);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
+  });
+
   it("forces fetch redirect=manual and rejects 3xx / opaque redirects", () => {
     expect(httpAdapterFetchInit({ method: "HEAD", redirect: "follow" }).redirect).toBe(
       HTTP_ADAPTER_FETCH_REDIRECT,

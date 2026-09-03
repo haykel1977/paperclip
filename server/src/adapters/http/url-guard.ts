@@ -170,19 +170,51 @@ function requestBody(init: RequestInit): string | Buffer | undefined {
   throw new Error("HTTP adapter only supports string or buffer request bodies");
 }
 
+export function createHttpAdapterAbortError(reason?: unknown): Error {
+  if (reason instanceof Error && reason.name === "AbortError") return reason;
+  return new DOMException("The operation was aborted.", "AbortError");
+}
+
+export function httpAdapterUrlBasicAuth(url: URL): string | undefined {
+  if (url.username === "" && url.password === "") return undefined;
+  return `${decodeURIComponent(url.username)}:${decodeURIComponent(url.password)}`;
+}
+
 async function fetchPinnedToAddress(
   url: URL,
   init: RequestInit,
   pinnedAddress: string,
 ): Promise<Response> {
+  if (init.signal?.aborted) {
+    throw createHttpAdapterAbortError(init.signal.reason);
+  }
+
   const lib = url.protocol === "https:" ? https : http;
   const body = requestBody(init);
   const headers = toNodeHeaders(init.headers);
   if (headers.host == null && headers.Host == null) {
     headers.host = url.host;
   }
+  const hasAuthHeader = headers.authorization != null || headers.Authorization != null;
+  const auth = hasAuthHeader ? undefined : httpAdapterUrlBasicAuth(url);
 
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const succeed = (response: Response) => {
+      if (settled) return;
+      settled = true;
+      resolve(response);
+    };
+    const fail = (err: unknown) => {
+      if (settled) return;
+      settled = true;
+      if (init.signal?.aborted) {
+        reject(createHttpAdapterAbortError(init.signal.reason));
+        return;
+      }
+      reject(err instanceof Error ? err : new Error(String(err)));
+    };
+
     const req = lib.request(
       {
         protocol: url.protocol,
@@ -191,12 +223,23 @@ async function fetchPinnedToAddress(
         path: `${url.pathname}${url.search}`,
         method: (init.method ?? "GET").toString(),
         headers,
+        auth,
+        signal: init.signal,
         lookup: pinnedHttpAdapterLookup(pinnedAddress),
       },
       (incoming) => {
+        if (init.signal?.aborted) {
+          incoming.destroy();
+          fail(createHttpAdapterAbortError(init.signal.reason));
+          return;
+        }
         const chunks: Buffer[] = [];
         incoming.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
         incoming.on("end", () => {
+          if (init.signal?.aborted) {
+            fail(createHttpAdapterAbortError(init.signal.reason));
+            return;
+          }
           const responseHeaders = new Headers();
           for (const [key, value] of Object.entries(incoming.headers)) {
             if (value == null) continue;
@@ -208,39 +251,26 @@ async function fetchPinnedToAddress(
           }
           const status = incoming.statusCode ?? 0;
           const rawBody = Buffer.concat(chunks);
-          const body =
+          const responseBody =
             status === 204 || status === 205 || status === 304 || rawBody.length === 0
               ? null
               : rawBody;
           try {
-            resolve(
-              new Response(body, {
+            succeed(
+              new Response(responseBody, {
                 status: status === 0 ? 200 : status,
                 statusText: incoming.statusMessage ?? "",
                 headers: responseHeaders,
               }),
             );
           } catch (err) {
-            reject(err);
+            fail(err);
           }
         });
-        incoming.on("error", reject);
+        incoming.on("error", fail);
       },
     );
-    req.on("error", reject);
-    if (init.signal) {
-      const signal = init.signal;
-      if (signal.aborted) {
-        req.destroy();
-        reject(signal.reason instanceof Error ? signal.reason : new Error("Aborted"));
-        return;
-      }
-      const onAbort = () => {
-        req.destroy();
-      };
-      signal.addEventListener("abort", onAbort, { once: true });
-      req.on("close", () => signal.removeEventListener("abort", onAbort));
-    }
+    req.on("error", fail);
     if (body != null) req.write(body);
     req.end();
   });
