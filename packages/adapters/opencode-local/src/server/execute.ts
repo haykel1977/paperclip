@@ -603,9 +603,29 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     const shouldUseResumeDeltaPrompt = Boolean(sessionId) && wakePrompt.length > 0;
     const renderedPrompt = shouldUseResumeDeltaPrompt ? "" : renderTemplate(promptTemplate, templateData);
     const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
+    // Tell the model where its checkout actually is. OpenCode is spawned with
+    // cwd=<worktree>, but the model has no way to know that: observed runs
+    // (QUA-1252, 2026-09-03) had the agent probing /app (the Paperclip server
+    // tree) and $HOME, concluding "scripts/agent-pr-create.sh does not exist"
+    // and pushing an orphan branch from a fresh `git init`. One explicit line
+    // removes that whole failure class; skipped on resume deltas to stay short.
+    const workspaceLocationNote = (() => {
+      if (shouldUseResumeDeltaPrompt || executionTargetIsRemote) return "";
+      const location = effectiveExecutionCwd || cwd;
+      if (!location) return "";
+      const lines = [
+        "Workspace location:",
+        `- Your shell already starts in \`${location}\`; this directory IS the task repository checkout (a git worktree when isolated workspaces are enabled). Run all repository commands (git, scripts/*.sh, tests) from here.`,
+        "- Do not look for the repository under /app, $HOME or any other path, and never `git init` a new repository: if the expected files are missing, report that as a blocker instead.",
+      ];
+      if (workspaceBranch) lines.push(`- Task branch: \`${workspaceBranch}\` (already checked out; push it with \`git push -u origin HEAD\`).`);
+      if (workspaceRepoUrl) lines.push(`- Remote: ${workspaceRepoUrl.replace(/\/\/[^@/]+@/, "//")}`);
+      return lines.join("\n");
+    })();
     const prompt = joinPromptSections([
       instructionsPrefix,
       renderedBootstrapPrompt,
+      workspaceLocationNote,
       wakePrompt,
       sessionHandoffNote,
       renderedPrompt,
