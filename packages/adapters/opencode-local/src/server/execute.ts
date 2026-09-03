@@ -363,6 +363,18 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const preparedRuntimeConfig = await prepareOpenCodeRuntimeConfig({ env, config });
   const localRuntimeConfigHome =
     preparedRuntimeConfig.notes.length > 0 ? preparedRuntimeConfig.env.XDG_CONFIG_HOME : "";
+  // OpenCode derives its project directory from the inherited `PWD` variable
+  // and re-instantiates there, ignoring the spawn `cwd` when the two differ.
+  // The server process runs from /app (the Paperclip tree), so every isolated
+  // worktree run silently landed in /app: reproduced on 2026-09-03 by spawning
+  // with cwd=<worktree> and PWD=/app -> "creating instance directory=/app".
+  // Pin PWD (and drop OLDPWD/INIT_CWD noise) to the execution cwd. Remote
+  // targets sanitize their env separately and are left untouched.
+  if (!executionTargetIsRemote) {
+    preparedRuntimeConfig.env.PWD = cwd;
+    delete preparedRuntimeConfig.env.OLDPWD;
+    delete preparedRuntimeConfig.env.INIT_CWD;
+  }
   try {
     const runtimeEnv = Object.fromEntries(
       Object.entries(ensurePathInEnv({ ...process.env, ...preparedRuntimeConfig.env })).filter(
