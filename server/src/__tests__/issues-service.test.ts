@@ -318,6 +318,29 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
     expect(persisted?.executionWorkspaceSettings).toBeNull();
   });
 
+  it("allows shared workspace linkage while isolated modes stay 422 when the flag is off", async () => {
+    const companyId = await seedAssignableAgentCompany();
+    await instanceSettingsService(db).updateExperimental({ enableIsolatedWorkspaces: false });
+
+    const created = await svc.create(companyId, {
+      title: "Shared reuse is not isolated",
+      description: null,
+      status: "todo",
+      priority: "medium",
+      executionWorkspacePreference: "reuse_existing",
+      executionWorkspaceSettings: { mode: "shared_workspace" },
+    });
+    expect(created.executionWorkspacePreference).toBe("reuse_existing");
+    expect(created.executionWorkspaceSettings).toEqual({ mode: "shared_workspace" });
+
+    const updated = await svc.update(created.id, {
+      executionWorkspacePreference: "reuse_existing",
+      executionWorkspaceSettings: { mode: "agent_default" },
+    });
+    expect(updated.executionWorkspacePreference).toBe("reuse_existing");
+    expect(updated.executionWorkspaceSettings).toEqual({ mode: "agent_default" });
+  });
+
   it("does not 422 when isolated workspace fields are explicitly null while the flag is off", async () => {
     const companyId = await seedAssignableAgentCompany();
     await instanceSettingsService(db).updateExperimental({ enableIsolatedWorkspaces: false });

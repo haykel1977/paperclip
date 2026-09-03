@@ -142,6 +142,8 @@ function buildReusedExecutionWorkspaceConfigPatchFromIssueSettings(
   };
 }
 
+const EXPERIMENTAL_ISOLATED_WORKSPACE_MODES = new Set(["isolated_workspace", "operator_branch"]);
+
 function assertIsolatedWorkspaceFieldsAllowed(
   isolatedWorkspacesEnabled: boolean,
   fields: {
@@ -151,15 +153,20 @@ function assertIsolatedWorkspaceFieldsAllowed(
   },
 ) {
   if (isolatedWorkspacesEnabled) return;
-  const provided = (
-    [
-      ["executionWorkspaceId", fields.executionWorkspaceId],
-      ["executionWorkspacePreference", fields.executionWorkspacePreference],
-      ["executionWorkspaceSettings", fields.executionWorkspaceSettings],
-    ] as const
-  )
-    .filter(([, value]) => value != null)
-    .map(([name]) => name);
+  const provided: string[] = [];
+  if (
+    typeof fields.executionWorkspacePreference === "string" &&
+    EXPERIMENTAL_ISOLATED_WORKSPACE_MODES.has(fields.executionWorkspacePreference)
+  ) {
+    provided.push("executionWorkspacePreference");
+  }
+  const settings = fields.executionWorkspaceSettings;
+  if (settings && typeof settings === "object" && !Array.isArray(settings)) {
+    const mode = (settings as { mode?: unknown }).mode;
+    if (typeof mode === "string" && EXPERIMENTAL_ISOLATED_WORKSPACE_MODES.has(mode)) {
+      provided.push("executionWorkspaceSettings");
+    }
+  }
   if (provided.length === 0) return;
   throw unprocessable(
     `Isolated execution workspaces are disabled on this instance. Enable experimental setting enableIsolatedWorkspaces before setting ${provided.join(", ")}.`,
