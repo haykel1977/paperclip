@@ -1,6 +1,6 @@
 ---
 title: "ADR-IA-018 Mode cloud R&D"
-summary: "Déviation documentée à la doctrine souveraine pour les agents Paperclip de développement. Signature de l'opérateur requise ; sans signature, cette ADR n'autorise rien."
+summary: "Déviation documentée à la doctrine souveraine pour les agents Paperclip de développement. PROPOSED, ratification suspendue le 2026-09-03 (retour au souverain exécuté, canary souveraine en cours) ; sans signature, cette ADR n'autorise rien."
 ---
 
 > Language: French : operator-facing deviation record. English summary: this ADR documents, and does not authorize, a deviation from the sovereign-only doctrine of the private quantum repository: four development-only Paperclip agents run on OpenCode Go cloud models with a checkout of the quantum source tree as working directory, egressing directly to `opencode.ai`. It fixes the scope, the exact provider and models, what leaves the host, the compensating controls, the expiry and the return-to-sovereign procedure. It has no effect until the operator signs §9 in a GitHub-verified commit.
@@ -10,9 +10,9 @@ summary: "Déviation documentée à la doctrine souveraine pour les agents Paper
 
 | Champ | Valeur |
 |---|---|
-| **Status** | ACCEPTED-DEV (décisions saisies le 2026-09-03 sur instruction écrite de l'opérateur ; effectif à la ratification par merge, §9) |
-| **Statut du texte vs état du live** | Les décisions D1 à D10 sont saisies (§9). L'état live (agents sur modèles cloud, au plus tard depuis le 2026-09-02) est couvert par cette ADR à compter du merge de la PR #102 par le compte de l'opérateur ; avant ce merge, la couverture reste en attente de ratification. |
-| **Transition de statut** | `PROPOSED` → `ACCEPTED-DEV` le 2026-09-03, dans le commit de saisie des décisions (PR #102), sur instruction écrite de l'opérateur (§9). Les décisions saisies sont reportées dans D1 à D10. Jamais `ACCEPTED-PROD` ; jamais `Accepted` nu. |
+| **Status** | PROPOSED — ratification suspendue le 2026-09-03 18:00 UTC (décision de l'opérateur, saisie par l'assistant sur instruction écrite « go fais tout à ma place ») : voir §0. Les décisions saisies le 2026-09-03 restent consignées en §9 à titre d'historique ; elles ne sont pas ratifiées. |
+| **Statut du texte vs état du live** | Depuis le 2026-09-03 20:26 UTC, **aucun agent n'est sur un modèle cloud** : les quatre agents sont revenus sur `bifrost/qwen3-coder-30b-sovereign` (procédure D10 exécutée, §0). L'état que ce texte décrit (D2 « fournisseur LIVE OpenCode Go ») a existé du 2026-09-02 au 2026-09-03 20:26 UTC et n'a jamais été ratifié. |
+| **Transition de statut** | `PROPOSED` → `ACCEPTED-DEV` saisi le 2026-09-03 (commit de saisie, PR #102) → **retour à `PROPOSED` le 2026-09-03 18:00–20:30 UTC** (§0) : la clause de sortie D10.6 s'est déclenchée avant la ratification et le motif technique de la déviation a disparu (canary souveraine D9-b réussie). Jamais `ACCEPTED-PROD` ; jamais `Accepted` nu. |
 | **Type** | Déviation temporaire, à visage découvert. Ce que la signature est et n'est pas : voir §9. |
 | **Date** | 2026-09-03 |
 | **Owner / Decider** | Haykel Ben Amara (opérateur) |
@@ -24,6 +24,33 @@ summary: "Déviation documentée à la doctrine souveraine pour les agents Paper
 | **Deviates-from** | CLAUDE.md doctrine 2 (« Sovereign LLM uniquement »), doctrine 3 (résidence EU/Algérie), doctrine 4 (fail-closed : l'état live est permissif, à corriger, §4) ; RULE-PROV-003 par l'esprit (la lettre, `store.go` et migrations, n'est pas touchée) ; ADR-GOV-015 §2 « Zero frontier runtime … only » (doctrine dev active, ACCEPTED-DEV) ; ADR-ARCH-003 §drivers et table rôles → GPU souverain (ACCEPTED) ; ADR-SEC-010 et `docs/compliance/ict-register.yaml` (assertion « cloud egress disabled and EU data residency asserted », fausse au plus tard depuis le 2026-09-02) ; `docs/governance/llm-model-allowlist.yml` règles `allowlist-only` et `no-cloud-egress` ; `docs/SSOT/HUMAN_GATES.md` l.38 (« aucun cloud externe autorisé sans approbation explicite » ; condition remplie par la signature §9, pour ce périmètre seulement) ; `docs/SSOT/PR_REVIEW_RULES.md` l.134 (« An exception cannot authorize … cloud egress bypass » : contradiction ouverte, §8.6). Aucune de ces règles n'est amendée par cette ADR ; chaque amendement passe par une PR quantum (§8). |
 | **Numéro** | 018. Libre dans quantum au 2026-09-03 (VERIFIED : aucun fichier `*IA-018*` dans `docs/adr/` ni `docs/architecture/adrs/`). La réservation est une décision de cette ADR, matérialisée par le miroir (§8.5). |
 | **Expiry** | 2026-12-02, sauf nouvelle signature datée de l'opérateur avant cette date (D10.5). Fin anticipée selon D9 (première condition survenue). Réévaluation possible à tout moment avant. |
+
+## 0. Addendum du 2026-09-03 (18:00–21:00 UTC) : ratification suspendue, retour au souverain exécuté
+
+Rédaction : assistant opérateur (Hermes), sur instruction écrite de l'opérateur du 2026-09-03 (« je suis toutes tes recommandations, à toi de bien décider », puis « go fais tout à ma place »). Étiquettes : VERIFIED = constaté à la source ce jour ; REFUTED = la source dit autre chose.
+
+### 0.1 Ce qui a changé après la rédaction des §1–§9 (13:30–15:30 UTC)
+
+| Affirmation des §1–§9 / du miroir quantum | État constaté à 18:00–21:00 UTC | Étiquette |
+|---|---|---|
+| D2 : « Fournisseur LIVE : OpenCode Go » (`kimi-k2.7-code`, `deepseek-v4-pro`, `glm-5.3-flash`) | OpenCode Go **hors service** pour les agents : `Weekly usage limit reached. Resets in 3 days` sur `kimi-k2.7-code` (dès 15:46 UTC) **et** `glm-5.3-flash` (17:14 UTC). Trois runs QUA-1252 avortés pour cette seule raison. | VERIFIED (`opencode.log`) |
+| Miroir §1 : « motif réel : une décision de l'opérateur, pas une indisponibilité ; GPU souverain en ligne et inactif » | Le GPU était en ligne, mais le chemin souverain était **cassé côté passerelle** : la clé virtuelle Bifrost du conteneur était révoquée (`virtual key not found`, 401). « Inactif » parce qu'injoignable. Réparé 17:22 UTC (clé virtuelle active `paperclip-container`). | VERIFIED (Bifrost `config.db`, test `curl`) |
+| D6 : budgets 8/9/9/8 $ « posés, hard stop actif » | `cost=0` sur tous les runs OpenCode Go : les budgets Paperclip ne bornent rien de ce que D2 autorise. Le seul plafond effectif (plan Go) a été atteint. | VERIFIED (`heartbeat_runs.usage_json`) |
+| D10.6 : « plafond Go atteint → pause immédiate de l'agent » | Appliqué à QA-Tests seulement (15:39 UTC). Q-Impl a été réveillé toutes les 5 min par un cron hôte (`quantum-nonstop-heartbeat.sh`, 88 invocations le 03/09) jusqu'à sa désactivation à 16:45 UTC. **La clause de sortie était remplie avant toute ratification.** | VERIFIED (`/var/log/quantum-nonstop-heartbeat.log`) |
+| Miroir §2.1 : « redémarré 03/09 13:57 UTC » | **151 arrêts/démarrages le 03/09** : le timer `paperclip-token-refresh` redémarrait le conteneur toutes les 50 min (script **et** `ExecStartPost` de l'unit). Chaque redémarrage tuait le run en cours (« Process lost »). Les deux supprimés à 17:29 UTC. | VERIFIED (`journalctl`) |
+| §7 : « Composition du prompt … VERIFIED (R3) » | Le prompt ne disait pas au modèle où est son checkout, **et** OpenCode se ré-instanciait dans `/app` (l'arbre Paperclip) à cause de la variable `PWD` héritée du serveur : `creating instance directory=<worktree>` puis `directory=/app`, 212 fois le 03/09, 100 % des runs lancés par Paperclip. Le modèle explorait donc l'arbre Paperclip, « ne trouvait pas » `scripts/agent-pr-create.sh` et faisait `git init` dans `$HOME`. Corrigé : PR #103 de ce fork (déployée à chaud 20:45 UTC). | VERIFIED (`opencode.log`, reproduction par `spawn` nu) |
+| Seul run ayant produit une PR le 03/09 avant 20:00 UTC | `b6b5ad57` (08:37 UTC) sur `openrouter/anthropic/claude-sonnet-4.5`, modèle HARD_BLOCK de `llm-model-allowlist.yml`, retiré le même jour. Aucun run OpenCode Go n'a livré de PR. | VERIFIED (`usage_json`) |
+| D8 : hygiène des secrets | Un jeton GitHub `gho_…` (révoqué, 401) était embarqué dans l'URL `repoUrl` de 14 206 execution-workspaces en base, dont 80 idle/actifs. Assaini le 03/09 (0 restant sur active/idle). | VERIFIED (API) |
+
+### 0.2 Canary souveraine D9-b : exécutée
+
+Ticket QUA-1252 (issue GitHub #3011, un fichier `.vscode/settings.json`), agent Q-Impl sur `bifrost/qwen3-coder-30b-sovereign`, worktree isolé, run `27b09bdf` (20:46 UTC, après déploiement du correctif #103) : fichier écrit, validé, commité (`eb43cb43`), poussé par l'agent avec le PAT des agents ; contenu identique à la PR fermée #3012. L'agent n'a pas abouti `gh pr create` : son worktree, créé à 16:59 UTC, contenait encore le wrapper d'avant `Beyn-SOLIDUS/quantum#3121` (mergé 20:39 UTC), qui abortait sans `--head`. La PR **`Beyn-SOLIDUS/quantum#3122`** a été ouverte avec le wrapper corrigé de `main`, depuis la branche de l'agent, sans modification du commit. Le critère D9-b (« PR mergée par un humain ») reste à compléter par le merge humain de #3122. Zéro egress cloud sur toute la chaîne.
+
+### 0.3 Décision et état
+
+- Procédure de retour au souverain (D10) **exécutée** le 2026-09-03 : Q-Impl 17:23 UTC, Q-Gov / Q-Web / QA-Tests 20:26 UTC (`PATCH` modèle → `bifrost/qwen3-coder-30b-sovereign`, `deliveryHookEnabled=false`, `GH_TOKEN` en `secret_ref`) ; `PAPERCLIP_ALLOW_CLOUD_MODELS`, `OPENCODE_ALLOW_ALL_MODELS`, `PAPERCLIP_OPENCODE_SMALL_MODEL` retirés de l'environnement hôte ; `PAPERCLIP_LLM_MODE=sovereign` ; conteneur recréé 20:25 UTC. Résidu : `OPENCODE_ALLOW_ALL_MODELS=true` est **cuit dans l'image** `paperclip:main-ca53c5f` (ENV du Dockerfile) et `enabled_providers` de `opencode.json` liste encore `opencode-go` : à retirer au prochain rebuild (suivi §8).
+- Statut de cette ADR : **`PROPOSED`, non ratifiée**. La ratification est suspendue tant que (a) le fournisseur D2 est hors service et (b) la canary souveraine tient. Si la canary échoue pour une raison **modèle** (pas outillage), l'ADR sera réévaluée avec un constat daté. Si #3122 est mergée par un humain, D9-b est atteint et cette ADR est **rejetée** pour disparition du motif.
+- Ce que cet addendum n'est pas : une signature, une approbation de conformité, un amendement des SSOT quantum. Le miroir `Beyn-SOLIDUS/quantum#3119` (déjà mergé) porte des chiffres périmés (« redémarré une fois », budgets, dépensés) : PR de suivi séparée, chemin sacré `docs/adr/`, `prod-gate-required`.
 
 ## 1. Contexte
 
