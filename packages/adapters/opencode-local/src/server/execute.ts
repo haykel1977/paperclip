@@ -630,7 +630,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         `- Your shell already starts in \`${location}\`; this directory IS the task repository checkout (a git worktree when isolated workspaces are enabled). Run all repository commands (git, scripts/*.sh, tests) from here.`,
         "- Do not look for the repository under /app, $HOME or any other path, and never `git init` a new repository: if the expected files are missing, report that as a blocker instead.",
       ];
-      if (workspaceBranch) lines.push(`- Task branch: \`${workspaceBranch}\` (already checked out; push it with \`git push -u origin HEAD\`).`);
+      if (workspaceBranch) lines.push(`- Task branch: \`${workspaceBranch}\` (already checked out; publish it to origin under the same name when your change is ready).`);
       if (workspaceRepoUrl) lines.push(`- Remote: ${workspaceRepoUrl.replace(/\/\/[^@/]+@/, "//")}`);
       return lines.join("\n");
     })();
