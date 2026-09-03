@@ -19,6 +19,7 @@ const {
   httpAdapterFetch,
   httpAdapterFetchHook,
   httpAdapterFetchInit,
+  httpAdapterUrlBasicAuth,
   isBlockedHttpAdapterHostname,
   isBlockedHttpAdapterIp,
   parseHttpAdapterAllowedHosts,
@@ -140,6 +141,14 @@ describe("HTTP adapter URL guard", () => {
     await new Promise<void>((resolve, reject) =>
       server.close((err) => (err ? reject(err) : resolve())),
     );
+  });
+
+  it("decodes percent-encoded userinfo without throwing on a literal percent", () => {
+    expect(httpAdapterUrlBasicAuth(new URL("http://example.com/"))).toBeUndefined();
+    expect(httpAdapterUrlBasicAuth(new URL("http://alice:p%40ss@example.com/"))).toBe("alice:p@ss");
+    expect(httpAdapterUrlBasicAuth(new URL("http://al%20ice:x@example.com/"))).toBe("al ice:x");
+    expect(httpAdapterUrlBasicAuth(new URL("http://alice:100%@example.com/"))).toBe("alice:100%");
+    expect(httpAdapterUrlBasicAuth(new URL("http://alice:100%25@example.com/"))).toBe("alice:100%");
   });
 
   it("copies URL userinfo into Basic authorization on the pinned request", async () => {

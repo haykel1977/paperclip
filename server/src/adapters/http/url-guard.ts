@@ -175,9 +175,18 @@ export function createHttpAdapterAbortError(reason?: unknown): Error {
   return new DOMException("The operation was aborted.", "AbortError");
 }
 
+function decodeUrlCredential(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    // WHATWG keeps a lone "%" as-is. A second decodeURIComponent would throw.
+    return value;
+  }
+}
+
 export function httpAdapterUrlBasicAuth(url: URL): string | undefined {
   if (url.username === "" && url.password === "") return undefined;
-  return `${decodeURIComponent(url.username)}:${decodeURIComponent(url.password)}`;
+  return `${decodeUrlCredential(url.username)}:${decodeUrlCredential(url.password)}`;
 }
 
 async function fetchPinnedToAddress(
