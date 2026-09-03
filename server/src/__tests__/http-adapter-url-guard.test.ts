@@ -103,15 +103,16 @@ describe("HTTP adapter URL guard", () => {
     const seen: string[] = [];
     const server = http.createServer((req, res) => {
       seen.push(String(req.headers.host));
-      res.writeHead(204);
-      res.end();
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("ok");
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
     const { port } = server.address() as AddressInfo;
     try {
       const url = new URL(`http://webhook.example:${port}/wakeup`);
-      const res = await httpAdapterFetch(url, { method: "HEAD", pinnedAddress: "127.0.0.1" });
-      expect(res.status).toBe(204);
+      const res = await httpAdapterFetch(url, { method: "GET", pinnedAddress: "127.0.0.1" });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("ok");
       expect(seen[0]).toBe(`webhook.example:${port}`);
     } finally {
       await new Promise<void>((resolve, reject) =>
