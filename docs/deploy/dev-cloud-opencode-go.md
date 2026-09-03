@@ -11,6 +11,18 @@ Règles de rédaction : dépôt public. Aucune adresse interne, aucun nom d'hôt
 
 Étiquettes : VERIFIED = constaté le 2026-09-03 ; UNVERIFIABLE = non constaté ; PROPOSED = à faire, non décidé.
 
+## Mise à jour du 2026-09-03 (15:27 UTC)
+
+Changements appliqués sur l'hôte par l'assistant sur instruction écrite de l'opérateur, après le constat ci-dessous ; sauvegardes datées conservées sur l'hôte ; conteneur recréé ; API saine après 10 s ; scheduler de heartbeats actif.
+
+- `PAPERCLIP_LLM_MODE=cloud-opencode-go` : nouveau mode ajouté à l'entrypoint du conteneur (alerte explicite « declared deviation ADR-IA-018 », même contrôle de passerelle locale que le mode `sovereign`). Le mode `cloud` préexistant est réservé au chemin Anthropic (exige une clé Anthropic et un préflight, sinon scheduler coupé) : il n'a pas été utilisé. VERIFIED (journal de démarrage).
+- Bloc provider `openrouter` retiré de `PAPERCLIP_OPENCODE_PROVIDERS` ; variables `PAPERCLIP_OPENCODE_SMALL_MODEL` et `OPENCODE_ALLOW_ALL_MODELS` retirées de l'unité de lancement, du fichier d'environnement et de l'objet `env` des quatre agents. Ces trois variables n'avaient aucun consommateur (0 occurrence dans le code servi, l'entrypoint et le binaire opencode). `OPENCODE_ALLOW_ALL_MODELS=true` subsiste, cuite dans l'image : inerte, retrait = reconstruction de l'image. VERIFIED.
+- Catalogue du CLI : `enabled_providers = ["opencode-go", "bifrost"]` dans la config opencode ; le provider Zen (`opencode/*`, dont `claude-*` et `gpt-*`) n'est plus listé ; 26 modèles `opencode-go/*` restent listés (restriction par modèle non offerte par la config du CLI). VERIFIED (`opencode models` relu).
+- Small model effectif : celui de la config opencode, `bifrost/qwen3-coder-30b-sovereign` ; la variable qui annonçait `opencode-go/glm-5.3-flash` était inerte. VERIFIED.
+- Budgets : `budget_monthly_cents` posé (Q-Gov 800, Q-Impl 900, Q-Web 900, QA-Tests 800) et une politique `budget_policies` par agent (`calendar_month_utc`, warn 80 %, hard stop actif). VERIFIED (API 200 ×12 ; SQL).
+
+Les tableaux « État constaté » et « Ce qui n'est PAS fait » décrivent l'état AVANT cette mise à jour (14:00 UTC) ; les lignes touchées portent la mention « corrigé 15:27 ».
+
 ## État constaté le 2026-09-03
 
 | Élément | État | Étiquette |
@@ -46,12 +58,12 @@ Règles de rédaction : dépôt public. Aucune adresse interne, aucun nom d'hôt
 |---|---|---|
 | Bifrost porte des providers `go_agents`, `nvidia`, `modelscope`, `zai`, `groq` et des modèles virtuels `role-*` | Rien de cela n'existe. Bifrost n'a que des providers locaux. | VERIFIED |
 | Chaînes de repli (fallback) | Aucune. Un seul fournisseur : OpenCode Go, en appel direct. | VERIFIED |
-| Budgets par agent avec alerte 80 % et arrêt 100 % | Budgets à 0. Aucune politique `budget_policies`. | VERIFIED |
+| Budgets par agent avec alerte 80 % et arrêt 100 % | Budgets à 0, aucune politique (14:00). Corrigé 15:27 : budgets et politiques posés. | VERIFIED |
 | Renommages (Q-Gov → Q-Infra, agent-5 → Reviewer, Documentation → Librarian) | Non faits. agent-5 n'existe pas. Documentation est `terminated`. | VERIFIED |
 | Suspension des agents souverains (état conservé) | Terminaison, pas suspension. 16 agents `terminated` ; la route de terminaison révoque les clés (code) ; révocation effective en base non constatée. | VERIFIED (statut) ; révocation UNVERIFIABLE |
-| Étiquette `PAPERCLIP_LLM_MODE` alignée sur la réalité | Vaut encore `sovereign`. Variable inerte dans le code Paperclip, mais fausse pour un lecteur humain. | VERIFIED |
-| Bloc provider `openrouter` retiré | Toujours déclaré, clé absente. | VERIFIED |
-| Catalogue fermé aux trois modèles utiles | `OPENCODE_ALLOW_ALL_MODELS=true` : 28 modèles sélectionnables dont `grok-4.6` et `gpt-5.6-luna`. | VERIFIED |
+| Étiquette `PAPERCLIP_LLM_MODE` alignée sur la réalité | Valait `sovereign` (14:00). Corrigé 15:27 : `cloud-opencode-go`. | VERIFIED |
+| Bloc provider `openrouter` retiré | Déclaré, clé absente (14:00). Corrigé 15:27 : retiré. | VERIFIED |
+| Catalogue fermé aux trois modèles utiles | 28 modèles Go + Zen (14:00). Partiellement corrigé 15:27 : Zen retiré, 26 modèles Go listés ; la restriction aux trois ids n'est pas offerte par la config du CLI. | VERIFIED |
 | Agent reviewer sur un modèle différent des coders | Aucun agent reviewer. Aucune revue humaine systématique non plus : posture dev full-auto du dépôt quantum (ADR-GOV-015 §3.1). | VERIFIED |
 | Embeddings `bge-m3` hors GPU souverain | Non traité ici. | UNVERIFIABLE |
 | Header `x-served-by` et label `same-model-review` | Non fait : VERIFIED. Faisabilité sans Bifrost en coupure : déduction (PROPOSED). | voir ligne |
@@ -89,7 +101,7 @@ done
 
 Alternative acceptée par le code : `openai/qwen3-coder-30b-sovereign`. Ce format saute la sonde `opencode models` et passe par `OPENAI_BASE_URL` (Bifrost). Les deux ids contiennent le mot `sovereign`, donc passent le garde flag éteint.
 
-2 bis. Réécrire l'environnement par agent. `adapter_config.env` contient `PAPERCLIP_OPENCODE_SMALL_MODEL` et `OPENCODE_ALLOW_ALL_MODELS` ; ces valeurs sont injectées dans l'environnement de chaque run et survivent au retrait des variables du conteneur. Le garde souverain de Paperclip ne contrôle que `adapterConfig.model`, jamais le small model du CLI : sans cette étape, un egress cloud résiduel subsiste si le composant hors dépôt qui consomme `PAPERCLIP_OPENCODE_SMALL_MODEL` l'honore (UNVERIFIABLE). Le merge est au premier niveau : fournir `env` remplace tout l'objet. Relire d'abord `GET /api/agents/<id>` et recopier les clés à conserver (`HOME`, `AGENT_PR_WRAPPER_REQUIRED`).
+2 bis. Réécrire l'environnement par agent (mise à jour 15:27 : déjà fait pour les quatre agents, il ne reste que `HOME` et `AGENT_PR_WRAPPER_REQUIRED` ; cette étape ne s'applique que si les clés ont été réintroduites). `adapter_config.env` contient `PAPERCLIP_OPENCODE_SMALL_MODEL` et `OPENCODE_ALLOW_ALL_MODELS` ; ces valeurs sont injectées dans l'environnement de chaque run et survivent au retrait des variables du conteneur. Le garde souverain de Paperclip ne contrôle que `adapterConfig.model`, jamais le small model du CLI : sans cette étape, un egress cloud résiduel subsiste si le composant hors dépôt qui consomme `PAPERCLIP_OPENCODE_SMALL_MODEL` l'honore (UNVERIFIABLE). Le merge est au premier niveau : fournir `env` remplace tout l'objet. Relire d'abord `GET /api/agents/<id>` et recopier les clés à conserver (`HOME`, `AGENT_PR_WRAPPER_REQUIRED`).
 
 ```bash
 for AGENT_ID in <id-q-gov> <id-q-impl> <id-q-web> <id-qa-tests>; do
@@ -184,13 +196,17 @@ Politiques de budget (doivent exister avec un montant > 0 pour chaque agent acti
 SELECT * FROM budget_policies;
 ```
 
-Pose d'un budget avec enforcement réel (la route `PATCH /api/agents/:id` ne crée pas de politique). Valeur : voir ADR-IA-018 D6 (≤ 80 % du plafond Go du modèle tant que le comportement hors plafond n'est pas constaté).
+Pose d'un budget avec enforcement réel. Correction du 2026-09-03 : `PATCH /api/agents/:id/budgets` ne met à jour que le champ affiché `budget_monthly_cents` ; la politique d'enforcement (alerte, arrêt) se crée par `POST /api/companies/<company-id>/budgets/policies`. Faire les deux. Valeur : voir ADR-IA-018 D6.
 
 ```bash
 curl -sS -X PATCH "$PAPERCLIP_URL/api/agents/<agent-id>/budgets" \
   -H "Authorization: Bearer $(cat "$TOKEN_FILE")" \
   -H 'Content-Type: application/json' \
   -d '{"budgetMonthlyCents":900}'
+curl -sS -X POST "$PAPERCLIP_URL/api/companies/<company-id>/budgets/policies" \
+  -H "Authorization: Bearer $(cat "$TOKEN_FILE")" \
+  -H 'Content-Type: application/json' \
+  -d '{"scopeType":"agent","scopeId":"<agent-id>","amount":900,"windowKind":"calendar_month_utc","warnPercent":80,"hardStopEnabled":true,"notifyEnabled":true,"isActive":true}'
 ```
 
 Dashboard fournisseur (session de l'opérateur, non scriptable ici) : dépense du workspace agents, état de « Use balance » (doit être désactivé), comportement hors plafond, plafonds du mois, statut de l'accord ZDR DeepSeek, séparation des clés IDE / agents. Le coût vu par Paperclip est celui déclaré par le CLI ; le dashboard fait foi pour la facture.
@@ -201,7 +217,7 @@ Egress : après retour au souverain, Bifrost doit recevoir à nouveau des requê
 
 Rollback de la procédure de retour (revenir à l'état cloud du 2026-09-03) :
 
-1. Remettre `PAPERCLIP_ALLOW_CLOUD_MODELS=1` et `PAPERCLIP_OPENCODE_SMALL_MODEL=opencode-go/glm-5.3-flash` à la source de l'environnement utilisée par le mécanisme de lancement, puis RECRÉER le conteneur (pas `docker restart`). Vérifier : `docker exec <conteneur-paperclip> sh -c 'env | grep -c ^PAPERCLIP_ALLOW_CLOUD_MODELS=1$'` renvoie 1.
+1. Remettre `PAPERCLIP_ALLOW_CLOUD_MODELS=1` et `PAPERCLIP_LLM_MODE=cloud-opencode-go` à la source de l'environnement utilisée par le mécanisme de lancement (unité de service et fichiers d'environnement), puis RECRÉER le conteneur (pas `docker restart`). Vérifier : `docker exec <conteneur-paperclip> sh -c 'env | grep -c ^PAPERCLIP_ALLOW_CLOUD_MODELS=1$'` renvoie 1.
 2. Restaurer la révision de configuration précédente de chaque agent : `POST /api/agents/:id/config-revisions/:revisionId/rollback` (les `PATCH` enregistrent une révision), ou refaire les `PATCH` avec le modèle `opencode-go/...` d'origine et l'objet `env` d'origine.
 3. `resume` les agents.
 

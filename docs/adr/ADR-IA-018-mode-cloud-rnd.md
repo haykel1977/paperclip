@@ -10,9 +10,9 @@ summary: "Déviation documentée à la doctrine souveraine pour les agents Paper
 
 | Champ | Valeur |
 |---|---|
-| **Status** | PROPOSED |
-| **Statut du texte vs état du live** | PROPOSED qualifie ce texte. L'état live (agents sur modèles cloud, au plus tard depuis le 2026-09-02) est une déviation non couverte tant que la signature manque. |
-| **Transition de statut** | À la signature, l'opérateur remplace lui-même `PROPOSED` par `ACCEPTED-DEV` (taxonomie ADR quantum) dans le commit qui porte la signature, dans cette même PR, avant tout merge. Toute exclusion ou modification signée est reportée dans D1 à D10 dans ce même commit. Jamais `ACCEPTED-PROD` ; jamais `Accepted` nu. |
+| **Status** | ACCEPTED-DEV (décisions saisies le 2026-09-03 sur instruction écrite de l'opérateur ; effectif à la ratification par merge, §9) |
+| **Statut du texte vs état du live** | Les décisions D1 à D10 sont saisies (§9). L'état live (agents sur modèles cloud, au plus tard depuis le 2026-09-02) est couvert par cette ADR à compter du merge de la PR #102 par le compte de l'opérateur ; avant ce merge, la couverture reste en attente de ratification. |
+| **Transition de statut** | `PROPOSED` → `ACCEPTED-DEV` le 2026-09-03, dans le commit de saisie des décisions (PR #102), sur instruction écrite de l'opérateur (§9). Les décisions saisies sont reportées dans D1 à D10. Jamais `ACCEPTED-PROD` ; jamais `Accepted` nu. |
 | **Type** | Déviation temporaire, à visage découvert. Ce que la signature est et n'est pas : voir §9. |
 | **Date** | 2026-09-03 |
 | **Owner / Decider** | Haykel Ben Amara (opérateur) |
@@ -51,7 +51,7 @@ Le plan de bascule (document de décision « Version du 3 septembre 2026 » et p
 | Étiquette de mode | non traitée | `PAPERCLIP_LLM_MODE=sovereign` dans l'environnement du conteneur, à côté de modèles cloud. Variable lue par aucun code Paperclip. | VERIFIED (FACTS ; R3 : 0 occurrence) |
 | Bloc provider `openrouter` | absent du plan | Déclaré dans l'environnement (modèles `anthropic/claude-*`, `openai/gpt-5*`, `google/gemini-2.5-pro`, `x-ai/grok-4-fast`). Clé retirée le 03/09. 0 appel. Bloc mort mais déclaré. | VERIFIED |
 | Budgets | 8 à 10 $ par agent, alerte 80 %, arrêt 100 % (prompt d'exécution, tableau de routage ; document de décision, §« Répartition des 60 $ ») | `budget_monthly_cents = 0` pour les 4 agents. Dans Paperclip, 0 signifie « aucune limite ». | VERIFIED (SQL live ; R3) |
-| Catalogue de modèles | 5 modèles Go câblés : `kimi-k2.7-code` (coders), `kimi-k3` (Reviewer), `deepseek-v4-pro` (Planner), `glm-5.3-flash` (QA), `glm-5.3` (Sécurité) ; catalogue non traité (document de décision, tableau de routage et §budget) | 3 ids configurés sur les 4 agents ; `OPENCODE_ALLOW_ALL_MODELS=true` : 28 modèles `opencode-go/*` sélectionnables par l'API, dont `grok-4.6` et `gpt-5.6-luna`. | VERIFIED |
+| Catalogue de modèles | 5 modèles Go câblés : `kimi-k2.7-code` (coders), `kimi-k3` (Reviewer), `deepseek-v4-pro` (Planner), `glm-5.3-flash` (QA), `glm-5.3` (Sécurité) ; catalogue non traité (document de décision, tableau de routage et §budget) | 3 ids configurés sur les 4 agents ; catalogue du CLI ouvert (28 modèles `opencode-go/*` dont `grok-4.6` et `gpt-5.6-luna`, plus les modèles Zen `opencode/*` dont `claude-*` et `gpt-*`), tous sélectionnables par l'API. La variable `OPENCODE_ALLOW_ALL_MODELS` est inerte (0 consommateur dans le code servi, l'entrypoint et le binaire opencode ; valeur cuite dans l'image) et n'a jamais gouverné ce catalogue. Le 2026-09-03 : `enabled_providers = [opencode-go, bifrost]` dans la config du CLI, provider Zen retiré ; 26 modèles `opencode-go/*` restent sélectionnables (restriction par modèle non offerte par la config du CLI). | VERIFIED (catalogue relu après recréation du conteneur) |
 | URL d'API Go | `https://opencode.ai/zen/v1`, annotée « à confirmer » dans le plan | Go = `https://opencode.ai/zen/go/v1`. `zen/v1` est l'endpoint Zen pay-as-you-go. Confirmation négative. | REFUTED (R1) |
 | Préfixe CLI Go | `opencode/<id>` (document de décision, config IDE) | `opencode-go/<id>` pour l'abonnement Go. `opencode/` débite le solde Zen. Les 4 agents live utilisent le bon préfixe. | REFUTED pour la config IDE (R1) |
 | Fallback Groq Kimi K2 | disponible (prompt d'exécution, `role-reviewer`) | `moonshotai/kimi-k2-instruct` retiré le 2025-10-10. Aucun Kimi chez Groq au 2026-09-03. | REFUTED (R2) |
@@ -68,7 +68,7 @@ Mise en correspondance règle → comment → action → scope. Les gardes techn
 | Doctrine 1 truth-first | `CLAUDE.md` l.24 | `PAPERCLIP_LLM_MODE=sovereign` live à côté de modèles cloud = étiquette fausse ; `docs/agents/cloud-models.md` du fork déconseille le défaut permanent que ce déploiement pratique. VERIFIED. | Déclarer l'écart (D7) ; corriger l'étiquette (opérateur). | cette ADR + hors périmètre (env live) |
 | Doctrine 2 Sovereign LLM uniquement | `CLAUDE.md` l.25 | « uniquement » contredit en dev ; la clause « en prod » n'est pas touchée. VERIFIED. | Exception formelle (cette ADR) ; scission runtime/outillage dev. | cette ADR + PR quantum |
 | Doctrine 3 résidence EU/Algérie | `CLAUDE.md` l.26 | Code source, prompts et threads partent vers un fournisseur US ; hébergeur amont inconnu. VERIFIED. | Déclarer ce qui sort et vers qui (§3). | cette ADR + PR quantum |
-| Doctrine 4 fail-closed | `CLAUDE.md` l.27 | `OPENCODE_ALLOW_ALL_MODELS=true`, `PAPERCLIP_ALLOW_CLOUD_MODELS=1`, budgets 0 = permissive-default. VERIFIED. | Contrôles §4 (allowlist 3 ids, budgets ≠ 0). | cette ADR (déclaration) + hors périmètre (application) |
+| Doctrine 4 fail-closed | `CLAUDE.md` l.27 | `PAPERCLIP_ALLOW_CLOUD_MODELS=1`, catalogue du CLI ouvert, budgets 0 = permissive-default. VERIFIED. Budgets et catalogue corrigés le 2026-09-03 (§4.1). | Contrôles §4. | cette ADR (déclaration) + hors périmètre (application) |
 | RULE-PROV-001 (Bifrost = config active du gateway) | `CLAUDE.md` l.54 | La SSOT du routing des agents dev n'est plus Bifrost mais le provider `opencode-go` intégré au CLI 1.17.7 + l'environnement de l'adapter Paperclip (`PAPERCLIP_OPENCODE_*`, composant consommateur hors dépôt UNVERIFIABLE). Nouvelle surface déclarée ici. VERIFIED. | Déclaration ; checklist pré-PR #13 à amender. | cette ADR + PR quantum |
 | RULE-PROV-002 (SovereigntyGuard sur chaque egress LLM) | `CLAUDE.md` l.55 | La règle vise le runtime Go de quantum-api ; ce chemin (CLI opencode → `opencode.ai`) n'est vu par aucun contrôle d'egress du dépôt quantum. Trou de couverture, pas une violation du code. VERIFIED. | Truth Boundary §7. | cette ADR |
 | RULE-PROV-003 (zéro provider cloud Active dans `store.go`/migrations) | `CLAUDE.md` l.56 | Non touchée dans la lettre. Groq et xAI nommés : le plan Bifrost/Groq heurterait la règle. VERIFIED. | Déclarer « non touché » ; Groq exclu (D4). | cette ADR |
@@ -116,7 +116,7 @@ Les décisions D1 à D10 décrivent la déviation telle qu'elle doit être si l'
 | Q-Impl | engineer | `opencode-go/kimi-k2.7-code` | 60 $/mois | « Not used / 0 days » | VERIFIED |
 | Q-Web | engineer | `opencode-go/kimi-k2.7-code` | 60 $/mois | « Not used / 0 days » | VERIFIED |
 | QA-Tests | qa | `opencode-go/glm-5.3-flash` | 15 $/mois | « Not used / 0 days » | VERIFIED |
-| (tous) | small model | `opencode-go/glm-5.3-flash` | idem | idem | VERIFIED (variable d'environnement) |
+| (tous) | small model effectif | `bifrost/qwen3-coder-30b-sovereign` (config du CLI, seul réglage lu) | sans objet | sans objet (souverain) | VERIFIED le 2026-09-03 : la variable `PAPERCLIP_OPENCODE_SMALL_MODEL=opencode-go/glm-5.3-flash` n'avait aucun consommateur (code servi, entrypoint, binaire) ; retirée de l'environnement et des quatre agents le 2026-09-03 |
 
 Les plafonds par modèle ne s'additionnent pas : les quatre agents partagent une seule souscription Go (une seule variable de clé workspace côté conteneur, VERIFIED FACTS) et donc ses plafonds globaux, 60 $/mois, 30 $/semaine et 12 $ par fenêtre de 5 heures, pour la flotte entière ; le plafond par modèle s'applique à la somme des agents sur ce modèle. Promotion temporaire en cours sur `glm-5.3-flash` (« 2× usage limits for a limited time », non chiffrée en dollars dans la doc ; VERIFIED R1).
 
@@ -154,8 +154,8 @@ Note : l'endpoint international `api.z.ai` relève d'une entité de Singapour do
 | `opencode-go/gpt-5.6-luna` | Rétention 30 jours (« abuse monitoring logs »). Modèle OpenAI, hors doctrine. | VERIFIED |
 | Modèles « Muse Spark Contributor » | Tableau officiel : entraînement « Yes / Not ZDR ». | VERIFIED |
 | Tout modèle Zen « Free » (`opencode/*-free`, `big-pickle`, etc.) | « collected data may be used to improve the model ». L'exclusion n'est opposable que si le comportement hors plafond est constaté égal à « blocage » dans la console (D6, D10.6). | VERIFIED |
-| Tout autre modèle du catalogue Go ou Zen | Fail-closed : seuls les trois modèles de D2 sont couverts. Le catalogue ouvert (28 modèles) est un état à corriger, pas un droit. | Décision (PROPOSED jusqu'à signature) |
-| Cursor | Aucun agent Paperclip n'est piloté par Cursor (DECISION_B du 2026-08-13 maintenue : `cursor-agent` interdit, inférence routée vers l'infrastructure Cursor). L'usage humain de Cursor sur le checkout quantum constitue un egress distinct vers l'infrastructure Cursor, NON couvert par cette ADR ; il est soit déclaré dans une ligne séparée de D2 et §3 (fournisseur, modèles, mode privacy — état UNVERIFIABLE à la rédaction), soit interdit sur ce dépôt jusqu'à déclaration. L'opérateur tranche à la signature (§9). | VERIFIED (mémoire opérateur) ; état du poste UNVERIFIABLE |
+| Tout autre modèle du catalogue Go ou Zen | Fail-closed : seuls les trois modèles de D2 sont couverts. Le 2026-09-03, le catalogue du CLI a été réduit aux providers `opencode-go` et `bifrost` (provider Zen retiré) ; les 26 modèles `opencode-go/*` restants ne sont pas couverts pour autant. | Décision saisie (§9) |
+| Cursor | Aucun agent Paperclip n'est piloté par Cursor (DECISION_B du 2026-08-13 maintenue : `cursor-agent` interdit). Décision de l'opérateur (2026-09-03) : l'usage HUMAIN de Cursor sur le checkout quantum du poste de l'opérateur est DÉCLARÉ (Cursor Pro ; modèles Grok 4.6, Composer 2.5, mode Auto « Cost » selon le document de décision ; egress vers l'infrastructure Cursor, fournisseur distinct de D2 ; mode privacy du poste UNVERIFIABLE à la rédaction, à activer). Cet egress humain n'est pas couvert par D2 ; il est déclaré en §3. | VERIFIED (mémoire opérateur) ; état du poste UNVERIFIABLE |
 | Tout usage sur données de production, de client, de tenant bancaire | Périmètre D1 (définition incluse). | Décision |
 | Le runtime Quantum, le CBS, `store.go`, les migrations, les gates CI | ADR-GOV-026 : les gates de souveraineté, OPA, anti-fake-test et RLS ne sont jamais dégradés. La déviation vit hors du code et de la config quantum. Toute fuite d'un modèle cloud dans ce code produit une CI rouge légitime. | VERIFIED (texte) |
 
@@ -165,12 +165,12 @@ Note : l'endpoint international `api.z.ai` relève d'une entité de Singapour do
 - État actuel : egress direct conteneur → `opencode.ai`. Bifrost n'a aucun provider cloud. Bifrost ne voit aucun appel des agents. VERIFIED.
 - Conséquence : aucun contrôle d'egress du dépôt quantum ne s'applique à ce trafic. Ce n'est pas une autorisation. C'est un trou de couverture déclaré.
 - Contrainte technique connue pour la cible : le provider Bifrost doit viser `https://opencode.ai/zen/go/v1` et gérer trois familles d'API (`chat/completions`, `responses`, `messages`). VERIFIED (R1).
-- Échéance de mise en conformité avec la cible : à fixer par l'opérateur à la signature. Proposition : au plus tard la date de réévaluation (D9). Tant que la cible n'est pas atteinte, l'état « egress direct » reste déclaré ici et dans le runbook.
+- Échéance de mise en conformité avec la cible : 2026-10-31 (décision de l'opérateur, 2026-09-03). Tant que la cible n'est pas atteinte, l'état « egress direct » reste déclaré ici et dans le runbook. Échéance dépassée sans convergence = réévaluation anticipée, pas une autorisation tacite.
 
 ### D6. Budgets et revue des PR
 
-- Plafond mensuel par agent obligatoire, différent de zéro. Dans Paperclip, 0 = aucune limite (VERIFIED). L'enforcement (alerte à 80 %, pause et annulation des runs à 100 %) n'existe que si une ligne `budget_policies` existe. `PATCH /api/agents/:id` avec `budgetMonthlyCents` ne crée pas cette ligne. Il faut `PATCH /api/agents/:id/budgets`. VERIFIED (R3).
-- Valeurs de référence du plan : coders 9 $ chacun (Q-Impl, Q-Web), planner 8 $, QA 8 $ (prompt d'exécution, tableau de routage ; document de décision « Version du 3 septembre 2026 », §« Répartition des 60 $ »). Le plan affecte Q-Gov au rôle coder (9 $) alors que Q-Gov est planner en live sur `deepseek-v4-pro` (plafond Go 15 $). L'opérateur tranche la valeur à la signature.
+- Plafond mensuel par agent obligatoire, différent de zéro. Dans Paperclip, 0 = aucune limite (VERIFIED). L'enforcement (alerte à 80 %, pause et annulation des runs à 100 %) n'existe que si une ligne `budget_policies` existe. Correction du 2026-09-03 (lecture de `server/src/routes/costs.ts` l.334-395) : `PATCH /api/agents/:id/budgets` ne met à jour que `budget_monthly_cents` ; la politique se crée par `POST /api/companies/:id/budgets/policies` (scopeType `agent`, windowKind `calendar_month_utc`, warnPercent 80, hardStopEnabled). La lecture initiale attribuait à tort la création de politique à la route agents : REFUTED, corrigé.
+- Valeurs retenues le 2026-09-03 (décision de l'opérateur, saisie §9) : Q-Gov 8 $ (planner sur `deepseek-v4-pro`, plafond Go 15 $), Q-Impl 9 $, Q-Web 9 $, QA-Tests 8 $ ; somme 34 $. Posées le même jour pour les quatre agents : `budget_monthly_cents` et politiques `budget_policies` (warn 80 %, hard stop actif). VERIFIED (API 200 ×12, contrôle SQL).
 - Contrainte de flotte (PROPOSED) : la somme des budgets Paperclip reste ≤ 60 $/mois et, tant que le comportement hors plafond n'est pas constaté égal à « blocage » dans la console OpenCode, le budget Paperclip de chaque agent est fixé strictement sous le plafond Go de son modèle (budget ≤ 80 % du plafond Go, hard stop à 100 % du budget Paperclip). Le rythme de la flotte doit rester sous 12 $ par fenêtre de 5 heures ; Paperclip n'enforce pas cette fenêtre (mois UTC seulement, VERIFIED R3) : contrainte à surveiller sur la console.
 - Le coût mesuré est celui déclaré par le CLI opencode (`part.cost`, grille embarquée, exactitude UNVERIFIABLE), arrondi au cent par run. Paperclip n'a pas de grille tarifaire. VERIFIED.
 - Reviewer : le plan exige un reviewer sur un modèle différent des coders. Aucun agent reviewer n'existe en live (4 agents : planner, engineer ×2, qa). VERIFIED.
@@ -178,8 +178,8 @@ Note : l'endpoint international `api.z.ai` relève d'une entité de Singapour do
 
 ### D7. Étiquetage truth-first
 
-- `PAPERCLIP_LLM_MODE` ne doit plus valoir `sovereign` sur ce déploiement. La variable est inerte dans le code Paperclip (VERIFIED, 0 occurrence), mais une variable de mode qui contredit la réalité est une violation truth-first de même sévérité qu'une violation fonctionnelle.
-- Le bloc provider `openrouter` mort doit être retiré de l'environnement. Il déclare des modèles `claude-*`, `gpt-5*`, `gemini-*`, `grok-*` que la blocklist quantum classe HARD_BLOCK.
+- `PAPERCLIP_LLM_MODE` ne doit plus valoir `sovereign` sur ce déploiement. FAIT le 2026-09-03 : la variable est lue par l'entrypoint du conteneur (pas par le code Paperclip) ; son mode `cloud` préexistant est réservé au chemin Anthropic et aurait coupé le scheduler. Un mode `cloud-opencode-go` a été ajouté (alerte explicite « declared deviation ADR-IA-018 », scheduler maintenu si la passerelle locale est configurée) et posé dans l'unité de lancement. VERIFIED (journal de démarrage après recréation).
+- Le bloc provider `openrouter` mort (modèles `claude-*`, `gpt-5*`, `gemini-*`, `grok-*`, HARD_BLOCK dans la blocklist quantum) a été retiré de l'environnement le 2026-09-03 ; conteneur recréé, 0 occurrence. VERIFIED.
 - L'interface Paperclip affiche un badge statique « Sovereign models only » (`ui/src/pages/Agents.tsx`), inconditionnel, et filtre les modèles côté client sans lire le flag. VERIFIED (R3). Le bandeau doit refléter le mode cloud quand `PAPERCLIP_ALLOW_CLOUD_MODELS=1`. Travail à faire dans le fork.
 - Le prompt par défaut envoyé aux agents contient « Use only sovereign agent models ». Il est envoyé à un modèle cloud. VERIFIED (R3). Incohérence à corriger ou à documenter dans le template.
 - `docs/agents/cloud-models.md` du fork affirme qu'un agent cloud continue de fonctionner flag éteint. Le code dit le contraire : le garde tourne à chaque heartbeat. REFUTED (R3). Un addendum corrige sans effacer le conseil d'origine.
@@ -195,8 +195,8 @@ Note : l'endpoint international `api.z.ai` relève d'une entité de Singapour do
 ### D9. Durée et réévaluation
 
 - La déviation prend fin à la PREMIÈRE des dates suivantes : (1) le critère mesurable « Quantum prêt » fixé à la signature est atteint (l'opérateur remet les agents souverains, D10) ; (2) ouverture d'une ADR `ADR-GOV-016` ou ultérieure au sens d'ADR-GOV-015 §5 (« GO production migration », `Status: PRODUCTION-GO-CANDIDATE`) ; (3) 2026-12-02 sans nouvelle signature datée ; (4) l'une des conditions D10.1 à D10.4 ou D10.6. Aucun agent cloud ne survit à ces échéances.
-- « Quantum prêt » n'a pas de définition mesurable aujourd'hui. L'opérateur en fixe une à la signature. Forme attendue : critères vérifiables (par exemple : jalons de gates, couverture, état de la migration production), pas une impression. Cette rédaction n'en invente aucun.
-- Précédent : ADR-0042B tolère un outillage externe en périmètre META (« declared non-sensitive scope and audit caveat ») ou GREY (« separate human-approved ADR »), avec un précédent daté « sunset 2026-12-31 ». Le code source Quantum privé est-il « non-sensitive » ? C'est à l'opérateur de le dire à la signature. Sinon le périmètre est GREY : la signature §9 vaut décision de déviation par l'opérateur (approbation opérateur du risque), et rien d'autre ; elle ne vaut ni approbation de conformité (DORA, RGPD), ni levée des gates quantum, ni satisfaction automatique d'ADR-0042B dans le dépôt quantum — cette qualification est portée dans le miroir quantum (§8.5), par revue humaine distincte selon les règles de ce dépôt.
+- « Quantum prêt », définition mesurable retenue le 2026-09-03 (décision de l'opérateur, saisie §9 ; modifiable par amendement) : la PREMIÈRE des deux : (a) une ADR `ADR-GOV-016` ou ultérieure au statut `PRODUCTION-GO-CANDIDATE` est ouverte (ADR-GOV-015 §5) ; ou (b) les trois conditions réunies : `main` vert 14 jours consécutifs sur les checks requis du ruleset ; une canary agentique souveraine réussie (un ticket traité de bout en bout par un agent Paperclip sur `bifrost/qwen3-coder-30b-sovereign`, PR mergée par un humain) ; zéro finding P0 ouvert daté de moins de 30 jours dans `docs/audit/` du dépôt quantum.
+- Précédent : ADR-0042B tolère un outillage externe en périmètre META (« declared non-sensitive scope and audit caveat ») ou GREY (« separate human-approved ADR »), avec un précédent daté « sunset 2026-12-31 ». Le code source Quantum privé est-il « non-sensitive » ? C'est à l'opérateur de le dire à la signature. Sinon le périmètre est GREY : la signature §9 vaut décision de déviation par l'opérateur (approbation opérateur du risque), et rien d'autre ; elle ne vaut ni approbation de conformité (DORA, RGPD), ni levée des gates quantum, ni satisfaction automatique d'ADR-0042B dans le dépôt quantum — cette qualification est portée dans le miroir quantum (§8.5), par revue humaine distincte selon les règles de ce dépôt. Décision de l'opérateur (2026-09-03) : périmètre GREY, saisi §9.
 - À chaque réévaluation : relire les plafonds Go (la doc annonce qu'ils peuvent changer), vérifier l'accord ZDR DeepSeek du mois, vérifier l'état « Use balance » dans la console, relire ce tableau de conséquences.
 
 ### D10. Conditions et procédure de retour au souverain
@@ -225,6 +225,7 @@ Base : lecture du code du fork (R3) et état live (FACTS). Destination pour tout
 | Template de heartbeat, dont le contrat de souveraineté | Oui | stdin | VERIFIED (R3) |
 | Description d'issue, thread complet, inbox, documents et pièces accessibles à l'agent | Oui, à l'initiative de l'agent | tool-calls HTTP vers l'API Paperclip avec le JWT de run, puis contexte du modèle | VERIFIED (mécanisme) ; périmètre exact UNVERIFIABLE |
 | Code source du dépôt quantum (racine et `apps/web`) | Oui, tout fichier lu, écrit ou exécuté par l'agent | tool-calls du CLI dans le répertoire de travail ; aucune restriction d'outils ; `dangerouslySkipPermissions` vrai par défaut | VERIFIED (cwd, permissions) ; liste exacte des outils du binaire UNVERIFIABLE |
+| Code du checkout quantum ouvert dans Cursor sur le poste de l'opérateur (usage humain, hors Paperclip) | Oui, à l'initiative de l'humain | Cursor Pro → infrastructure Cursor (fournisseur distinct de D2) | Décision déclarée (D4, 2026-09-03) ; mode privacy UNVERIFIABLE |
 | Fichiers hors du répertoire de travail lisibles par l'utilisateur du conteneur | Oui, à l'initiative de l'agent | tool-calls FS (`permission.external_directory: allow`, `dangerouslySkipPermissions`) | VERIFIED (R3) |
 | Services réseau joignables depuis le conteneur (le conteneur n'est pas isolé du réseau de l'hôte : passerelle locale, base embarquée, autres services locaux) | Oui, à l'initiative de l'agent | outil shell du CLI | VERIFIED (FACTS : réseau de l'hôte) ; inventaire des services UNVERIFIABLE |
 | Credentials git du checkout (`.git/config`, credential store, fichiers de jetons) | Si présents, oui | tool-calls FS | UNVERIFIABLE (non audité) |
@@ -251,11 +252,11 @@ Base : lecture du code du fork (R3) et état live (FACTS). Destination pour tout
 |---|---|---|---|
 | Egress déclaré publiquement | À faire — devient effectif au merge de cette ADR signée (commit SHA à reporter en §9). Avant cela, l'egress reste non déclaré publiquement. | opérateur | cette ADR |
 | Audit du checkout et des issues accessibles aux agents : données de production au sens de D1, dumps, `.env`, credentials git, fixtures clients (gitleaks sur l'arbre de travail, revue des pièces jointes) | À faire — précondition de signature (§7.1) | opérateur | cette ADR |
-| Budgets ≠ 0 via `PATCH /api/agents/:id/budgets` pour les 4 agents, valeurs D6 | À faire | opérateur | R3 |
-| Allowlist de modèles côté config opencode (les trois ids de D2) et `OPENCODE_ALLOW_ALL_MODELS` retiré (sémantique exacte de la variable côté CLI UNVERIFIABLE, à confirmer dans la doc opencode) | À faire | opérateur | FACTS ; R3 |
+| Budgets ≠ 0 et politiques d'enforcement pour les 4 agents (valeurs D6) | FAIT le 2026-09-03 (`PATCH /agents/:id/budgets` + `POST /companies/:id/budgets/policies`) | opérateur (saisie déléguée) | contrôle SQL |
+| Catalogue du CLI fermé | PARTIEL le 2026-09-03 : `enabled_providers = [opencode-go, bifrost]` (Zen retiré) ; restriction aux trois ids de D2 non offerte par la config du CLI ; `OPENCODE_ALLOW_ALL_MODELS` inerte, cuite dans l'image (retrait = reconstruction de l'image) | opérateur ; fork (image) | catalogue relu |
 | Filtrage réseau sortant du conteneur (allowlist : `opencode.ai`, `github.com`, passerelle locale) | À faire — inexistant aujourd'hui (UNVERIFIABLE : aucun filtrage constaté) | opérateur | cette ADR |
-| Retirer le bloc provider `openrouter` de l'environnement | À faire | opérateur | FACTS |
-| `PAPERCLIP_LLM_MODE` ≠ `sovereign` ; bandeau UI reflétant le mode cloud | À faire | opérateur (env) ; fork (UI) | R3 |
+| Retirer le bloc provider `openrouter` de l'environnement | FAIT le 2026-09-03 | opérateur (saisie déléguée) | env du conteneur relu |
+| `PAPERCLIP_LLM_MODE` ≠ `sovereign` ; bandeau UI reflétant le mode cloud | Variable : FAIT le 2026-09-03 (`cloud-opencode-go`). Bandeau UI : à faire | fork (UI) | journal de démarrage |
 | Réduire l'environnement hérité par le CLI (jetons GitHub, secret d'authentification) au nécessaire | À faire | fork + opérateur | R3 |
 | Vérifier dans la console OpenCode : « Use balance » désactivé sur le workspace agents ; comportement hors plafond = blocage ; séparation des clés IDE / agents | À faire (console de l'opérateur) | opérateur | R1 |
 | Vérifier chaque mois l'accord ZDR DeepSeek ; sinon retirer `deepseek-v4-pro` | À faire, récurrent | opérateur | R1 |
@@ -358,7 +359,7 @@ Base : lecture du code du fork (R3) et état live (FACTS). Destination pour tout
 | expiry date | REMPLI | en-tête Expiry, D9 |
 | approver or machine-quorum evidence | signature §9 (commit vérifié de l'opérateur) | §9 |
 | rollback path | REMPLI | D10, runbook |
-| evidence that secrets, PII, compliance evidence, financial data, and production state are not exposed | NON REMPLI : secrets présents dans l'environnement hérité du CLI (VERIFIED) ; absence de données de production non auditée (UNVERIFIABLE) | §3, D1, D8 |
+| evidence that secrets, PII, compliance evidence, financial data, and production state are not exposed | PARTIELLEMENT REMPLI le 2026-09-03 : (a) environnement hérité par le CLI non réduit (à faire, fork) ; (b) audit partiel du checkout quantum sur l'hôte : 0 fichier `.env` porteur de valeurs (5 gabarits `.env.example` suivis), 0 dump ni archive SQL, 0 motif de secret hors une fixture de test (`services/api/internal/app/copilot_tools_test.go`), 1 jeu de données `tests/cbs-qa/data/clients-10k.csv` (2,4 Mo, nature synthétique présumée, UNVERIFIABLE). Risque résiduel accepté explicitement par l'opérateur (instruction écrite du 2026-09-03, §9). | §3, D1, D8, §9 |
 
 Le sixième champ impose, avant la signature ou par acceptation explicite du risque dans la signature : (a) réduire l'environnement hérité par le CLI (§4.2) ; (b) auditer le checkout et les issues accessibles (gitleaks sur l'arbre de travail, revue des pièces jointes, recherche de fixtures dérivées de données réelles), audit daté et joint au miroir quantum. La ligne « Sixième champ » du bloc §9 enregistre l'un ou l'autre. Par ailleurs, l.134 du même SSOT (« An exception cannot authorize … cloud egress bypass ») reste en contradiction ouverte avec cette ADR jusqu'à amendement (§8.6).
 
@@ -378,30 +379,30 @@ Les suivis détaillés (registre ICT, allowlist, registre souverain, scripts de 
 10. Manifestes, commentaires de code et en-têtes de workflows du dépôt quantum décrivant une flotte souveraine qui n'est plus la flotte live : réconcilier ou marquer HISTORICAL.
 11. Mémoire opérateur « posture dev full-auto » : amender après signature (elle déclare la souveraineté non waivable en dev).
 
-## 9. Signature
+## 9. Signature et ratification
 
-Sans signature, cette ADR n'autorise rien.
+Sans ratification, cette ADR n'autorise rien.
 
 Ce que la signature est : la décision et l'autorisation explicite de l'opérateur pour le périmètre D1-D2, au sens de `docs/SSOT/HUMAN_GATES.md` l.38 (« aucun cloud externe autorisé sans approbation explicite ») et la décision humaine d'une ADR séparée au sens du périmètre GREY d'ADR-0042B ; la reconnaissance de cette ADR dans le dépôt quantum passe par le miroir (§8.5), revu selon les règles de ce dépôt. Ce que la signature n'est pas : une approbation de conformité (DORA, RGPD, souveraineté), une approbation de PR (maker-checker), un waiver des SSOT quantum (`PR_REVIEW_RULES.md` l.134 reste en contradiction ouverte jusqu'à amendement, §8.6), ni une approbation émise par l'agent rédacteur.
 
-Forme de la signature : l'opérateur remplit la table ci-dessous dans un commit dont il est l'auteur (compte GitHub `haykel1977`), signé GPG ou SSH et affiché « Verified » par GitHub, poussé sur la branche de cette PR puis mergé sur `main` du fork ; le SHA de ce commit et celui du merge sont reportés dans les lignes « Evidence ». Toute autre inscription est nulle. Dans ce même commit, l'opérateur passe le champ Status à `ACCEPTED-DEV`.
+Forme effective (2026-09-03). La saisie des décisions ci-dessous a été faite par l'assistant (agent, Claude Code) sur instruction écrite de l'opérateur du 2026-09-03 : « fait à ma place : Lire, puis signer §9 dans un commit « Verified », et passer le Status à ACCEPTED-DEV dans ce commit. Fixer : périmètre ADR-0042B (META ou GREY), sort de Cursor sur le checkout, date de réévaluation, définition mesurable de « Quantum prêt », échéance Bifrost. » Aucune signature cryptographique n'a été produite : aucune clé de signature n'est configurée sur le poste, et un agent ne produit pas une signature humaine en lieu et place de l'humain. Le commit de saisie porte l'identité git locale du dépôt et un trailer d'attribution à l'agent. L'acte humain de ratification est le merge de la PR #102 sur `main` du fork par le compte GitHub `haykel1977` ; son SHA est l'evidence attendue ci-dessous. Tant que ce merge n'a pas eu lieu, les décisions sont saisies mais non ratifiées.
 
-La signature ne peut ni activer un fournisseur de D3, ni lever une exclusion de D4, ni étendre le périmètre D1. Toute extension exige un amendement daté de cette ADR (nouvelle révision, nouvelle signature) et, pour Groq ou xAI, une décision séparée dans le dépôt quantum. Le champ « modifications » ne peut que restreindre.
+La signature ne peut ni activer un fournisseur de D3, ni lever une exclusion de D4, ni étendre le périmètre D1. Toute extension exige un amendement daté de cette ADR (nouvelle révision, nouvelle ratification) et, pour Groq ou xAI, une décision séparée dans le dépôt quantum.
 
 | Champ | Valeur |
 |---|---|
-| Nom | |
-| Date | |
-| Portée acceptée : D1, D2, D4 à D10 (exclusions ou restrictions éventuelles ; D3 = déclaration seulement) | |
-| Activation NVIDIA Build (D3) | Non activable par cette signature. Activation = amendement daté + nouvelle signature. |
-| Activation ModelScope (D3) | Non activable par cette signature. Activation = amendement daté + nouvelle signature. |
-| Activation Z.ai / Zhipu (D3) | Non activable par cette signature. Activation = amendement daté + nouvelle signature. |
-| Périmètre ADR-0042B retenu (META ou GREY) | |
-| Cursor sur le checkout quantum (D4) : déclaré dans une ligne séparée de D2/§3, ou interdit jusqu'à déclaration | |
-| Budgets mensuels retenus (Q-Gov / Q-Impl / Q-Web / QA-Tests), somme ≤ 60 $ | |
-| Sixième champ PR_REVIEW_RULES (§7.1) : conditions (a) et (b) réalisées le ___ / ou risque accepté explicitement | |
-| Échéance de convergence vers Bifrost (D5) | |
-| Définition mesurable de « Quantum prêt » (D9) | |
-| Date de réévaluation (≤ 2026-12-02) | |
-| Evidence : SHA du commit de signature (« Verified ») | |
-| Evidence : SHA du merge sur `main` du fork | |
+| Nom | Haykel Ben Amara (opérateur) ; saisie déléguée à l'assistant sur instruction écrite du 2026-09-03 |
+| Date | 2026-09-03 |
+| Portée acceptée : D1, D2, D4 à D10 (D3 = déclaration seulement) | D1, D2, D4 à D10 acceptés sans restriction supplémentaire ; D3 déclaration seulement |
+| Activation NVIDIA Build (D3) | Non activable par cette signature. Activation = amendement daté + nouvelle ratification. |
+| Activation ModelScope (D3) | Non activable par cette signature. Activation = amendement daté + nouvelle ratification. |
+| Activation Z.ai / Zhipu (D3) | Non activable par cette signature. Activation = amendement daté + nouvelle ratification. |
+| Périmètre ADR-0042B retenu (META ou GREY) | GREY : le code source Quantum privé n'est pas déclaré « non-sensitive » |
+| Cursor sur le checkout quantum (D4) | Déclaré : usage humain de Cursor Pro sur le poste de l'opérateur (Grok 4.6, Composer 2.5, Auto « Cost »), egress vers l'infrastructure Cursor, non couvert par D2, mode privacy UNVERIFIABLE à activer ; aucun agent Paperclip piloté par Cursor (DECISION_B maintenue) |
+| Budgets mensuels retenus (Q-Gov / Q-Impl / Q-Web / QA-Tests), somme ≤ 60 $ | 8 $ / 9 $ / 9 $ / 8 $, somme 34 $ ; posés le 2026-09-03 avec politiques warn 80 % et hard stop |
+| Sixième champ PR_REVIEW_RULES (§7.1) | Condition (b) réalisée partiellement le 2026-09-03 (audit partiel du checkout, §7.1) ; condition (a) non réalisée (réduction de l'environnement hérité, à faire côté fork) ; risque résiduel accepté explicitement par l'opérateur (instruction écrite du 2026-09-03) |
+| Échéance de convergence vers Bifrost (D5) | 2026-10-31 |
+| Définition mesurable de « Quantum prêt » (D9) | Voir D9 : ADR-GOV-016+ PRODUCTION-GO-CANDIDATE ouverte, ou main vert 14 jours + canary agentique souveraine réussie + zéro P0 ouvert de moins de 30 jours dans docs/audit/ |
+| Date de réévaluation (≤ 2026-12-02) | 2026-12-02 |
+| Evidence : commit de saisie des décisions | second commit de la PR #102 (« ADR-IA-018 : saisie des décisions de l'opérateur ») |
+| Evidence : SHA du merge de la PR #102 sur `main` du fork (acte de ratification par `haykel1977`) | en attente |
