@@ -55,6 +55,7 @@ import {
 } from "./models.js";
 import { removeMaintainerOnlySkillSymlinks } from "@paperclipai/adapter-utils/server-utils";
 import { prepareOpenCodeRuntimeConfig } from "./runtime-config.js";
+import { resolveProcessOpenCodeHomeDir } from "./home.js";
 import { SANDBOX_INSTALL_COMMAND } from "../index.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
@@ -224,7 +225,7 @@ async function ensureRemoteOpenCodeModelConfiguredAndAvailable(input: {
 }
 
 function claudeSkillsHome(): string {
-  return path.join(os.homedir(), ".claude", "skills");
+  return path.join(resolveProcessOpenCodeHomeDir(), ".claude", "skills");
 }
 
 async function ensureOpenCodeSkillsInjected(

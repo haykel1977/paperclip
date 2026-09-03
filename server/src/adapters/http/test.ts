@@ -4,6 +4,7 @@ import type {
   AdapterEnvironmentTestResult,
 } from "../types.js";
 import { asString, parseObject } from "../utils.js";
+import { assertSafeHttpAdapterUrl } from "./url-guard.js";
 
 function summarizeStatus(checks: AdapterEnvironmentCheck[]): AdapterEnvironmentTestResult["status"] {
   if (checks.some((check) => check.level === "error")) return "fail";
@@ -74,6 +75,23 @@ export async function testEnvironment(
   });
 
   if (url && (url.protocol === "http:" || url.protocol === "https:")) {
+    try {
+      await assertSafeHttpAdapterUrl(url.toString());
+    } catch (err) {
+      checks.push({
+        code: "http_url_ssrf_blocked",
+        level: "error",
+        message: err instanceof Error ? err.message : "HTTP adapter url is not allowed",
+        hint: "Use a public http(s) endpoint, or set PAPERCLIP_HTTP_ADAPTER_ALLOWED_HOSTS for a specific private host.",
+      });
+      return {
+        adapterType: ctx.adapterType,
+        status: summarizeStatus(checks),
+        checks,
+        testedAt: new Date().toISOString(),
+      };
+    }
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3000);
     try {

@@ -192,9 +192,13 @@ A change is done when all are true:
 5. PR readiness gate is satisfied: focused diff, template filled, verification evidence recorded, and required/relevant CI green or explicitly blocked
 6. PR description follows the [PR template](.github/PULL_REQUEST_TEMPLATE.md) with all sections filled in (including Model Used)
 
-## 12. Fork-Specific: HenkDz/paperclip
+## 12. Fork-Specific: haykel1977/paperclip
 
-This is a fork of `paperclipai/paperclip` with QoL patches and an **external-only** Hermes adapter story on branch `feat/externalize-hermes-adapter` ([tree](https://github.com/HenkDz/paperclip/tree/feat/externalize-hermes-adapter)).
+This repository is **`haykel1977/paperclip`**, a fork of `paperclipai/paperclip`.
+Package manifests and the public README still describe upstream (`paperclipai`, version `0.3.1`).
+Treat this section as the operator identity for **this remote**, not for `HenkDz/paperclip`.
+
+An earlier HenkDz lineage (`feat/externalize-hermes-adapter`) is why Hermes is **plugin-only** here and why a few UI QoL patches exist. Do not assume this checkout *is* that remote.
 
 ### Branch Strategy
 

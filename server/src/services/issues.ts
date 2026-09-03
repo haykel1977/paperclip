@@ -142,6 +142,31 @@ function buildReusedExecutionWorkspaceConfigPatchFromIssueSettings(
   };
 }
 
+function assertIsolatedWorkspaceFieldsAllowed(
+  isolatedWorkspacesEnabled: boolean,
+  fields: {
+    executionWorkspaceId?: unknown;
+    executionWorkspacePreference?: unknown;
+    executionWorkspaceSettings?: unknown;
+  },
+) {
+  if (isolatedWorkspacesEnabled) return;
+  const provided = (
+    [
+      ["executionWorkspaceId", fields.executionWorkspaceId],
+      ["executionWorkspacePreference", fields.executionWorkspacePreference],
+      ["executionWorkspaceSettings", fields.executionWorkspaceSettings],
+    ] as const
+  )
+    .filter(([, value]) => value !== undefined)
+    .map(([name]) => name);
+  if (provided.length === 0) return;
+  throw unprocessable(
+    `Isolated execution workspaces are disabled on this instance. Enable experimental setting enableIsolatedWorkspaces before setting ${provided.join(", ")}.`,
+    { enableIsolatedWorkspaces: false, fields: provided },
+  );
+}
+
 function toTimestampMs(value: Date | string | null | undefined) {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
@@ -4702,11 +4727,7 @@ export function issueService(db: Db) {
         ...issueData
       } = data;
       const isolatedWorkspacesEnabled = (await instanceSettings.getExperimental()).enableIsolatedWorkspaces;
-      if (!isolatedWorkspacesEnabled) {
-        delete issueData.executionWorkspaceId;
-        delete issueData.executionWorkspacePreference;
-        delete issueData.executionWorkspaceSettings;
-      }
+      assertIsolatedWorkspaceFieldsAllowed(isolatedWorkspacesEnabled, issueData);
       if (data.assigneeAgentId && data.assigneeUserId) {
         throw unprocessable("Issue can only have one assignee");
       }
@@ -4960,11 +4981,7 @@ export function issueService(db: Db) {
         ...issueData
       } = data;
       const isolatedWorkspacesEnabled = (await instanceSettings.getExperimental()).enableIsolatedWorkspaces;
-      if (!isolatedWorkspacesEnabled) {
-        delete issueData.executionWorkspaceId;
-        delete issueData.executionWorkspacePreference;
-        delete issueData.executionWorkspaceSettings;
-      }
+      assertIsolatedWorkspaceFieldsAllowed(isolatedWorkspacesEnabled, issueData);
 
       if (issueData.status) {
         assertTransition(existing.status, issueData.status);

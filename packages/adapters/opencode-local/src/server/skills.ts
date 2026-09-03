@@ -13,6 +13,7 @@ import {
   readInstalledSkillTargets,
   resolvePaperclipDesiredSkillNames,
 } from "@paperclipai/adapter-utils/server-utils";
+import { resolveOpenCodeHomeDir } from "./home.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -26,7 +27,10 @@ function resolveOpenCodeSkillsHome(config: Record<string, unknown>) {
       ? (config.env as Record<string, unknown>)
       : {};
   const configuredHome = asString(env.HOME);
-  const home = configuredHome ? path.resolve(configuredHome) : os.homedir();
+  const home = resolveOpenCodeHomeDir({
+    envHome: configuredHome,
+    osHomedir: os.homedir(),
+  });
   return path.join(home, ".claude", "skills");
 }
 

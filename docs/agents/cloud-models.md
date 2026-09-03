@@ -49,7 +49,11 @@ recommended pattern is:
 
 ## Related environment flags
 
-- `PAPERCLIP_ENABLE_NOOP_DONE_AUTO_DISPOSITION=1` - opt-in for the recovery
-  handoff fix (PR #98).
+- `PAPERCLIP_ENABLE_NOOP_DONE_AUTO_DISPOSITION` — Recovery no-op-done skip
+  (PR #98). **Default on** as of 2026-09-03 so `successful_run_missing_state`
+  loops do not clone-storm. Set to `0`/`false`/`off` to restore the old
+  enqueue-handoff behavior.
 
-Both flags follow the same pattern: opt-in, default off, no schema migration.
+`PAPERCLIP_ALLOW_CLOUD_MODELS` stays fail-closed (unset = sovereign-only).
+The recovery flag is the opposite polarity: unset = skip handoff on a
+two-phrase no-op-done self-report. No schema migration.

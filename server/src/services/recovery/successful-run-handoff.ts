@@ -37,7 +37,9 @@ export const SUCCESSFUL_RUN_HANDOFF_OPTIONS = [
  * To be defensive, we only recognize this signal when MULTIPLE distinct
  * phrases co-occur in the same summary. A single "no changes" is not enough.
  *
- * Behavior is off unless PAPERCLIP_ENABLE_NOOP_DONE_AUTO_DISPOSITION=1 is set.
+ * Default is ON after 2026-09-03: Recovery clone storms (successful_run_missing_state
+ * loops) were still possible while the #98 flag stayed opt-in. Set
+ * PAPERCLIP_ENABLE_NOOP_DONE_AUTO_DISPOSITION=0 to disable.
  */
 const NOOP_DONE_PRIMARY_PHRASES = [
   "no implementation needed",
@@ -87,9 +89,12 @@ export const NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG =
 
 export function isNoOpDoneAutoDispositionEnabled(env: NodeJS.ProcessEnv = process.env) {
   const raw = env[NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG];
-  if (!raw) return false;
+  if (!raw) return true;
   const normalized = raw.trim().toLowerCase();
-  return normalized === "1" || normalized === "true" || normalized === "yes";
+  if (normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off") {
+    return false;
+  }
+  return true;
 }
 
 const PRODUCTIVE_SUCCESS_LIVENESS_STATES = new Set<RunLivenessState>([
