@@ -206,13 +206,23 @@ async function fetchPinnedToAddress(
               responseHeaders.set(key, value);
             }
           }
-          resolve(
-            new Response(Buffer.concat(chunks), {
-              status: incoming.statusCode ?? 0,
-              statusText: incoming.statusMessage ?? "",
-              headers: responseHeaders,
-            }),
-          );
+          const status = incoming.statusCode ?? 0;
+          const rawBody = Buffer.concat(chunks);
+          const body =
+            status === 204 || status === 205 || status === 304 || rawBody.length === 0
+              ? null
+              : rawBody;
+          try {
+            resolve(
+              new Response(body, {
+                status: status === 0 ? 200 : status,
+                statusText: incoming.statusMessage ?? "",
+                headers: responseHeaders,
+              }),
+            );
+          } catch (err) {
+            reject(err);
+          }
         });
         incoming.on("error", reject);
       },
