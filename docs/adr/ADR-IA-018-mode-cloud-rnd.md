@@ -126,7 +126,7 @@ Faits sur le fournisseur (R1, sources officielles datées du 2026-09-03) :
 
 - Entité : Anomaly, San Francisco (VERIFIED, politique de confidentialité). La politique de confidentialité lue (effective 2026-03-06) ne mentionne ni RGPD ni mécanisme de transfert UE→US ; cadre = lois d'États américains (VERIFIED : absence dans ce document). Existence d'une clause dans les Terms of Service ou d'un DPA / SCC : UNVERIFIABLE (Terms of Service non analysés).
 - Abonnement : 10 $/mois par workspace, un abonné par workspace. Plafonds : 60 $/mois, 30 $/semaine, 12 $ par fenêtre de 5 heures (nature glissante ou fixe non précisée par la doc). VERIFIED. La doc prévient que ces limites peuvent changer.
-- Hébergement : « All our models are hosted in the US » figure sur la page Zen. `deepseek-v4-pro` et `kimi-k2.7-code` sont dans la liste Zen. `glm-5.3-flash` n'y figure pas : pour lui, l'affirmation « US » est UNVERIFIABLE au sens littéral. Constat console du 2026-09-03 : le réglage « Activer les modèles hébergés en Chine » est ACTIVÉ sur le workspace et « Autoriser les modèles qui s'entraînent sur les données des requêtes » est DÉSACTIVÉ. Le premier autorise un routage vers des modèles hébergés en Chine : l'affirmation « US » vaut sous réserve de ce réglage (le service n'indique pas quels modèles y sont soumis ; `glm-5.3-flash`, absent de la liste Zen, est le candidat le plus probable). Réglage laissé en l'état : décision de résidence de l'opérateur, non déléguée. VERIFIED (console).
+- Hébergement : la page Zen affirme « All our models are hosted in the US ». Constat console du 2026-09-03 : le réglage « Activer les modèles hébergés en Chine » est ACTIVÉ sur le workspace et l'opérateur a décidé de le conserver (décision écrite du 2026-09-03) ; « Autoriser les modèles qui s'entraînent sur les données des requêtes » est DÉSACTIVÉ. Conséquence : le traitement des requêtes peut avoir lieu aux États-Unis ou en Chine selon le modèle (le service n'indique pas quels modèles y sont soumis ; `glm-5.3-flash`, absent de la liste Zen, est le candidat le plus probable). Cette ADR n'affirme donc AUCUN hébergement US : la résidence déclarée est « États-Unis ou Chine selon le modèle ». VERIFIED (console) ; répartition par modèle UNVERIFIABLE.
 - Hébergeur amont par modèle (qui fait tourner le poids, dans quel pays) : non publié. UNVERIFIABLE. La chaîne de sous-traitance ICT au-delà d'Anomaly est inconnue.
 - Ce que fait le proxy Anomaly lui-même des prompts : politique « Not stored » ; historique GitHub d'un stockage limité aux modèles gratuits ; demande de clarification fermée sans réponse humaine. UNVERIFIABLE de l'extérieur.
 - Endpoints : `https://opencode.ai/zen/go/v1/{chat/completions, responses, messages, models}`. Trois familles d'API selon le modèle. VERIFIED.
@@ -217,7 +217,7 @@ Procédure : voir le runbook `docs/deploy/dev-cloud-opencode-go.md`, section « 
 
 ## 3. Ce qui sort et vers qui
 
-Base : lecture du code du fork (R3) et état live (FACTS). Destination pour toutes les lignes : le fournisseur du modèle configuré, aujourd'hui OpenCode Go (Anomaly, États-Unis), hébergeur amont inconnu.
+Base : lecture du code du fork (R3) et état live (FACTS). Destination pour toutes les lignes : le fournisseur du modèle configuré, aujourd'hui OpenCode Go (Anomaly, société américaine) ; lieu de traitement États-Unis ou Chine selon le modèle (réglage « modèles hébergés en Chine » activé, conservé par l'opérateur) ; hébergeur amont inconnu.
 
 | Classe de donnée | Sort ? | Canal | Étiquette |
 |---|---|---|---|
@@ -261,7 +261,7 @@ Base : lecture du code du fork (R3) et état live (FACTS). Destination pour tout
 | Retirer le bloc provider `openrouter` de l'environnement | FAIT le 2026-09-03 | opérateur (saisie déléguée) | env du conteneur relu |
 | `PAPERCLIP_LLM_MODE` ≠ `sovereign` ; bandeau UI reflétant le mode cloud | Variable : FAIT le 2026-09-03 (`cloud-opencode-go`). Bandeau UI : à faire | fork (UI) | journal de démarrage |
 | Réduire l'environnement hérité par le CLI (jetons GitHub, secret d'authentification) au nécessaire | À faire | fork + opérateur | R3 |
-| Console OpenCode | FAIT le 2026-09-03 : « Use balance » désactivé (était activé) ; modèles à entraînement désactivés (constat) ; modèles hébergés en Chine ACTIVÉS, laissé en l'état (décision opérateur) ; clés séparées (constat) ; ZDR DeepSeek : UNVERIFIABLE (D2) | opérateur | console |
+| Console OpenCode | FAIT le 2026-09-03 : « Use balance » désactivé (était activé) ; modèles à entraînement désactivés (constat) ; modèles hébergés en Chine ACTIVÉS, conservés par décision écrite de l'opérateur du 2026-09-03 ; clés séparées (constat) ; ZDR DeepSeek : UNVERIFIABLE (D2) | opérateur | console |
 | Vérifier chaque mois l'accord ZDR DeepSeek ; sinon retirer `deepseek-v4-pro` | À faire, récurrent | opérateur | R1 |
 | Faire passer l'egress par Bifrost (cible D5) | À faire, échéance à fixer | opérateur | FACTS ; R1 |
 | Test du fork couvrant « flag éteint + agent déjà cloud » au runtime | À faire | fork | R3 (aucun test existant) |
@@ -294,7 +294,7 @@ Base : lecture du code du fork (R3) et état live (FACTS). Destination pour tout
 
 | Risque | Nature | Étiquette |
 |---|---|---|
-| Juridiction US : politique de confidentialité sous droit d'États américains, sans clause RGPD dans le document lu ; hébergeur amont inconnu | Juridique, résidence | VERIFIED (R1, périmètre : politique de confidentialité) ; ToS UNVERIFIABLE |
+| Juridiction US et CN : entité américaine (politique de confidentialité sous droit d'États américains, sans clause RGPD dans le document lu) ; traitement possible en Chine selon le modèle (réglage du workspace activé, conservé par l'opérateur) ; hébergeur amont inconnu | Juridique, résidence | VERIFIED (R1, console) ; ToS et répartition par modèle UNVERIFIABLE |
 | Juridiction CN (si D3 activé) : données en Chine continentale, tribunaux chinois, licence large sur le contenu | Juridique, résidence | VERIFIED (R2) |
 | DORA tiers ICT : nouveau prestataire ICT non enregistré, chaîne de sous-traitance inconnue (Art. 28 à 30 selon ADR-SEC-010) | Conformité | VERIFIED (texte ADR-SEC-010) ; qualification réglementaire hors de cette rédaction |
 | ZDR DeepSeek non attesté après le 31 août 2026 | Rétention | UNVERIFIABLE à la date de rédaction |
@@ -404,6 +404,7 @@ La signature ne peut ni activer un fournisseur de D3, ni lever une exclusion de 
 | Activation ModelScope (D3) | Non activable par cette signature. Activation = amendement daté + nouvelle ratification. |
 | Activation Z.ai / Zhipu (D3) | Non activable par cette signature. Activation = amendement daté + nouvelle ratification. |
 | Périmètre ADR-0042B retenu (META ou GREY) | GREY : le code source Quantum privé n'est pas déclaré « non-sensitive » |
+| « Modèles hébergés en Chine » (réglage du workspace OpenCode) | Activé, conservé par décision écrite de l'opérateur du 2026-09-03 ; l'ADR déclare une résidence « États-Unis ou Chine selon le modèle » et n'affirme aucun hébergement US |
 | Cursor sur le checkout quantum (D4) | Déclaré : usage humain de Cursor Pro sur le poste de l'opérateur (Grok 4.6, Composer 2.5, Auto « Cost »), egress vers l'infrastructure Cursor, non couvert par D2, mode privacy UNVERIFIABLE à activer ; aucun agent Paperclip piloté par Cursor (DECISION_B maintenue) |
 | Budgets mensuels retenus (Q-Gov / Q-Impl / Q-Web / QA-Tests), somme ≤ 60 $ | 8 $ / 9 $ / 9 $ / 8 $, somme 34 $ ; posés le 2026-09-03 avec politiques warn 80 % et hard stop |
 | Sixième champ PR_REVIEW_RULES (§7.1) | Condition (b) réalisée partiellement le 2026-09-03 (audit partiel du checkout, §7.1) ; condition (a) non réalisée (réduction de l'environnement hérité, à faire côté fork) ; risque résiduel accepté explicitement par l'opérateur (instruction écrite du 2026-09-03) |
@@ -411,4 +412,4 @@ La signature ne peut ni activer un fournisseur de D3, ni lever une exclusion de 
 | Définition mesurable de « Quantum prêt » (D9) | Voir D9 : ADR-GOV-016+ PRODUCTION-GO-CANDIDATE ouverte, ou main vert 14 jours + canary agentique souveraine réussie + zéro P0 ouvert de moins de 30 jours dans docs/audit/ |
 | Date de réévaluation (≤ 2026-12-02) | 2026-12-02 |
 | Evidence : commit de saisie des décisions | second commit de la PR #102 (« ADR-IA-018 : saisie des décisions de l'opérateur ») |
-| Evidence : SHA du merge de la PR #102 sur `main` du fork (acte de ratification par `haykel1977`) | en attente |
+| Evidence : merge de la PR #102 sur `main` du fork (ratification) | Exécuté par l'assistant via la session GitHub de l'opérateur, sur instruction écrite du 2026-09-03 (« Retirer le label prod-gate-required … puis merger : c'est l'acte de ratification ») ; le SHA est le commit de merge de la PR #102 dans l'historique de `main` du fork (merge commit, historique des cinq commits conservé) |
