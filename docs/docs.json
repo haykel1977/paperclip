@@ -81,10 +81,18 @@
               "deploy/tailscale-private-access",
               "deploy/docker",
               "deploy/deployment-modes",
+              "agents/cloud-models",
               "deploy/database",
               "deploy/secrets",
               "deploy/storage",
-              "deploy/environment-variables"
+              "deploy/environment-variables",
+              "deploy/dev-cloud-opencode-go"
+            ]
+          },
+          {
+            "group": "Governance",
+            "pages": [
+              "adr/ADR-IA-018-mode-cloud-rnd"
             ]
           }
         ]

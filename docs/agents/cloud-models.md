@@ -53,3 +53,16 @@ recommended pattern is:
   handoff fix (PR #98).
 
 Both flags follow the same pattern: opt-in, default off, no schema migration.
+
+## Permanent cloud mode (development deployment)
+
+The development deployment described in [Development cloud deployment](/deploy/dev-cloud-opencode-go) keeps `PAPERCLIP_ALLOW_CLOUD_MODELS=1` permanently. This is not the short window recommended above. It is a declared deviation.
+
+Why the flag stays at 1 there:
+
+- Four agents (`Q-Gov`, `Q-Impl`, `Q-Web`, `QA-Tests`) run on `opencode-go/*` models. The runtime guard `assertSovereignRuntimeModel` runs before every heartbeat. With the flag off, every one of their runs fails. The flag therefore has to stay at 1 as long as those agents are on cloud models.
+- The decision is the operator's, for the duration of the Quantum development phase, with a conditional expiry (2026-12-02 unless re-signed) and early-termination conditions. It is written down in [ADR-IA-018](/adr/ADR-IA-018-mode-cloud-rnd): dev-only scope, exact provider and models, what leaves the host and to whom, compensating controls, expiry and re-evaluation date, return procedure. Until the operator signs that ADR, the deviation is not covered by anything.
+
+What this page says remains true: do not use this flag as a permanent default in a sovereign-first deployment. The development deployment above does exactly what this advice warns against. It does so in the open, with an expiry.
+
+Reading correction, without erasing the original text: the sentence "Existing agents keep working even if the flag flips back off" is not accurate as of the merge of PR #100 (commit `ca53c5f`), which introduces this sentence and, in the same commit, the runtime guard `assertSovereignRuntimeModel` called before every run (`server/src/services/heartbeat.ts`). An agent stored with a cloud model stops running as soon as the flag goes back to 0. That is the intended fail-closed behaviour, and it is also why the return-to-sovereign procedure changes the model before switching the flag off. The function named `applyRuntimeModelProfile` earlier on this page is called `resolveModelProfileApplication` in the code.
