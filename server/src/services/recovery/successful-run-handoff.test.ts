@@ -348,12 +348,14 @@ describe("matchesNoOpDoneSelfReport", () => {
 
 describe("isNoOpDoneAutoDispositionEnabled", () => {
   it("reads the env flag", () => {
-    expect(isNoOpDoneAutoDispositionEnabled({})).toBe(false);
+    expect(isNoOpDoneAutoDispositionEnabled({})).toBe(true);
     expect(isNoOpDoneAutoDispositionEnabled({ [NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG]: "0" })).toBe(false);
+    expect(isNoOpDoneAutoDispositionEnabled({ [NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG]: "false" })).toBe(false);
+    expect(isNoOpDoneAutoDispositionEnabled({ [NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG]: "off" })).toBe(false);
     expect(isNoOpDoneAutoDispositionEnabled({ [NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG]: "1" })).toBe(true);
     expect(isNoOpDoneAutoDispositionEnabled({ [NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG]: "true" })).toBe(true);
     expect(isNoOpDoneAutoDispositionEnabled({ [NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG]: "yes" })).toBe(true);
-    expect(isNoOpDoneAutoDispositionEnabled({ [NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG]: "maybe" })).toBe(false);
+    expect(isNoOpDoneAutoDispositionEnabled({ [NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG]: "maybe" })).toBe(true);
   });
 });
 
@@ -391,11 +393,20 @@ describe("decideSuccessfulRunHandoff no-op-done skip", () => {
   });
 
   it("does not short-circuit when the env flag is disabled", () => {
-    delete process.env[NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG];
+    process.env[NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG] = "0";
     const result = decide({
       detectedProgressSummary:
         "no implementation needed - fix already complete; acceptance criteria are satisfied",
     });
     expect(result.kind).toBe("enqueue");
+  });
+
+  it("skips the handoff by default when the env flag is unset", () => {
+    delete process.env[NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG];
+    const result = decide({
+      detectedProgressSummary:
+        "no implementation needed - fix already complete; acceptance criteria are satisfied",
+    });
+    expect(result.kind).toBe("skip");
   });
 });

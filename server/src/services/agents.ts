@@ -9,12 +9,21 @@ import {
   agentTaskSessions,
   agentWakeupRequests,
   activityLog,
+  approvalComments,
+  approvals,
+  assets,
   costEvents,
+  financeEvents,
+  goals,
   heartbeatRunEvents,
   heartbeatRuns,
   issueExecutionDecisions,
+  issueThreadInteractions,
   issues,
   issueComments,
+  joinRequests,
+  projects,
+  routines,
 } from "@paperclipai/db";
 import {
   AGENT_DEFAULT_MAX_CONCURRENT_RUNS,
@@ -558,6 +567,49 @@ export function agentService(db: Db) {
           .update(issues)
           .set({ assigneeAgentId: null, createdByAgentId: null })
           .where(or(eq(issues.assigneeAgentId, id), eq(issues.createdByAgentId, id)));
+        await tx
+          .update(projects)
+          .set({ leadAgentId: null })
+          .where(eq(projects.leadAgentId, id));
+        await tx
+          .update(goals)
+          .set({ ownerAgentId: null })
+          .where(eq(goals.ownerAgentId, id));
+        await tx
+          .update(routines)
+          .set({ assigneeAgentId: null })
+          .where(eq(routines.assigneeAgentId, id));
+        await tx
+          .update(approvals)
+          .set({ requestedByAgentId: null })
+          .where(eq(approvals.requestedByAgentId, id));
+        await tx
+          .update(approvalComments)
+          .set({ authorAgentId: null })
+          .where(eq(approvalComments.authorAgentId, id));
+        await tx
+          .update(issueThreadInteractions)
+          .set({ createdByAgentId: null })
+          .where(eq(issueThreadInteractions.createdByAgentId, id));
+        await tx
+          .update(issueThreadInteractions)
+          .set({ resolvedByAgentId: null })
+          .where(eq(issueThreadInteractions.resolvedByAgentId, id));
+        await tx
+          .update(assets)
+          .set({ createdByAgentId: null })
+          .where(eq(assets.createdByAgentId, id));
+        await tx
+          .update(joinRequests)
+          .set({ createdAgentId: null })
+          .where(eq(joinRequests.createdAgentId, id));
+        await tx.delete(financeEvents).where(
+          or(
+            eq(financeEvents.agentId, id),
+            sql`${financeEvents.costEventId} in (select ${costEvents.id} from ${costEvents} where ${costEvents.agentId} = ${id})`,
+          ),
+        );
+        await tx.delete(costEvents).where(eq(costEvents.agentId, id));
         await tx.delete(heartbeatRunEvents).where(eq(heartbeatRunEvents.agentId, id));
         await tx.delete(agentTaskSessions).where(eq(agentTaskSessions.agentId, id));
         await tx.delete(activityLog).where(

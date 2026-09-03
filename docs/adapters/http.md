@@ -20,13 +20,28 @@ The `http` adapter sends a webhook request to an external agent service. The age
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `url` | string | Yes | Webhook URL to POST to |
+| `url` | string | Yes | Webhook URL to POST to. Must be `http:` or `https:`. Private, loopback, link-local, and metadata addresses are blocked unless the hostname is listed in `PAPERCLIP_HTTP_ADAPTER_ALLOWED_HOSTS`. |
 | `headers` | object | No | Additional HTTP headers |
 | `timeoutSec` | number | No | Request timeout |
 
+## SSRF guard
+
+The server resolves the configured URL before `fetch`. It rejects:
+
+- non-`http`/`https` schemes
+- `localhost`, `*.localhost`, and cloud metadata hostnames
+- literal private / loopback / link-local / CGNAT / unique-local IPs
+- DNS answers that resolve to those address ranges
+
+Operators who intentionally invoke an internal webhook can set
+`PAPERCLIP_HTTP_ADAPTER_ALLOWED_HOSTS=hooks.internal.example` (comma-separated exact hostnames).
+The allowlist is fail-closed: unset means no private targets.
+
+Environment-test HEAD probes use the same guard, so a blocked URL fails the adapter test instead of probing the internal network.
+
 ## How It Works
 
-1. Paperclip sends a POST request to the configured URL
+1. Paperclip validates the URL (SSRF guard), then sends a POST request to the configured URL
 2. The request body includes the execution context (agent ID, task info, wake reason)
 3. The external agent processes the request and calls back to the Paperclip API
 4. Response from the webhook is captured as the run result

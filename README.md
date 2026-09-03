@@ -27,6 +27,10 @@
 
 # Paperclip is the app people use to manage AI agents for work.
 
+> **This checkout is the [`haykel1977/paperclip`](https://github.com/haykel1977/paperclip) fork.**
+> Clone URLs, badges, and package `repository` fields below still point at upstream [`paperclipai/paperclip`](https://github.com/paperclipai/paperclip).
+> Operator identity for this remote lives in `AGENTS.md` §12 and `docs/audit/`.
+
 Open-source orchestration for teams of AI agents.
 
 **If OpenClaw is an _employee_, Paperclip is the _company_.**

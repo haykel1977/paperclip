@@ -12,7 +12,7 @@ export const httpAdapter: ServerAdapterModule = {
 Adapter: http
 
 Core fields:
-- url (string, required): endpoint to invoke
+- url (string, required): public http(s) endpoint to invoke. Private/loopback/metadata hosts are blocked unless listed in PAPERCLIP_HTTP_ADAPTER_ALLOWED_HOSTS
 - method (string, optional): HTTP method, default POST
 - headers (object, optional): request headers
 - payloadTemplate (object, optional): JSON payload template
