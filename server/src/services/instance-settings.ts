@@ -3,7 +3,6 @@ import { companies, instanceSettings } from "@paperclipai/db";
 import {
   DEFAULT_FEEDBACK_DATA_SHARING_PREFERENCE,
   DEFAULT_BACKUP_RETENTION,
-  DEFAULT_ENABLE_ISOLATED_WORKSPACES,
   DEFAULT_ISSUE_GRAPH_LIVENESS_AUTO_RECOVERY_LOOKBACK_HOURS,
   instanceGeneralSettingsSchema,
   type InstanceGeneralSettings,
@@ -43,7 +42,8 @@ export function normalizeExperimentalSettings(raw: unknown): InstanceExperimenta
   if (parsed.success) {
     return {
       enableEnvironments: parsed.data.enableEnvironments ?? false,
-      enableIsolatedWorkspaces: parsed.data.enableIsolatedWorkspaces ?? DEFAULT_ENABLE_ISOLATED_WORKSPACES,
+      // Fork default matches DEFAULT_ENABLE_ISOLATED_WORKSPACES in packages/shared.
+      enableIsolatedWorkspaces: parsed.data.enableIsolatedWorkspaces ?? true,
       enableStreamlinedLeftNavigation: parsed.data.enableStreamlinedLeftNavigation ?? false,
       enableIssuePlanDecompositions: parsed.data.enableIssuePlanDecompositions ?? false,
       enableCloudSync: parsed.data.enableCloudSync ?? false,
@@ -56,7 +56,7 @@ export function normalizeExperimentalSettings(raw: unknown): InstanceExperimenta
   }
   return {
     enableEnvironments: false,
-    enableIsolatedWorkspaces: DEFAULT_ENABLE_ISOLATED_WORKSPACES,
+    enableIsolatedWorkspaces: true,
     enableStreamlinedLeftNavigation: false,
     enableIssuePlanDecompositions: false,
     enableCloudSync: false,
