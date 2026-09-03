@@ -291,7 +291,8 @@ export function InstanceExperimentalSettings() {
             <h2 className="text-sm font-semibold">Enable Isolated Workspaces</h2>
             <p className="max-w-2xl text-sm text-muted-foreground">
               Show execution workspace controls in project configuration and allow isolated workspace behavior for new
-              and existing task runs.
+              and existing task runs. New instances on this fork default this on; operators can still turn it off.
+              Existing rows that already stored false stay off. This is not a factory-complete 1:1:1 guarantee.
             </p>
           </div>
           <ToggleSwitch

@@ -601,13 +601,24 @@ export function agentService(db: Db) {
           .update(joinRequests)
           .set({ createdAgentId: null })
           .where(eq(joinRequests.createdAgentId, id));
-        await tx.delete(financeEvents).where(
-          or(
-            eq(financeEvents.agentId, id),
-            sql`${financeEvents.costEventId} in (select ${costEvents.id} from ${costEvents} where ${costEvents.agentId} = ${id})`,
-          ),
-        );
-        await tx.delete(costEvents).where(eq(costEvents.agentId, id));
+        await tx
+          .update(costEvents)
+          .set({ agentId: null, heartbeatRunId: null })
+          .where(
+            or(
+              eq(costEvents.agentId, id),
+              sql`${costEvents.heartbeatRunId} in (select ${heartbeatRuns.id} from ${heartbeatRuns} where ${heartbeatRuns.agentId} = ${id})`,
+            ),
+          );
+        await tx
+          .update(financeEvents)
+          .set({ agentId: null, heartbeatRunId: null })
+          .where(
+            or(
+              eq(financeEvents.agentId, id),
+              sql`${financeEvents.heartbeatRunId} in (select ${heartbeatRuns.id} from ${heartbeatRuns} where ${heartbeatRuns.agentId} = ${id})`,
+            ),
+          );
         await tx.delete(heartbeatRunEvents).where(eq(heartbeatRunEvents.agentId, id));
         await tx.delete(agentTaskSessions).where(eq(agentTaskSessions.agentId, id));
         await tx.delete(activityLog).where(

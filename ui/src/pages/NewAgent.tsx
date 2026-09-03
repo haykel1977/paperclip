@@ -51,6 +51,9 @@ function createValuesForAdapterType(
     nextValues.dangerouslyBypassSandbox =
       DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
   }
+  if (adapterType === "opencode_local") {
+    nextValues.dangerouslySkipPermissions = false;
+  }
   return nextValues;
 }
 
