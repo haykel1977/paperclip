@@ -98,4 +98,66 @@ describeEmbeddedPostgres("agentService.remove FK cleanup", () => {
       .then((rows) => rows[0] ?? null);
     expect(persistedIssue?.assigneeAgentId).toBeNull();
   });
+
+  it("clears only the matching issue FK when deleting an assignee that did not create the issue", async () => {
+    const companyId = randomUUID();
+    const assigneeId = randomUUID();
+    const creatorId = randomUUID();
+    const issueId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Split FK Co",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values([
+      {
+        id: creatorId,
+        companyId,
+        name: "CreatorCoder",
+        role: "engineer",
+        status: "idle",
+        adapterType: "opencode_local",
+        adapterConfig: { model: "qwen3-coder-sovereign" },
+        runtimeConfig: {},
+        permissions: {},
+      },
+      {
+        id: assigneeId,
+        companyId,
+        name: "AssigneeCoder",
+        role: "engineer",
+        status: "idle",
+        adapterType: "opencode_local",
+        adapterConfig: { model: "qwen3-coder-sovereign" },
+        runtimeConfig: {},
+        permissions: {},
+      },
+    ]);
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Created by one agent, assigned to another",
+      status: "todo",
+      priority: "medium",
+      assigneeAgentId: assigneeId,
+      createdByAgentId: creatorId,
+    });
+
+    await svc.terminate(assigneeId);
+    const removed = await svc.remove(assigneeId);
+    expect(removed?.id).toBe(assigneeId);
+
+    const persistedIssue = await db
+      .select({
+        assigneeAgentId: issues.assigneeAgentId,
+        createdByAgentId: issues.createdByAgentId,
+      })
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0] ?? null);
+    expect(persistedIssue?.assigneeAgentId).toBeNull();
+    expect(persistedIssue?.createdByAgentId).toBe(creatorId);
+  });
 });

@@ -22,7 +22,7 @@ All environment variables that Paperclip uses for server configuration.
 | `PAPERCLIP_INSTANCE` | (unset) | Set to `canonical` to keep primary ports (`3100`, embedded PG `54329`). Any other value applies secondary defaults (`3200`, embedded PG `54330`) **only when those env vars are unset**. An explicit `PAPERCLIP_EMBEDDED_PG_PORT` is never remapped. |
 | `PAPERCLIP_EMBEDDED_PG_PORT` | `54329` canonical / `54330` non-canonical | Embedded Postgres listen port. If `54330` is already owned (socat, another instance), set this explicitly or the boot can hang. |
 | `PAPERCLIP_ALLOW_CLOUD_MODELS` | unset (fail-closed) | When `1`/`true`, agent create/update and runtime accept non-sovereign model ids (OpenRouter, etc.). Default refuses them. See `docs/agents/cloud-models.md`. |
-| `PAPERCLIP_ENABLE_NOOP_DONE_AUTO_DISPOSITION` | unset (enabled) | Set `0`/`false`/`off` to disable Recovery no-op-done skip. Default on to stop `successful_run_missing_state` clone loops. |
+| `PAPERCLIP_ENABLE_NOOP_DONE_AUTO_DISPOSITION` | unset (enabled) | Unset enables Recovery no-op-done skip. Only `1`/`true`/`yes`/`on` keep it enabled when set. Any other value (`0`/`false`/`off`/`maybe`/`disable`) disables it. |
 | `PAPERCLIP_HTTP_ADAPTER_ALLOWED_HOSTS` | unset | Comma-separated exact hostnames the `http` adapter may call even if they are private. Unset = public http(s) only. |
 
 ## Secrets

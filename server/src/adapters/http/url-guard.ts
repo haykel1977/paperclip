@@ -101,6 +101,29 @@ export function assertSafeHttpAdapterUrlSync(
   return parsed;
 }
 
+export const HTTP_ADAPTER_FETCH_REDIRECT = "manual" as const;
+
+export class HttpAdapterSsrfError extends Error {
+  readonly code = "http_url_ssrf_blocked" as const;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "HttpAdapterSsrfError";
+  }
+}
+
+export function httpAdapterFetchInit<T extends RequestInit>(init: T): T & { redirect: "manual" } {
+  return { ...init, redirect: HTTP_ADAPTER_FETCH_REDIRECT };
+}
+
+export function assertHttpAdapterResponseNotRedirect(res: Response): void {
+  if (res.type === "opaqueredirect" || (res.status >= 300 && res.status < 400)) {
+    throw new HttpAdapterSsrfError(
+      `HTTP adapter refused redirect (${res.status || "opaque"}) to avoid SSRF via Location`,
+    );
+  }
+}
+
 export async function assertSafeHttpAdapterUrl(
   rawUrl: string,
   env: NodeJS.ProcessEnv = process.env,

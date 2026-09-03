@@ -91,10 +91,10 @@ export function isNoOpDoneAutoDispositionEnabled(env: NodeJS.ProcessEnv = proces
   const raw = env[NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG];
   if (!raw) return true;
   const normalized = raw.trim().toLowerCase();
-  if (normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off") {
-    return false;
+  if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") {
+    return true;
   }
-  return true;
+  return false;
 }
 
 const PRODUCTIVE_SUCCESS_LIVENESS_STATES = new Set<RunLivenessState>([
