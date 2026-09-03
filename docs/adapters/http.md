@@ -26,7 +26,9 @@ The `http` adapter sends a webhook request to an external agent service. The age
 
 ## SSRF guard
 
-The server resolves the configured URL before `fetch`. It rejects:
+The server resolves the configured URL and pins the TCP connect to that
+address so a later DNS answer cannot retarget the request (rebinding).
+The original hostname is still sent as `Host` / SNI. It rejects:
 
 - non-`http`/`https` schemes
 - `localhost`, `*.localhost`, and cloud metadata hostnames

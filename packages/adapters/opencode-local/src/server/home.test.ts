@@ -31,4 +31,30 @@ describe("OpenCode home resolution", () => {
     });
     expect(home).toBe("/tmp/paperclip-opencode-home");
   });
+
+  it("prefers passwd home over a parent process HOME like /root", () => {
+    const home = resolveOpenCodeHomeDir({
+      envHome: "/root",
+      osHomedir: "/root",
+      userInfoHomedir: "/home/quantum",
+      platform: "linux",
+    });
+    expect(home).toBe(path.resolve("/home/quantum"));
+  });
+
+  it("honors an explicit adapter HOME before passwd when candidates are provided", () => {
+    const home = resolveOpenCodeHomeDir({
+      candidates: ["/opt/opencode-home", "/home/quantum", "/root"],
+      platform: "linux",
+    });
+    expect(home).toBe(path.resolve("/opt/opencode-home"));
+  });
+
+  it("skips a Darwin adapter HOME and uses passwd home next", () => {
+    const home = resolveOpenCodeHomeDir({
+      candidates: ["/Users/quantum", "/home/quantum", "/root"],
+      platform: "linux",
+    });
+    expect(home).toBe(path.resolve("/home/quantum"));
+  });
 });

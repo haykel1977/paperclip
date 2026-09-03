@@ -8,7 +8,7 @@ import {
   assertHttpAdapterResponseNotRedirect,
   assertSafeHttpAdapterUrl,
   HttpAdapterSsrfError,
-  httpAdapterFetchInit,
+  httpAdapterFetch,
 } from "./url-guard.js";
 
 function summarizeStatus(checks: AdapterEnvironmentCheck[]): AdapterEnvironmentTestResult["status"] {
@@ -80,8 +80,9 @@ export async function testEnvironment(
   });
 
   if (url && (url.protocol === "http:" || url.protocol === "https:")) {
+    let target: Awaited<ReturnType<typeof assertSafeHttpAdapterUrl>>;
     try {
-      await assertSafeHttpAdapterUrl(url.toString());
+      target = await assertSafeHttpAdapterUrl(url.toString());
     } catch (err) {
       checks.push({
         code: "http_url_ssrf_blocked",
@@ -100,13 +101,11 @@ export async function testEnvironment(
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3000);
     try {
-      const response = await fetch(
-        url,
-        httpAdapterFetchInit({
-          method: "HEAD",
-          signal: controller.signal,
-        }),
-      );
+      const response = await httpAdapterFetch(target.url, {
+        method: "HEAD",
+        signal: controller.signal,
+        pinnedAddress: target.pinnedAddress,
+      });
       assertHttpAdapterResponseNotRedirect(response);
       if (!response.ok && response.status !== 405 && response.status !== 501) {
         checks.push({
