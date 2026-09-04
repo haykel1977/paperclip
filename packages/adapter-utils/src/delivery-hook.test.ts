@@ -153,6 +153,25 @@ describe("Quantum delivery helpers", () => {
       issueIdentifier: "QUA-21",
       env: { PAPERCLIP_ISSUE_TITLE: "no github ref here" },
     })).toBeNull();
+    expect(resolveGithubIssueNumber({
+      issueIdentifier: "QUA-21",
+      env: { PAPERCLIP_ISSUE_TITLE: "see #0 then Closes #1894" },
+    })).toBe(1894);
+  });
+
+  it("rejects #0 / 0 and non-safe integers instead of emitting Closes #0", () => {
+    isolateIssueEnv();
+    expect(resolveGithubIssueNumber({ issueIdentifier: "0", env: {} })).toBeNull();
+    expect(resolveGithubIssueNumber({ issueIdentifier: "#0", env: {} })).toBeNull();
+    expect(resolveGithubIssueNumber({ issueIdentifier: "QUA-21", env: { PAPERCLIP_GITHUB_ISSUE_NUMBER: "0" } })).toBeNull();
+    expect(resolveGithubIssueNumber({
+      issueIdentifier: "QUA-21",
+      env: { PAPERCLIP_ISSUE_TITLE: "broken ref #0" },
+    })).toBeNull();
+    expect(resolveGithubIssueNumber({
+      issueIdentifier: "QUA-21",
+      env: { PAPERCLIP_GITHUB_ISSUE_NUMBER: "9007199254740992" },
+    })).toBeNull();
   });
 
   it("falls back to description/body env and never overwrites an explicit GitHub number", () => {

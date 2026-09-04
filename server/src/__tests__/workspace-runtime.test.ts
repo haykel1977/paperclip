@@ -846,8 +846,11 @@ describe("realizeExecutionWorkspace", () => {
 
   it("injects PAPERCLIP_GITHUB_ISSUE_NUMBER from title or description without inventing QUA-* ids", async () => {
     const githubIssueEnvKey = "PAPERCLIP_GITHUB_ISSUE_NUMBER";
+    const descriptionEnvKey = "PAPERCLIP_ISSUE_DESCRIPTION";
     const previousGithubIssue = process.env[githubIssueEnvKey];
+    const previousDescription = process.env[descriptionEnvKey];
     delete process.env[githubIssueEnvKey];
+    process.env[descriptionEnvKey] = "stale Closes #9999 from a previous issue";
     try {
     const repoRoot = await createTempRepo();
     await fs.mkdir(path.join(repoRoot, "scripts"), { recursive: true });
@@ -857,6 +860,7 @@ describe("realizeExecutionWorkspace", () => {
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         "printf '%s\\n' \"${PAPERCLIP_GITHUB_ISSUE_NUMBER:-}\" > .paperclip-github-issue",
+        "printf '%s\\n' \"${PAPERCLIP_ISSUE_DESCRIPTION:-}\" > .paperclip-issue-description",
       ].join("\n"),
       "utf8",
     );
@@ -891,6 +895,7 @@ describe("realizeExecutionWorkspace", () => {
       },
     });
     await expect(fs.readFile(path.join(fromTitle.cwd, ".paperclip-github-issue"), "utf8")).resolves.toBe("1894\n");
+    await expect(fs.readFile(path.join(fromTitle.cwd, ".paperclip-issue-description"), "utf8")).resolves.toBe("\n");
 
     const fromDescription = await realizeExecutionWorkspace({
       base: {
@@ -921,6 +926,7 @@ describe("realizeExecutionWorkspace", () => {
       },
     });
     await expect(fs.readFile(path.join(fromDescription.cwd, ".paperclip-github-issue"), "utf8")).resolves.toBe("2210\n");
+    await expect(fs.readFile(path.join(fromDescription.cwd, ".paperclip-issue-description"), "utf8")).resolves.toBe("Closes #2210\n");
 
     const identifierOnly = await realizeExecutionWorkspace({
       base: {
@@ -983,6 +989,8 @@ describe("realizeExecutionWorkspace", () => {
     } finally {
       if (previousGithubIssue === undefined) delete process.env[githubIssueEnvKey];
       else process.env[githubIssueEnvKey] = previousGithubIssue;
+      if (previousDescription === undefined) delete process.env[descriptionEnvKey];
+      else process.env[descriptionEnvKey] = previousDescription;
     }
   });
 
