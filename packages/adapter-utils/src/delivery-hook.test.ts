@@ -185,6 +185,12 @@ describe("Quantum delivery helpers", () => {
       issueIdentifier: "QUA-21",
       env: { PAPERCLIP_ISSUE_TITLE: "fix(api): foo #1894" },
     })).toBe(1894);
+    process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER = "9999";
+    expect(resolveGithubIssueNumber({ issueIdentifier: "QUA-21", env: {} })).toBeNull();
+    expect(resolveGithubIssueNumber({
+      issueIdentifier: "QUA-21",
+      env: { PAPERCLIP_GITHUB_ISSUE_NUMBER: "1894" },
+    })).toBe(1894);
   });
 
   it("falls back to description/body env and never overwrites an explicit GitHub number", () => {

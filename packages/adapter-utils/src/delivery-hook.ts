@@ -217,16 +217,14 @@ export function resolveGithubIssueNumber(input: {
   env?: Record<string, string>;
 }): number | null {
   const env = input.env ?? {};
-  const fromEnv = asGithubIssueNumber(
-    readPassedEnv(env, "PAPERCLIP_GITHUB_ISSUE_NUMBER") ?? nonEmpty(process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER),
-  );
+  const fromEnv = asGithubIssueNumber(readPassedEnv(env, "PAPERCLIP_GITHUB_ISSUE_NUMBER"));
   if (fromEnv != null) return fromEnv;
   const ident = input.issueIdentifier?.trim() ?? "";
   const fromIdent = ident.startsWith("#") ? asGithubIssueNumber(ident.slice(1)) : asGithubIssueNumber(ident);
   if (fromIdent != null) return fromIdent;
 
-  // Title/description/body are current-issue text only. Do not fall back to
-  // leftover process.env from a previous run — that would emit Closes #<stale>.
+  // Current-issue text and numbers come only from the passed run env.
+  // Leftover process.env from a previous run must not emit Closes #<stale>.
   const fromTitle = parseGithubIssueNumberFromText(readPassedEnv(env, "PAPERCLIP_ISSUE_TITLE"));
   if (fromTitle != null) return fromTitle;
 
