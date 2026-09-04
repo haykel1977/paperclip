@@ -145,17 +145,17 @@ const wakePayload = {
 describe("opencode local execution: workspace location", () => {
   const cleanupDirs: string[] = [];
   const previousPwd = process.env.PWD;
-  const previousOldPwd = process.env.OLDPWD;
-  const previousInitCwd = process.env.INIT_CWD;
+  const previousOldPwd = process.env["OLDPWD"];
+  const previousInitCwd = process.env["INIT_CWD"];
 
   afterEach(async () => {
     vi.clearAllMocks();
     if (previousPwd === undefined) delete process.env.PWD;
     else process.env.PWD = previousPwd;
-    if (previousOldPwd === undefined) delete process.env.OLDPWD;
-    else process.env.OLDPWD = previousOldPwd;
-    if (previousInitCwd === undefined) delete process.env.INIT_CWD;
-    else process.env.INIT_CWD = previousInitCwd;
+    if (previousOldPwd === undefined) delete process.env["OLDPWD"];
+    else process.env["OLDPWD"] = previousOldPwd;
+    if (previousInitCwd === undefined) delete process.env["INIT_CWD"];
+    else process.env["INIT_CWD"] = previousInitCwd;
     while (cleanupDirs.length > 0) {
       const dir = cleanupDirs.pop();
       if (!dir) continue;
@@ -170,8 +170,8 @@ describe("opencode local execution: workspace location", () => {
     await mkdir(worktree, { recursive: true });
     // Simulate the server process running from an unrelated directory (the container's /app).
     process.env.PWD = rootDir;
-    process.env.OLDPWD = "/app";
-    process.env.INIT_CWD = "/app";
+    process.env["OLDPWD"] = "/app";
+    process.env["INIT_CWD"] = "/app";
     return { rootDir, worktree };
   }
 
