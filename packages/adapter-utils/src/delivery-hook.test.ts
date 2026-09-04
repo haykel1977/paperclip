@@ -301,6 +301,7 @@ describe("executeDeliveryHook Quantum fail-closed contract", () => {
     const result = await executeDeliveryHook({ ...quantumBase, worktreeCwd, runProc });
     expect(result.reason).toBe("created");
     expect(calls).toContainEqual(["git", "checkout", "-b", "feat/agent-agent-1-ticket-qua-99-delivery"]);
+    // paperclip:allow-git-push: test assertion — verifies delivery hook invokes git push (PAPA-432)
     expect(calls).toContainEqual(["git", "push", "-u", "origin", "feat/agent-agent-1-ticket-qua-99-delivery"]);
     const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
     expect(createCall).toContain("feat/agent-agent-1-ticket-qua-99-delivery");

@@ -54,31 +54,31 @@ const base = {
 
 describe("executeDeliveryHook", () => {
 
-  const savedLane = process.env.PAPERCLIP_DELIVERY_LANE;
-  const savedAutonomous = process.env.PAPERCLIP_AUTONOMOUS_DELIVERY;
-  const savedBotToken = process.env.PAPERCLIP_DELIVERY_BOT_TOKEN;
-  const savedRemoteDelivery = process.env.PAPERCLIP_DELIVERY_REMOTE_ENABLED;
-  const savedGithubIssue = process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER;
+  const savedLane = process.env["PAPERCLIP_DELIVERY_LANE"];
+  const savedAutonomous = process.env["PAPERCLIP_AUTONOMOUS_DELIVERY"];
+  const savedBotToken = process.env["PAPERCLIP_DELIVERY_BOT_TOKEN"];
+  const savedRemoteDelivery = process.env["PAPERCLIP_DELIVERY_REMOTE_ENABLED"];
+  const savedGithubIssue = process.env["PAPERCLIP_GITHUB_ISSUE_NUMBER"];
 
   beforeEach(() => {
-    delete process.env.PAPERCLIP_DELIVERY_LANE;
-    delete process.env.PAPERCLIP_AUTONOMOUS_DELIVERY;
-    delete process.env.PAPERCLIP_DELIVERY_BOT_TOKEN;
-    delete process.env.PAPERCLIP_DELIVERY_REMOTE_ENABLED;
-    delete process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER;
+    delete process.env["PAPERCLIP_DELIVERY_LANE"];
+    delete process.env["PAPERCLIP_AUTONOMOUS_DELIVERY"];
+    delete process.env["PAPERCLIP_DELIVERY_BOT_TOKEN"];
+    delete process.env["PAPERCLIP_DELIVERY_REMOTE_ENABLED"];
+    delete process.env["PAPERCLIP_GITHUB_ISSUE_NUMBER"];
   });
 
   afterEach(() => {
-    if (savedLane === undefined) delete process.env.PAPERCLIP_DELIVERY_LANE;
-    else process.env.PAPERCLIP_DELIVERY_LANE = savedLane;
-    if (savedAutonomous === undefined) delete process.env.PAPERCLIP_AUTONOMOUS_DELIVERY;
-    else process.env.PAPERCLIP_AUTONOMOUS_DELIVERY = savedAutonomous;
-    if (savedBotToken === undefined) delete process.env.PAPERCLIP_DELIVERY_BOT_TOKEN;
-    else process.env.PAPERCLIP_DELIVERY_BOT_TOKEN = savedBotToken;
-    if (savedRemoteDelivery === undefined) delete process.env.PAPERCLIP_DELIVERY_REMOTE_ENABLED;
-    else process.env.PAPERCLIP_DELIVERY_REMOTE_ENABLED = savedRemoteDelivery;
-    if (savedGithubIssue === undefined) delete process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER;
-    else process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER = savedGithubIssue;
+    if (savedLane === undefined) delete process.env["PAPERCLIP_DELIVERY_LANE"];
+    else process.env["PAPERCLIP_DELIVERY_LANE"] = savedLane;
+    if (savedAutonomous === undefined) delete process.env["PAPERCLIP_AUTONOMOUS_DELIVERY"];
+    else process.env["PAPERCLIP_AUTONOMOUS_DELIVERY"] = savedAutonomous;
+    if (savedBotToken === undefined) delete process.env["PAPERCLIP_DELIVERY_BOT_TOKEN"];
+    else process.env["PAPERCLIP_DELIVERY_BOT_TOKEN"] = savedBotToken;
+    if (savedRemoteDelivery === undefined) delete process.env["PAPERCLIP_DELIVERY_REMOTE_ENABLED"];
+    else process.env["PAPERCLIP_DELIVERY_REMOTE_ENABLED"] = savedRemoteDelivery;
+    if (savedGithubIssue === undefined) delete process.env["PAPERCLIP_GITHUB_ISSUE_NUMBER"];
+    else process.env["PAPERCLIP_GITHUB_ISSUE_NUMBER"] = savedGithubIssue;
     for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
