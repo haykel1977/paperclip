@@ -31,7 +31,7 @@ async function makeConfigHome(initialConfig?: Record<string, unknown>) {
 }
 
 describe("prepareOpenCodeRuntimeConfig", () => {
-  it("injects an external_directory allow rule by default", async () => {
+  it("does not inject an external_directory allow rule unless explicitly enabled", async () => {
     const configHome = await makeConfigHome({
       permission: {
         read: "allow",
@@ -42,6 +42,24 @@ describe("prepareOpenCodeRuntimeConfig", () => {
     const prepared = await prepareOpenCodeRuntimeConfig({
       env: { XDG_CONFIG_HOME: configHome },
       config: {},
+    });
+
+    expect(prepared.env).toEqual({ XDG_CONFIG_HOME: configHome });
+    expect(prepared.notes).toEqual([]);
+    await prepared.cleanup();
+  });
+
+  it("injects an external_directory allow rule when the operator enables it", async () => {
+    const configHome = await makeConfigHome({
+      permission: {
+        read: "allow",
+      },
+      theme: "system",
+    });
+
+    const prepared = await prepareOpenCodeRuntimeConfig({
+      env: { XDG_CONFIG_HOME: configHome },
+      config: { dangerouslySkipPermissions: true },
     });
     cleanupPaths.add(prepared.env.XDG_CONFIG_HOME);
 

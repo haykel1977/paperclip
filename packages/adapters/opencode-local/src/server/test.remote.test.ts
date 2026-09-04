@@ -100,6 +100,7 @@ describe("opencode remote environment diagnostics", () => {
       config: {
         command: "opencode",
         model: "anthropic/claude-sonnet-4-5",
+        dangerouslySkipPermissions: true,
       },
       executionTarget: remoteTarget,
       environmentName: "QA Cloudflare",

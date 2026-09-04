@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { asBoolean } from "@paperclipai/adapter-utils/server-utils";
+import { resolveProcessOpenCodeHomeDir } from "./home.js";
 
 type PreparedOpenCodeRuntimeConfig = {
   env: Record<string, string>;
@@ -13,7 +14,7 @@ function resolveXdgConfigHome(env: Record<string, string>): string {
   return (
     (typeof env.XDG_CONFIG_HOME === "string" && env.XDG_CONFIG_HOME.trim()) ||
     (typeof process.env.XDG_CONFIG_HOME === "string" && process.env.XDG_CONFIG_HOME.trim()) ||
-    path.join(os.homedir(), ".config")
+    path.join(resolveProcessOpenCodeHomeDir(), ".config")
   );
 }
 
@@ -36,7 +37,7 @@ export async function prepareOpenCodeRuntimeConfig(input: {
   config: Record<string, unknown>;
   targetIsRemote?: boolean;
 }): Promise<PreparedOpenCodeRuntimeConfig> {
-  const skipPermissions = asBoolean(input.config.dangerouslySkipPermissions, true);
+  const skipPermissions = asBoolean(input.config.dangerouslySkipPermissions, false);
   if (!skipPermissions) {
     return {
       env: input.env,

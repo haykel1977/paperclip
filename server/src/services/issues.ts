@@ -142,6 +142,38 @@ function buildReusedExecutionWorkspaceConfigPatchFromIssueSettings(
   };
 }
 
+const EXPERIMENTAL_ISOLATED_WORKSPACE_MODES = new Set(["isolated_workspace", "operator_branch"]);
+
+function assertIsolatedWorkspaceFieldsAllowed(
+  isolatedWorkspacesEnabled: boolean,
+  fields: {
+    executionWorkspaceId?: unknown;
+    executionWorkspacePreference?: unknown;
+    executionWorkspaceSettings?: unknown;
+  },
+) {
+  if (isolatedWorkspacesEnabled) return;
+  const provided: string[] = [];
+  if (
+    typeof fields.executionWorkspacePreference === "string" &&
+    EXPERIMENTAL_ISOLATED_WORKSPACE_MODES.has(fields.executionWorkspacePreference)
+  ) {
+    provided.push("executionWorkspacePreference");
+  }
+  const settings = fields.executionWorkspaceSettings;
+  if (settings && typeof settings === "object" && !Array.isArray(settings)) {
+    const mode = (settings as { mode?: unknown }).mode;
+    if (typeof mode === "string" && EXPERIMENTAL_ISOLATED_WORKSPACE_MODES.has(mode)) {
+      provided.push("executionWorkspaceSettings");
+    }
+  }
+  if (provided.length === 0) return;
+  throw unprocessable(
+    `Isolated execution workspaces are disabled on this instance. Enable experimental setting enableIsolatedWorkspaces before setting ${provided.join(", ")}.`,
+    { enableIsolatedWorkspaces: false, fields: provided },
+  );
+}
+
 function toTimestampMs(value: Date | string | null | undefined) {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
@@ -4702,11 +4734,7 @@ export function issueService(db: Db) {
         ...issueData
       } = data;
       const isolatedWorkspacesEnabled = (await instanceSettings.getExperimental()).enableIsolatedWorkspaces;
-      if (!isolatedWorkspacesEnabled) {
-        delete issueData.executionWorkspaceId;
-        delete issueData.executionWorkspacePreference;
-        delete issueData.executionWorkspaceSettings;
-      }
+      assertIsolatedWorkspaceFieldsAllowed(isolatedWorkspacesEnabled, issueData);
       if (data.assigneeAgentId && data.assigneeUserId) {
         throw unprocessable("Issue can only have one assignee");
       }
@@ -4960,11 +4988,7 @@ export function issueService(db: Db) {
         ...issueData
       } = data;
       const isolatedWorkspacesEnabled = (await instanceSettings.getExperimental()).enableIsolatedWorkspaces;
-      if (!isolatedWorkspacesEnabled) {
-        delete issueData.executionWorkspaceId;
-        delete issueData.executionWorkspacePreference;
-        delete issueData.executionWorkspaceSettings;
-      }
+      assertIsolatedWorkspaceFieldsAllowed(isolatedWorkspacesEnabled, issueData);
 
       if (issueData.status) {
         assertTransition(existing.status, issueData.status);

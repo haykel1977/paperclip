@@ -52,10 +52,15 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
   const budgets = budgetService(db, budgetHooks);
   return {
     createEvent: async (companyId: string, data: Omit<typeof costEvents.$inferInsert, "companyId">) => {
+      const agentId = data.agentId;
+      if (!agentId) {
+        throw unprocessable("Cost events require an agentId");
+      }
+
       const agent = await db
         .select()
         .from(agents)
-        .where(eq(agents.id, data.agentId))
+        .where(eq(agents.id, agentId))
         .then((rows) => rows[0] ?? null);
 
       if (!agent) throw notFound("Agent not found");
@@ -68,6 +73,7 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
         .values({
           ...data,
           companyId,
+          agentId,
           biller: data.biller ?? data.provider,
           billingType: data.billingType ?? "unknown",
           cachedInputTokens: data.cachedInputTokens ?? 0,
@@ -76,7 +82,7 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
         .then((rows) => rows[0]);
 
       const [agentMonthSpend, companyMonthSpend] = await Promise.all([
-        getMonthlySpendTotal(db, { companyId, agentId: event.agentId }),
+        getMonthlySpendTotal(db, { companyId, agentId }),
         getMonthlySpendTotal(db, { companyId }),
       ]);
 
@@ -86,7 +92,7 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
           spentMonthlyCents: agentMonthSpend,
           updatedAt: new Date(),
         })
-        .where(eq(agents.id, event.agentId));
+        .where(eq(agents.id, agentId));
 
       await db
         .update(companies)

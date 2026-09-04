@@ -42,7 +42,8 @@ export function normalizeExperimentalSettings(raw: unknown): InstanceExperimenta
   if (parsed.success) {
     return {
       enableEnvironments: parsed.data.enableEnvironments ?? false,
-      enableIsolatedWorkspaces: parsed.data.enableIsolatedWorkspaces ?? false,
+      // Fork default matches DEFAULT_ENABLE_ISOLATED_WORKSPACES in packages/shared.
+      enableIsolatedWorkspaces: parsed.data.enableIsolatedWorkspaces ?? true,
       enableStreamlinedLeftNavigation: parsed.data.enableStreamlinedLeftNavigation ?? false,
       enableIssuePlanDecompositions: parsed.data.enableIssuePlanDecompositions ?? false,
       enableCloudSync: parsed.data.enableCloudSync ?? false,
@@ -55,7 +56,7 @@ export function normalizeExperimentalSettings(raw: unknown): InstanceExperimenta
   }
   return {
     enableEnvironments: false,
-    enableIsolatedWorkspaces: false,
+    enableIsolatedWorkspaces: true,
     enableStreamlinedLeftNavigation: false,
     enableIssuePlanDecompositions: false,
     enableCloudSync: false,

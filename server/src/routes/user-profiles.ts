@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { and, desc, eq, gte, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   activityLog,
@@ -370,7 +370,11 @@ export function userProfileRoutes(db: Db) {
         .from(costEvents)
         .innerJoin(issues, and(eq(issues.id, costEvents.issueId), eq(issues.companyId, costEvents.companyId)))
         .leftJoin(agents, eq(agents.id, costEvents.agentId))
-        .where(and(eq(costEvents.companyId, companyId), userIssueInvolvementSql(companyId, userId)))
+        .where(and(
+          eq(costEvents.companyId, companyId),
+          isNotNull(costEvents.agentId),
+          userIssueInvolvementSql(companyId, userId),
+        ))
         .groupBy(costEvents.agentId, agents.name)
         .orderBy(desc(sumNumber(costEvents.costCents)))
         .limit(5),
@@ -413,13 +417,17 @@ export function userProfileRoutes(db: Db) {
         priority: issue.priority as UserProfileResponse["recentIssues"][number]["priority"],
       })),
       recentActivity,
-      topAgents: topAgents.map((entry) => ({
-        ...entry,
-        costCents: Number(entry.costCents),
-        inputTokens: Number(entry.inputTokens),
-        cachedInputTokens: Number(entry.cachedInputTokens),
-        outputTokens: Number(entry.outputTokens),
-      })),
+      topAgents: topAgents.flatMap((entry) => {
+        if (!entry.agentId) return [];
+        return [{
+          agentId: entry.agentId,
+          agentName: entry.agentName,
+          costCents: Number(entry.costCents),
+          inputTokens: Number(entry.inputTokens),
+          cachedInputTokens: Number(entry.cachedInputTokens),
+          outputTokens: Number(entry.outputTokens),
+        }];
+      }),
       topProviders: topProviders.map((entry) => ({
         ...entry,
         costCents: Number(entry.costCents),

@@ -129,7 +129,7 @@ export async function testEnvironment(
   const preparedRuntimeConfig = await prepareOpenCodeRuntimeConfig({ env, config });
   const localRuntimeConfigHome =
     preparedRuntimeConfig.notes.length > 0 ? preparedRuntimeConfig.env.XDG_CONFIG_HOME : "";
-  if (asBoolean(config.dangerouslySkipPermissions, true)) {
+  if (asBoolean(config.dangerouslySkipPermissions, false)) {
     checks.push({
       code: "opencode_headless_permissions_enabled",
       level: "info",

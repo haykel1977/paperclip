@@ -270,6 +270,104 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
     expect(persisted?.assigneeAgentId).toBe(activeAgentId);
   });
 
+  it("rejects isolated workspace fields with 422 when enableIsolatedWorkspaces is false", async () => {
+    const companyId = await seedAssignableAgentCompany();
+    await instanceSettingsService(db).updateExperimental({ enableIsolatedWorkspaces: false });
+
+    await expect(svc.create(companyId, {
+      title: "Do not silently drop workspace",
+      description: null,
+      status: "todo",
+      priority: "medium",
+      executionWorkspacePreference: "isolated_workspace",
+    })).rejects.toMatchObject({
+      status: 422,
+      details: {
+        enableIsolatedWorkspaces: false,
+        fields: ["executionWorkspacePreference"],
+      },
+    });
+
+    const created = await svc.create(companyId, {
+      title: "Persisted without workspace fields",
+      description: null,
+      status: "todo",
+      priority: "medium",
+    });
+
+    await expect(svc.update(created.id, {
+      executionWorkspacePreference: "isolated_workspace",
+      executionWorkspaceSettings: { mode: "isolated_workspace" },
+    })).rejects.toMatchObject({
+      status: 422,
+      details: {
+        enableIsolatedWorkspaces: false,
+        fields: ["executionWorkspacePreference", "executionWorkspaceSettings"],
+      },
+    });
+
+    const persisted = await db
+      .select({
+        executionWorkspacePreference: issues.executionWorkspacePreference,
+        executionWorkspaceSettings: issues.executionWorkspaceSettings,
+      })
+      .from(issues)
+      .where(eq(issues.id, created.id))
+      .then((rows) => rows[0] ?? null);
+    expect(persisted?.executionWorkspacePreference).toBeNull();
+    expect(persisted?.executionWorkspaceSettings).toBeNull();
+  });
+
+  it("allows shared workspace linkage while isolated modes stay 422 when the flag is off", async () => {
+    const companyId = await seedAssignableAgentCompany();
+    await instanceSettingsService(db).updateExperimental({ enableIsolatedWorkspaces: false });
+
+    const created = await svc.create(companyId, {
+      title: "Shared reuse is not isolated",
+      description: null,
+      status: "todo",
+      priority: "medium",
+      executionWorkspacePreference: "reuse_existing",
+      executionWorkspaceSettings: { mode: "shared_workspace" },
+    });
+    expect(created.executionWorkspacePreference).toBe("reuse_existing");
+    expect(created.executionWorkspaceSettings).toEqual({ mode: "shared_workspace" });
+
+    const updated = await svc.update(created.id, {
+      executionWorkspacePreference: "reuse_existing",
+      executionWorkspaceSettings: { mode: "agent_default" },
+    });
+    expect(updated.executionWorkspacePreference).toBe("reuse_existing");
+    expect(updated.executionWorkspaceSettings).toEqual({ mode: "agent_default" });
+  });
+
+  it("does not 422 when isolated workspace fields are explicitly null while the flag is off", async () => {
+    const companyId = await seedAssignableAgentCompany();
+    await instanceSettingsService(db).updateExperimental({ enableIsolatedWorkspaces: false });
+
+    const created = await svc.create(companyId, {
+      title: "Clear workspace fields is not a write",
+      description: null,
+      status: "todo",
+      priority: "medium",
+      executionWorkspaceId: null,
+      executionWorkspacePreference: null,
+      executionWorkspaceSettings: null,
+    });
+    expect(created.executionWorkspaceId).toBeNull();
+    expect(created.executionWorkspacePreference).toBeNull();
+    expect(created.executionWorkspaceSettings).toBeNull();
+
+    const updated = await svc.update(created.id, {
+      executionWorkspaceId: null,
+      executionWorkspacePreference: null,
+      executionWorkspaceSettings: null,
+    });
+    expect(updated.executionWorkspaceId).toBeNull();
+    expect(updated.executionWorkspacePreference).toBeNull();
+    expect(updated.executionWorkspaceSettings).toBeNull();
+  });
+
   it("rejects checkout by a terminated agent before assigning the issue", async () => {
     const companyId = await seedAssignableAgentCompany();
     const terminatedAgentId = randomUUID();

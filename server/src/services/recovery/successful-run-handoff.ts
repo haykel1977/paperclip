@@ -37,7 +37,9 @@ export const SUCCESSFUL_RUN_HANDOFF_OPTIONS = [
  * To be defensive, we only recognize this signal when MULTIPLE distinct
  * phrases co-occur in the same summary. A single "no changes" is not enough.
  *
- * Behavior is off unless PAPERCLIP_ENABLE_NOOP_DONE_AUTO_DISPOSITION=1 is set.
+ * Default is ON after 2026-09-03: Recovery clone storms (successful_run_missing_state
+ * loops) were still possible while the #98 flag stayed opt-in. Set
+ * PAPERCLIP_ENABLE_NOOP_DONE_AUTO_DISPOSITION=0 to disable.
  */
 const NOOP_DONE_PRIMARY_PHRASES = [
   "no implementation needed",
@@ -66,6 +68,18 @@ const NOOP_DONE_CORROBORATING_PHRASES = [
   "nothing to implement",
 ] as const;
 
+const NOOP_DONE_VETO_PHRASES = [
+  "needs more work",
+  "need more work",
+  "more work needed",
+  "not yet satisfied",
+  "not yet complete",
+  "not yet done",
+  "still needs work",
+  "still need work",
+  "remaining work",
+] as const;
+
 function normalizeNoOpText(text: string) {
   return text.toLowerCase().replace(/\s+/g, " ").trim();
 }
@@ -74,6 +88,9 @@ export function matchesNoOpDoneSelfReport(summary: string | null | undefined): b
   if (!summary || typeof summary !== "string") return false;
   const normalized = normalizeNoOpText(summary);
   if (normalized.length < 20) return false;
+  if (NOOP_DONE_VETO_PHRASES.some((phrase) => normalized.includes(phrase))) {
+    return false;
+  }
   const primaryHit = NOOP_DONE_PRIMARY_PHRASES.some((phrase) => normalized.includes(phrase));
   if (!primaryHit) return false;
   const corroboratingHit = NOOP_DONE_CORROBORATING_PHRASES.some((phrase) =>
@@ -87,9 +104,12 @@ export const NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG =
 
 export function isNoOpDoneAutoDispositionEnabled(env: NodeJS.ProcessEnv = process.env) {
   const raw = env[NOOP_DONE_AUTO_DISPOSITION_ENV_FLAG];
-  if (!raw) return false;
+  if (!raw) return true;
   const normalized = raw.trim().toLowerCase();
-  return normalized === "1" || normalized === "true" || normalized === "yes";
+  if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") {
+    return true;
+  }
+  return false;
 }
 
 const PRODUCTIVE_SUCCESS_LIVENESS_STATES = new Set<RunLivenessState>([
