@@ -138,6 +138,28 @@ function shouldSkipOpenCodeModelAvailabilityProbe(input: {
   return input.model.trim().toLowerCase().startsWith("openai/") && Boolean(readOpenAiBaseUrl(input.env));
 }
 
+function pinOpenCodeLocalChildEnv(env: Record<string, string>, executionCwd: string) {
+  env.PWD = executionCwd;
+  delete env.OLDPWD;
+  delete env.INIT_CWD;
+}
+
+function sanitizeWorkspaceRemoteUrl(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return trimmed;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return trimmed;
+    }
+    parsed.username = "";
+    parsed.password = "";
+    return parsed.toString();
+  } catch {
+    return trimmed;
+  }
+}
+
 const REMOTE_OPENCODE_MODELS_PROBE_DEFAULT_TIMEOUT_SEC = 20;
 const REMOTE_OPENCODE_MODELS_PROBE_SANDBOX_TIMEOUT_SEC = 120;
 
@@ -369,6 +391,19 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         (entry): entry is [string, string] => typeof entry[1] === "string",
       ),
     );
+    // OpenCode derives its project directory from the inherited `PWD` variable
+    // and re-instantiates there, ignoring the spawn `cwd` when the two differ.
+    // The server process runs from /app (the Paperclip tree), so every isolated
+    // worktree run silently landed in /app: reproduced on 2026-09-03 by spawning
+    // with cwd=<worktree> and PWD=/app -> "creating instance directory=/app".
+    // Deleting OLDPWD/INIT_CWD from the overlay alone is insufficient:
+    // runtimeEnv and runChildProcess both re-merge process.env (often /app).
+    // Pin/drop on the built child env that is passed to runChildProcess.
+    // Remote targets sanitize their env separately and are left untouched.
+    if (!executionTargetIsRemote) {
+      pinOpenCodeLocalChildEnv(runtimeEnv, cwd);
+      pinOpenCodeLocalChildEnv(preparedRuntimeConfig.env, cwd);
+    }
     copyOpenAiSovereignEnv(preparedRuntimeConfig.env, runtimeEnv);
     const opencodeInvocation = resolveOpenCodeInvocationModel({ configuredModel: model, env: runtimeEnv });
     if (opencodeInvocation.model !== model) model = opencodeInvocation.model;
@@ -603,9 +638,29 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     const shouldUseResumeDeltaPrompt = Boolean(sessionId) && wakePrompt.length > 0;
     const renderedPrompt = shouldUseResumeDeltaPrompt ? "" : renderTemplate(promptTemplate, templateData);
     const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
+    // Tell the model where its checkout actually is. OpenCode is spawned with
+    // cwd=<worktree>, but the model has no way to know that: observed runs
+    // (QUA-1252, 2026-09-03) had the agent probing /app (the Paperclip server
+    // tree) and $HOME, concluding "scripts/agent-pr-create.sh does not exist"
+    // and pushing an orphan branch from a fresh `git init`. One explicit line
+    // removes that whole failure class; skipped on resume deltas to stay short.
+    const workspaceLocationNote = (() => {
+      if (shouldUseResumeDeltaPrompt || executionTargetIsRemote) return "";
+      const location = effectiveExecutionCwd || cwd;
+      if (!location) return "";
+      const lines = [
+        "Workspace location:",
+        `- Your shell already starts in \`${location}\`; this directory IS the task repository checkout (a git worktree when isolated workspaces are enabled). Run all repository commands (git, scripts/*.sh, tests) from here.`,
+        "- Do not look for the repository under /app, $HOME or any other path, and never `git init` a new repository: if the expected files are missing, report that as a blocker instead.",
+      ];
+      if (workspaceBranch) lines.push(`- Task branch: \`${workspaceBranch}\` (already checked out; publish it to origin under the same name when your change is ready).`);
+      if (workspaceRepoUrl) lines.push(`- Remote: ${sanitizeWorkspaceRemoteUrl(workspaceRepoUrl)}`);
+      return lines.join("\n");
+    })();
     const prompt = joinPromptSections([
       instructionsPrefix,
       renderedBootstrapPrompt,
+      workspaceLocationNote,
       wakePrompt,
       sessionHandoffNote,
       renderedPrompt,
@@ -646,7 +701,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
       const proc = await runAdapterExecutionTargetProcess(runId, runtimeExecutionTarget, command, args, {
         cwd,
-        env: preparedRuntimeConfig.env,
+        env: executionTargetIsRemote ? preparedRuntimeConfig.env : runtimeEnv,
         stdin: prompt,
         timeoutSec,
         graceSec,
