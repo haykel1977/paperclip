@@ -208,8 +208,8 @@ export function parseGithubIssueNumberFromText(text: string | null | undefined):
   return null;
 }
 
-function readIssueTextEnv(env: Record<string, string>, key: string): string | null {
-  return nonEmpty(env[key]) ?? nonEmpty(process.env[key]);
+function readPassedEnv(env: Record<string, string>, key: string): string | null {
+  return nonEmpty(env[key]);
 }
 
 export function resolveGithubIssueNumber(input: {
@@ -217,21 +217,55 @@ export function resolveGithubIssueNumber(input: {
   env?: Record<string, string>;
 }): number | null {
   const env = input.env ?? {};
-  const fromEnv = asGithubIssueNumber(readIssueTextEnv(env, "PAPERCLIP_GITHUB_ISSUE_NUMBER"));
+  const fromEnv = asGithubIssueNumber(
+    readPassedEnv(env, "PAPERCLIP_GITHUB_ISSUE_NUMBER") ?? nonEmpty(process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER),
+  );
   if (fromEnv != null) return fromEnv;
   const ident = input.issueIdentifier?.trim() ?? "";
   const fromIdent = ident.startsWith("#") ? asGithubIssueNumber(ident.slice(1)) : asGithubIssueNumber(ident);
   if (fromIdent != null) return fromIdent;
 
-  const fromTitle = parseGithubIssueNumberFromText(readIssueTextEnv(env, "PAPERCLIP_ISSUE_TITLE"));
+  // Title/description/body are current-issue text only. Do not fall back to
+  // leftover process.env from a previous run — that would emit Closes #<stale>.
+  const fromTitle = parseGithubIssueNumberFromText(readPassedEnv(env, "PAPERCLIP_ISSUE_TITLE"));
   if (fromTitle != null) return fromTitle;
 
   const fromDescription = parseGithubIssueNumberFromText(
-    readIssueTextEnv(env, "PAPERCLIP_ISSUE_DESCRIPTION") ?? readIssueTextEnv(env, "PAPERCLIP_ISSUE_BODY"),
+    readPassedEnv(env, "PAPERCLIP_ISSUE_DESCRIPTION") ?? readPassedEnv(env, "PAPERCLIP_ISSUE_BODY"),
   );
   if (fromDescription != null) return fromDescription;
 
   return null;
+}
+
+function applyCurrentIssueTextEnv(
+  env: Record<string, string>,
+  context: Record<string, unknown>,
+): Record<string, string> {
+  const next = { ...env };
+  const hasIssueContext = Boolean(
+    asRecord(context.paperclipIssue)
+    ?? readContextString(context, "id")
+    ?? readContextString(context, "identifier")
+    ?? readContextString(context, "issueId")
+    ?? readContextString(context, "issueIdentifier")
+    ?? readContextString(context, "title"),
+  );
+  if (!hasIssueContext) return next;
+
+  const title = readContextString(context, "title");
+  if (title) next.PAPERCLIP_ISSUE_TITLE = title;
+  else delete next.PAPERCLIP_ISSUE_TITLE;
+
+  const description = readContextString(context, "description");
+  if (description) {
+    next.PAPERCLIP_ISSUE_DESCRIPTION = description;
+    delete next.PAPERCLIP_ISSUE_BODY;
+  } else {
+    delete next.PAPERCLIP_ISSUE_DESCRIPTION;
+    delete next.PAPERCLIP_ISSUE_BODY;
+  }
+  return next;
 }
 
 export function isDocDeliveryPath(filePath: string): boolean {
@@ -1684,21 +1718,17 @@ export async function executeConfiguredDeliveryHook(
   }
 
   const issueIdentifier = readContextString(input.context, "identifier") ?? readContextString(input.context, "issueIdentifier");
-  const deliveryEnv = { ...input.env };
-  if (!nonEmpty(deliveryEnv.PAPERCLIP_ISSUE_TITLE)) {
-    const title = readContextString(input.context, "title");
-    if (title) deliveryEnv.PAPERCLIP_ISSUE_TITLE = title;
-  }
-  if (!nonEmpty(deliveryEnv.PAPERCLIP_ISSUE_DESCRIPTION) && !nonEmpty(deliveryEnv.PAPERCLIP_ISSUE_BODY)) {
-    const description = readContextString(input.context, "description");
-    if (description) deliveryEnv.PAPERCLIP_ISSUE_DESCRIPTION = description;
-  }
-  if (!nonEmpty(deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER)) {
+  const deliveryEnv = applyCurrentIssueTextEnv(input.env, input.context);
+  const explicitGithubIssueNumber = asGithubIssueNumber(deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER);
+  if (explicitGithubIssueNumber != null) {
+    deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER = String(explicitGithubIssueNumber);
+  } else {
     const recovered = resolveGithubIssueNumber({
       issueIdentifier,
       env: deliveryEnv,
     });
     if (recovered != null) deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER = String(recovered);
+    else delete deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER;
   }
 
   // NOTE: createDeliveryLogRedactor is called inside executeDeliveryHook — do NOT wrap log here.
