@@ -845,8 +845,9 @@ describe("realizeExecutionWorkspace", () => {
   });
 
   it("injects PAPERCLIP_GITHUB_ISSUE_NUMBER from title or description without inventing QUA-* ids", async () => {
-    const previousGithubIssue = process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER;
-    delete process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER;
+    const githubIssueEnvKey = "PAPERCLIP_GITHUB_ISSUE_NUMBER";
+    const previousGithubIssue = process.env[githubIssueEnvKey];
+    delete process.env[githubIssueEnvKey];
     try {
     const repoRoot = await createTempRepo();
     await fs.mkdir(path.join(repoRoot, "scripts"), { recursive: true });
@@ -950,7 +951,7 @@ describe("realizeExecutionWorkspace", () => {
     });
     await expect(fs.readFile(path.join(identifierOnly.cwd, ".paperclip-github-issue"), "utf8")).resolves.toBe("\n");
 
-    process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER = "3135";
+    process.env[githubIssueEnvKey] = "3135";
     const explicit = await realizeExecutionWorkspace({
       base: {
         baseCwd: repoRoot,
@@ -980,8 +981,8 @@ describe("realizeExecutionWorkspace", () => {
     });
     await expect(fs.readFile(path.join(explicit.cwd, ".paperclip-github-issue"), "utf8")).resolves.toBe("3135\n");
     } finally {
-      if (previousGithubIssue === undefined) delete process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER;
-      else process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER = previousGithubIssue;
+      if (previousGithubIssue === undefined) delete process.env[githubIssueEnvKey];
+      else process.env[githubIssueEnvKey] = previousGithubIssue;
     }
   });
 
