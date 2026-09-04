@@ -17,7 +17,7 @@ function mkWorktree() {
 const base = {
   runId: "r1",
   branch: "claude/HAS-222-x",
-  env: {},
+  env: { PAPERCLIP_GITHUB_ISSUE_NUMBER: "222" },
   issueIdentifier: "HAS-222",
   issueId: "uuid",
   repo: "Beyn-SOLIDUS/quantum",
@@ -27,23 +27,23 @@ const base = {
   log: vi.fn(async () => {}),
 };
 
-const savedAutonomous = process.env.PAPERCLIP_AUTONOMOUS_DELIVERY;
-const savedBotToken = process.env.PAPERCLIP_DELIVERY_BOT_TOKEN;
-const savedGithubIssue = process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER;
+const savedAutonomous = process.env["PAPERCLIP_AUTONOMOUS_DELIVERY"];
+const savedBotToken = process.env["PAPERCLIP_DELIVERY_BOT_TOKEN"];
+const savedGithubIssue = process.env["PAPERCLIP_GITHUB_ISSUE_NUMBER"];
 
 beforeEach(() => {
-  delete process.env.PAPERCLIP_AUTONOMOUS_DELIVERY;
-  delete process.env.PAPERCLIP_DELIVERY_BOT_TOKEN;
-  process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER = "222";
+  delete process.env["PAPERCLIP_AUTONOMOUS_DELIVERY"];
+  delete process.env["PAPERCLIP_DELIVERY_BOT_TOKEN"];
+  delete process.env["PAPERCLIP_GITHUB_ISSUE_NUMBER"];
 });
 
 afterEach(() => {
-  if (savedAutonomous === undefined) delete process.env.PAPERCLIP_AUTONOMOUS_DELIVERY;
-  else process.env.PAPERCLIP_AUTONOMOUS_DELIVERY = savedAutonomous;
-  if (savedBotToken === undefined) delete process.env.PAPERCLIP_DELIVERY_BOT_TOKEN;
-  else process.env.PAPERCLIP_DELIVERY_BOT_TOKEN = savedBotToken;
-  if (savedGithubIssue === undefined) delete process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER;
-  else process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER = savedGithubIssue;
+  if (savedAutonomous === undefined) delete process.env["PAPERCLIP_AUTONOMOUS_DELIVERY"];
+  else process.env["PAPERCLIP_AUTONOMOUS_DELIVERY"] = savedAutonomous;
+  if (savedBotToken === undefined) delete process.env["PAPERCLIP_DELIVERY_BOT_TOKEN"];
+  else process.env["PAPERCLIP_DELIVERY_BOT_TOKEN"] = savedBotToken;
+  if (savedGithubIssue === undefined) delete process.env["PAPERCLIP_GITHUB_ISSUE_NUMBER"];
+  else process.env["PAPERCLIP_GITHUB_ISSUE_NUMBER"] = savedGithubIssue;
   for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -92,7 +92,7 @@ describe("claude-local delivery hook", () => {
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     });
-    const result = await executeDeliveryHook({ ...base, worktreeCwd, env: { PAPERCLIP_AUTONOMOUS_DELIVERY: "1" }, runProc });
+    const result = await executeDeliveryHook({ ...base, worktreeCwd, env: { ...base.env, PAPERCLIP_AUTONOMOUS_DELIVERY: "1" }, runProc });
     expect(result.reason).toBe("delivery_blocked: missing bot token");
     expect(calls.some((call) => call[0] === "git" && call[1] === "push")).toBe(false);
     expect(calls.some((call) => call[0] === "gh")).toBe(false);
@@ -117,6 +117,7 @@ describe("claude-local delivery hook", () => {
       ...base,
       worktreeCwd,
       env: {
+        ...base.env,
         PAPERCLIP_AUTONOMOUS_DELIVERY: "1",
         PAPERCLIP_DELIVERY_BOT_TOKEN: "bot-token",
         PAPERCLIP_DELIVERY_SIGN_COMMITS: "1",

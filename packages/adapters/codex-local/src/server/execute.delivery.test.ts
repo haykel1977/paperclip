@@ -41,7 +41,7 @@ const QUANTUM_FALLBACK_BRANCH = "feat/agent-agent-1-ticket-has-222-r1";
 const base = {
   runId: "r1",
   branch: "codex/HAS-222-x",
-  env: {},
+  env: { PAPERCLIP_GITHUB_ISSUE_NUMBER: "222" },
   issueIdentifier: "HAS-222",
   issueId: "uuid",
   repo: "Beyn-SOLIDUS/quantum",
@@ -54,31 +54,31 @@ const base = {
 
 describe("executeDeliveryHook", () => {
 
-  const savedLane = process.env.PAPERCLIP_DELIVERY_LANE;
-  const savedAutonomous = process.env.PAPERCLIP_AUTONOMOUS_DELIVERY;
-  const savedBotToken = process.env.PAPERCLIP_DELIVERY_BOT_TOKEN;
-  const savedRemoteDelivery = process.env.PAPERCLIP_DELIVERY_REMOTE_ENABLED;
-  const savedGithubIssue = process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER;
+  const savedLane = process.env["PAPERCLIP_DELIVERY_LANE"];
+  const savedAutonomous = process.env["PAPERCLIP_AUTONOMOUS_DELIVERY"];
+  const savedBotToken = process.env["PAPERCLIP_DELIVERY_BOT_TOKEN"];
+  const savedRemoteDelivery = process.env["PAPERCLIP_DELIVERY_REMOTE_ENABLED"];
+  const savedGithubIssue = process.env["PAPERCLIP_GITHUB_ISSUE_NUMBER"];
 
   beforeEach(() => {
-    delete process.env.PAPERCLIP_DELIVERY_LANE;
-    delete process.env.PAPERCLIP_AUTONOMOUS_DELIVERY;
-    delete process.env.PAPERCLIP_DELIVERY_BOT_TOKEN;
-    delete process.env.PAPERCLIP_DELIVERY_REMOTE_ENABLED;
-    process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER = "222";
+    delete process.env["PAPERCLIP_DELIVERY_LANE"];
+    delete process.env["PAPERCLIP_AUTONOMOUS_DELIVERY"];
+    delete process.env["PAPERCLIP_DELIVERY_BOT_TOKEN"];
+    delete process.env["PAPERCLIP_DELIVERY_REMOTE_ENABLED"];
+    delete process.env["PAPERCLIP_GITHUB_ISSUE_NUMBER"];
   });
 
   afterEach(() => {
-    if (savedLane === undefined) delete process.env.PAPERCLIP_DELIVERY_LANE;
-    else process.env.PAPERCLIP_DELIVERY_LANE = savedLane;
-    if (savedAutonomous === undefined) delete process.env.PAPERCLIP_AUTONOMOUS_DELIVERY;
-    else process.env.PAPERCLIP_AUTONOMOUS_DELIVERY = savedAutonomous;
-    if (savedBotToken === undefined) delete process.env.PAPERCLIP_DELIVERY_BOT_TOKEN;
-    else process.env.PAPERCLIP_DELIVERY_BOT_TOKEN = savedBotToken;
-    if (savedRemoteDelivery === undefined) delete process.env.PAPERCLIP_DELIVERY_REMOTE_ENABLED;
-    else process.env.PAPERCLIP_DELIVERY_REMOTE_ENABLED = savedRemoteDelivery;
-    if (savedGithubIssue === undefined) delete process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER;
-    else process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER = savedGithubIssue;
+    if (savedLane === undefined) delete process.env["PAPERCLIP_DELIVERY_LANE"];
+    else process.env["PAPERCLIP_DELIVERY_LANE"] = savedLane;
+    if (savedAutonomous === undefined) delete process.env["PAPERCLIP_AUTONOMOUS_DELIVERY"];
+    else process.env["PAPERCLIP_AUTONOMOUS_DELIVERY"] = savedAutonomous;
+    if (savedBotToken === undefined) delete process.env["PAPERCLIP_DELIVERY_BOT_TOKEN"];
+    else process.env["PAPERCLIP_DELIVERY_BOT_TOKEN"] = savedBotToken;
+    if (savedRemoteDelivery === undefined) delete process.env["PAPERCLIP_DELIVERY_REMOTE_ENABLED"];
+    else process.env["PAPERCLIP_DELIVERY_REMOTE_ENABLED"] = savedRemoteDelivery;
+    if (savedGithubIssue === undefined) delete process.env["PAPERCLIP_GITHUB_ISSUE_NUMBER"];
+    else process.env["PAPERCLIP_GITHUB_ISSUE_NUMBER"] = savedGithubIssue;
     for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
@@ -179,6 +179,7 @@ describe("executeDeliveryHook", () => {
       ...base,
       worktreeCwd,
       env: {
+        ...base.env,
         PAPERCLIP_DELIVERY_BOT_TOKEN: "bot-token",
         GH_TOKEN: "personal-token",
         OPENAI_API_KEY: "openai-token",
@@ -231,7 +232,7 @@ describe("executeDeliveryHook", () => {
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     });
-    const result = await executeDeliveryHook({ ...base, worktreeCwd, env: { PAPERCLIP_AUTONOMOUS_DELIVERY: "1" }, runProc });
+    const result = await executeDeliveryHook({ ...base, worktreeCwd, env: { ...base.env, PAPERCLIP_AUTONOMOUS_DELIVERY: "1" }, runProc });
     expect(result.reason).toBe("delivery_blocked: missing bot token");
     expect(calls.some((call) => call[0] === "git" && call[1] === "push")).toBe(false);
     expect(calls.some((call) => call[0] === "gh")).toBe(false);
@@ -252,6 +253,7 @@ describe("executeDeliveryHook", () => {
       issueId: null,
       worktreeCwd,
       env: {
+        ...base.env,
         PAPERCLIP_AUTONOMOUS_DELIVERY: "1",
         PAPERCLIP_DELIVERY_BOT_TOKEN: "bot-token",
       },
@@ -290,6 +292,7 @@ describe("executeDeliveryHook", () => {
       ...base,
       worktreeCwd,
       env: {
+        ...base.env,
         PAPERCLIP_AUTONOMOUS_DELIVERY: "1",
         PAPERCLIP_DELIVERY_BOT_TOKEN: "bot-token",
         PAPERCLIP_DELIVERY_SIGN_COMMITS: "1",
@@ -379,6 +382,7 @@ describe("executeDeliveryHook", () => {
       ...base,
       worktreeCwd,
       env: {
+        ...base.env,
         PAPERCLIP_AUTONOMOUS_DELIVERY: "1",
         PAPERCLIP_DELIVERY_BOT_TOKEN: "bot-token",
         PAPERCLIP_DELIVERY_SIGN_COMMITS: "1",
@@ -407,7 +411,7 @@ describe("executeDeliveryHook", () => {
     const result = await executeDeliveryHook({
       ...base,
       worktreeCwd,
-      env: { PAPERCLIP_AUTONOMOUS_DELIVERY: "1", PAPERCLIP_DELIVERY_BOT_TOKEN: "bot-token" },
+      env: { ...base.env, PAPERCLIP_AUTONOMOUS_DELIVERY: "1", PAPERCLIP_DELIVERY_BOT_TOKEN: "bot-token" },
       runProc,
     });
 
@@ -432,6 +436,7 @@ describe("executeDeliveryHook", () => {
       ...base,
       worktreeCwd,
       env: {
+        ...base.env,
         PAPERCLIP_AUTONOMOUS_DELIVERY: "1",
         PAPERCLIP_DELIVERY_BOT_TOKEN: "bot-token",
         PAPERCLIP_DELIVERY_SIGN_COMMITS: "1",
@@ -460,6 +465,7 @@ describe("executeDeliveryHook", () => {
       ...base,
       worktreeCwd,
       env: {
+        ...base.env,
         PAPERCLIP_AUTONOMOUS_DELIVERY: "1",
         PAPERCLIP_DELIVERY_BOT_TOKEN: "bot-token",
         PAPERCLIP_DELIVERY_SIGN_COMMITS: "1",
@@ -635,7 +641,7 @@ describe("executeDeliveryHook", () => {
       if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/46\n", stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     });
-    await executeDeliveryHook({ ...base, worktreeCwd, env: { PAPERCLIP_DELIVERY_LANE: "dev-test" }, runProc });
+    await executeDeliveryHook({ ...base, worktreeCwd, env: { ...base.env, PAPERCLIP_DELIVERY_LANE: "dev-test" }, runProc });
     const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
     expect(createCall).toContain("agent-pr");
     expect(createCall).toContain("automated");
