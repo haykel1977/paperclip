@@ -6,6 +6,7 @@ import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { AdapterRuntimeServiceReport } from "@paperclipai/adapter-utils";
+import { asGithubIssueNumber, parseGithubIssueNumberFromText } from "@paperclipai/adapter-utils/delivery-hook";
 import type { Db } from "@paperclipai/db";
 import { executionWorkspaces, projectWorkspaces, workspaceRuntimeServices } from "@paperclipai/db";
 import {
@@ -51,6 +52,7 @@ export interface ExecutionWorkspaceIssueRef {
   id: string;
   identifier: string | null;
   title: string | null;
+  description?: string | null;
   workMode?: string | null;
 }
 
@@ -838,7 +840,21 @@ function buildWorkspaceCommandEnv(input: {
   env.PAPERCLIP_ISSUE_ID = input.issue?.id ?? "";
   env.PAPERCLIP_ISSUE_IDENTIFIER = input.issue?.identifier ?? "";
   env.PAPERCLIP_ISSUE_TITLE = input.issue?.title ?? "";
+  env.PAPERCLIP_ISSUE_DESCRIPTION = input.issue?.description ?? "";
   env.PAPERCLIP_ISSUE_WORK_MODE = input.issue?.workMode ?? "";
+  const existingGithubIssueNumber = asGithubIssueNumber(env.PAPERCLIP_GITHUB_ISSUE_NUMBER);
+  if (existingGithubIssueNumber != null) {
+    env.PAPERCLIP_GITHUB_ISSUE_NUMBER = String(existingGithubIssueNumber);
+  } else {
+    const recovered =
+      parseGithubIssueNumberFromText(input.issue?.title)
+      ?? parseGithubIssueNumberFromText(input.issue?.description);
+    if (recovered != null) {
+      env.PAPERCLIP_GITHUB_ISSUE_NUMBER = String(recovered);
+    } else {
+      delete env.PAPERCLIP_GITHUB_ISSUE_NUMBER;
+    }
+  }
   return env;
 }
 

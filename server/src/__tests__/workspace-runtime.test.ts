@@ -844,6 +844,156 @@ describe("realizeExecutionWorkspace", () => {
     await expect(fs.readFile(path.join(reused.cwd, ".paperclip-provision-created"), "utf8")).resolves.toBe("false\n");
   });
 
+  it("injects PAPERCLIP_GITHUB_ISSUE_NUMBER from title or description without inventing QUA-* ids", async () => {
+    const githubIssueEnvKey = "PAPERCLIP_GITHUB_ISSUE_NUMBER";
+    const descriptionEnvKey = "PAPERCLIP_ISSUE_DESCRIPTION";
+    const previousGithubIssue = process.env[githubIssueEnvKey];
+    const previousDescription = process.env[descriptionEnvKey];
+    delete process.env[githubIssueEnvKey];
+    process.env[descriptionEnvKey] = "stale Closes #9999 from a previous issue";
+    try {
+    const repoRoot = await createTempRepo();
+    await fs.mkdir(path.join(repoRoot, "scripts"), { recursive: true });
+    await fs.writeFile(
+      path.join(repoRoot, "scripts", "provision.sh"),
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "printf '%s\\n' \"${PAPERCLIP_GITHUB_ISSUE_NUMBER:-}\" > .paperclip-github-issue",
+        "printf '%s\\n' \"${PAPERCLIP_ISSUE_DESCRIPTION:-}\" > .paperclip-issue-description",
+      ].join("\n"),
+      "utf8",
+    );
+    await runGit(repoRoot, ["add", "scripts/provision.sh"]);
+    await runGit(repoRoot, ["commit", "-m", "Add github issue env provision script"]);
+
+    const fromTitle = await realizeExecutionWorkspace({
+      base: {
+        baseCwd: repoRoot,
+        source: "project_primary",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: null,
+        repoRef: "HEAD",
+      },
+      config: {
+        workspaceStrategy: {
+          type: "git_worktree",
+          branchTemplate: "{{issue.identifier}}-from-title",
+          provisionCommand: "bash ./scripts/provision.sh",
+        },
+      },
+      issue: {
+        id: "issue-title",
+        identifier: "QUA-21",
+        title: "fix(api): foo #1894",
+      },
+      agent: {
+        id: "agent-1",
+        name: "Codex Coder",
+        companyId: "company-1",
+      },
+    });
+    await expect(fs.readFile(path.join(fromTitle.cwd, ".paperclip-github-issue"), "utf8")).resolves.toBe("1894\n");
+    await expect(fs.readFile(path.join(fromTitle.cwd, ".paperclip-issue-description"), "utf8")).resolves.toBe("\n");
+
+    const fromDescription = await realizeExecutionWorkspace({
+      base: {
+        baseCwd: repoRoot,
+        source: "project_primary",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: null,
+        repoRef: "HEAD",
+      },
+      config: {
+        workspaceStrategy: {
+          type: "git_worktree",
+          branchTemplate: "{{issue.identifier}}-from-description",
+          provisionCommand: "bash ./scripts/provision.sh",
+        },
+      },
+      issue: {
+        id: "issue-description",
+        identifier: "QUA-22",
+        title: "no hash in title",
+        description: "Closes #2210",
+      },
+      agent: {
+        id: "agent-1",
+        name: "Codex Coder",
+        companyId: "company-1",
+      },
+    });
+    await expect(fs.readFile(path.join(fromDescription.cwd, ".paperclip-github-issue"), "utf8")).resolves.toBe("2210\n");
+    await expect(fs.readFile(path.join(fromDescription.cwd, ".paperclip-issue-description"), "utf8")).resolves.toBe("Closes #2210\n");
+
+    const identifierOnly = await realizeExecutionWorkspace({
+      base: {
+        baseCwd: repoRoot,
+        source: "project_primary",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: null,
+        repoRef: "HEAD",
+      },
+      config: {
+        workspaceStrategy: {
+          type: "git_worktree",
+          branchTemplate: "{{issue.identifier}}-identifier-only",
+          provisionCommand: "bash ./scripts/provision.sh",
+        },
+      },
+      issue: {
+        id: "issue-identifier-only",
+        identifier: "QUA-21",
+        title: "no recoverable github number",
+      },
+      agent: {
+        id: "agent-1",
+        name: "Codex Coder",
+        companyId: "company-1",
+      },
+    });
+    await expect(fs.readFile(path.join(identifierOnly.cwd, ".paperclip-github-issue"), "utf8")).resolves.toBe("\n");
+
+    process.env[githubIssueEnvKey] = "3135";
+    const explicit = await realizeExecutionWorkspace({
+      base: {
+        baseCwd: repoRoot,
+        source: "project_primary",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: null,
+        repoRef: "HEAD",
+      },
+      config: {
+        workspaceStrategy: {
+          type: "git_worktree",
+          branchTemplate: "{{issue.identifier}}-explicit",
+          provisionCommand: "bash ./scripts/provision.sh",
+        },
+      },
+      issue: {
+        id: "issue-explicit",
+        identifier: "QUA-23",
+        title: "fix(api): foo #1894",
+      },
+      agent: {
+        id: "agent-1",
+        name: "Codex Coder",
+        companyId: "company-1",
+      },
+    });
+    await expect(fs.readFile(path.join(explicit.cwd, ".paperclip-github-issue"), "utf8")).resolves.toBe("3135\n");
+    } finally {
+      if (previousGithubIssue === undefined) delete process.env[githubIssueEnvKey];
+      else process.env[githubIssueEnvKey] = previousGithubIssue;
+      if (previousDescription === undefined) delete process.env[descriptionEnvKey];
+      else process.env[descriptionEnvKey] = previousDescription;
+    }
+  });
+
   it("uses the latest repo-managed provision script when reusing an existing worktree", async () => {
     const repoRoot = await createTempRepo();
     await fs.mkdir(path.join(repoRoot, "scripts"), { recursive: true });

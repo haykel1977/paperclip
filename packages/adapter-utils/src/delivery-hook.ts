@@ -189,16 +189,48 @@ export function deriveQuantumMakerToken(
   return `Qwen3-${loose[1]}${(loose[2] ?? "").toUpperCase()}`;
 }
 
+const GITHUB_ISSUE_NUMBER_IN_TEXT_RE = /(?:\b(?:closes|fixes|resolves)\s+)?#(\d+)\b/gi;
+
+export function asGithubIssueNumber(raw: string | null | undefined): number | null {
+  const value = raw?.trim() ?? "";
+  if (!/^\d+$/.test(value)) return null;
+  const n = Number(value);
+  if (!Number.isSafeInteger(n) || n < 1) return null;
+  return n;
+}
+
+export function parseGithubIssueNumberFromText(text: string | null | undefined): number | null {
+  if (!text) return null;
+  for (const match of text.matchAll(GITHUB_ISSUE_NUMBER_IN_TEXT_RE)) {
+    const parsed = asGithubIssueNumber(match[1]);
+    if (parsed != null) return parsed;
+  }
+  return null;
+}
+
+function readIssueTextEnv(env: Record<string, string>, key: string): string | null {
+  return nonEmpty(env[key]) ?? nonEmpty(process.env[key]);
+}
+
 export function resolveGithubIssueNumber(input: {
   issueIdentifier?: string | null;
   env?: Record<string, string>;
 }): number | null {
   const env = input.env ?? {};
-  const fromEnv = nonEmpty(env.PAPERCLIP_GITHUB_ISSUE_NUMBER) ?? nonEmpty(process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER);
-  if (fromEnv && /^\d+$/.test(fromEnv)) return Number(fromEnv);
+  const fromEnv = asGithubIssueNumber(readIssueTextEnv(env, "PAPERCLIP_GITHUB_ISSUE_NUMBER"));
+  if (fromEnv != null) return fromEnv;
   const ident = input.issueIdentifier?.trim() ?? "";
-  if (/^\d+$/.test(ident)) return Number(ident);
-  if (/^#\d+$/.test(ident)) return Number(ident.slice(1));
+  const fromIdent = ident.startsWith("#") ? asGithubIssueNumber(ident.slice(1)) : asGithubIssueNumber(ident);
+  if (fromIdent != null) return fromIdent;
+
+  const fromTitle = parseGithubIssueNumberFromText(readIssueTextEnv(env, "PAPERCLIP_ISSUE_TITLE"));
+  if (fromTitle != null) return fromTitle;
+
+  const fromDescription = parseGithubIssueNumberFromText(
+    readIssueTextEnv(env, "PAPERCLIP_ISSUE_DESCRIPTION") ?? readIssueTextEnv(env, "PAPERCLIP_ISSUE_BODY"),
+  );
+  if (fromDescription != null) return fromDescription;
+
   return null;
 }
 
@@ -1651,13 +1683,31 @@ export async function executeConfiguredDeliveryHook(
     return null;
   }
 
+  const issueIdentifier = readContextString(input.context, "identifier") ?? readContextString(input.context, "issueIdentifier");
+  const deliveryEnv = { ...input.env };
+  if (!nonEmpty(deliveryEnv.PAPERCLIP_ISSUE_TITLE)) {
+    const title = readContextString(input.context, "title");
+    if (title) deliveryEnv.PAPERCLIP_ISSUE_TITLE = title;
+  }
+  if (!nonEmpty(deliveryEnv.PAPERCLIP_ISSUE_DESCRIPTION) && !nonEmpty(deliveryEnv.PAPERCLIP_ISSUE_BODY)) {
+    const description = readContextString(input.context, "description");
+    if (description) deliveryEnv.PAPERCLIP_ISSUE_DESCRIPTION = description;
+  }
+  if (!nonEmpty(deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER)) {
+    const recovered = resolveGithubIssueNumber({
+      issueIdentifier,
+      env: deliveryEnv,
+    });
+    if (recovered != null) deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER = String(recovered);
+  }
+
   // NOTE: createDeliveryLogRedactor is called inside executeDeliveryHook — do NOT wrap log here.
   const delivery = await executeDeliveryHook({
     runId: input.runId,
     worktreeCwd: input.worktreeCwd,
     branch,
-    env: input.env,
-    issueIdentifier: readContextString(input.context, "identifier") ?? readContextString(input.context, "issueIdentifier"),
+    env: deliveryEnv,
+    issueIdentifier,
     issueId: readContextString(input.context, "issueId") ?? readContextString(input.context, "id"),
     repo: configuredRepo,
     baseBranch,

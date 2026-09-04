@@ -67,9 +67,31 @@ const quantumBase = {
   log: vi.fn(async () => {}),
 };
 
+const ISSUE_ENV_KEYS = [
+  "PAPERCLIP_GITHUB_ISSUE_NUMBER",
+  "PAPERCLIP_ISSUE_TITLE",
+  "PAPERCLIP_ISSUE_DESCRIPTION",
+  "PAPERCLIP_ISSUE_BODY",
+] as const;
+const savedIssueEnv = new Map<string, string | undefined>();
+
 afterEach(() => {
   for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const key of ISSUE_ENV_KEYS) {
+    if (!savedIssueEnv.has(key)) continue;
+    const previous = savedIssueEnv.get(key);
+    if (previous === undefined) delete process.env[key];
+    else process.env[key] = previous;
+    savedIssueEnv.delete(key);
+  }
 });
+
+function isolateIssueEnv() {
+  for (const key of ISSUE_ENV_KEYS) {
+    if (!savedIssueEnv.has(key)) savedIssueEnv.set(key, process.env[key]);
+    delete process.env[key];
+  }
+}
 
 describe("Quantum delivery helpers", () => {
   it("detects Quantum by repo or convention env", () => {
@@ -101,10 +123,81 @@ describe("Quantum delivery helpers", () => {
   });
 
   it("resolves Closes numbers without inventing them from QUA-* ids", () => {
+    isolateIssueEnv();
     expect(resolveGithubIssueNumber({ issueIdentifier: "QUA-99", env: {} })).toBeNull();
+    expect(resolveGithubIssueNumber({ issueIdentifier: "CBS-21", env: {} })).toBeNull();
     expect(resolveGithubIssueNumber({ issueIdentifier: "QUA-99", env: { PAPERCLIP_GITHUB_ISSUE_NUMBER: "3135" } })).toBe(3135);
     expect(resolveGithubIssueNumber({ issueIdentifier: "222", env: {} })).toBe(222);
     expect(resolveGithubIssueNumber({ issueIdentifier: "#88", env: {} })).toBe(88);
+  });
+
+  it("parses a GitHub number from PAPERCLIP_ISSUE_TITLE / Closes / Fixes / Resolves", () => {
+    isolateIssueEnv();
+    expect(resolveGithubIssueNumber({
+      issueIdentifier: "QUA-21",
+      env: { PAPERCLIP_ISSUE_TITLE: "fix(api): foo #1894" },
+    })).toBe(1894);
+    expect(resolveGithubIssueNumber({
+      issueIdentifier: "QUA-21",
+      env: { PAPERCLIP_ISSUE_TITLE: "Closes #1894" },
+    })).toBe(1894);
+    expect(resolveGithubIssueNumber({
+      issueIdentifier: "QUA-21",
+      env: { PAPERCLIP_ISSUE_TITLE: "Fixes #42 after review" },
+    })).toBe(42);
+    expect(resolveGithubIssueNumber({
+      issueIdentifier: "QUA-21",
+      env: { PAPERCLIP_ISSUE_TITLE: "Resolves #7" },
+    })).toBe(7);
+    expect(resolveGithubIssueNumber({
+      issueIdentifier: "QUA-21",
+      env: { PAPERCLIP_ISSUE_TITLE: "no github ref here" },
+    })).toBeNull();
+    expect(resolveGithubIssueNumber({
+      issueIdentifier: "QUA-21",
+      env: { PAPERCLIP_ISSUE_TITLE: "see #0 then Closes #1894" },
+    })).toBe(1894);
+  });
+
+  it("rejects #0 / 0 and non-safe integers instead of emitting Closes #0", () => {
+    isolateIssueEnv();
+    expect(resolveGithubIssueNumber({ issueIdentifier: "0", env: {} })).toBeNull();
+    expect(resolveGithubIssueNumber({ issueIdentifier: "#0", env: {} })).toBeNull();
+    expect(resolveGithubIssueNumber({ issueIdentifier: "QUA-21", env: { PAPERCLIP_GITHUB_ISSUE_NUMBER: "0" } })).toBeNull();
+    expect(resolveGithubIssueNumber({
+      issueIdentifier: "QUA-21",
+      env: { PAPERCLIP_ISSUE_TITLE: "broken ref #0" },
+    })).toBeNull();
+    expect(resolveGithubIssueNumber({
+      issueIdentifier: "QUA-21",
+      env: { PAPERCLIP_GITHUB_ISSUE_NUMBER: "9007199254740992" },
+    })).toBeNull();
+  });
+
+  it("falls back to description/body env and never overwrites an explicit GitHub number", () => {
+    isolateIssueEnv();
+    expect(resolveGithubIssueNumber({
+      issueIdentifier: "QUA-21",
+      env: { PAPERCLIP_ISSUE_DESCRIPTION: "See Closes #2210 for the parent." },
+    })).toBe(2210);
+    expect(resolveGithubIssueNumber({
+      issueIdentifier: "QUA-21",
+      env: { PAPERCLIP_ISSUE_BODY: "Fixes #9" },
+    })).toBe(9);
+    expect(resolveGithubIssueNumber({
+      issueIdentifier: "QUA-21",
+      env: {
+        PAPERCLIP_GITHUB_ISSUE_NUMBER: "3135",
+        PAPERCLIP_ISSUE_TITLE: "fix(api): foo #1894",
+      },
+    })).toBe(3135);
+    expect(resolveGithubIssueNumber({
+      issueIdentifier: "QUA-21",
+      env: {
+        PAPERCLIP_ISSUE_TITLE: "fix(api): foo #1894",
+        PAPERCLIP_ISSUE_DESCRIPTION: "Closes #9",
+      },
+    })).toBe(1894);
   });
 
   it("classifies docs vs non-doc and never titles docs: when code changed", () => {
@@ -252,6 +345,7 @@ describe("executeDeliveryHook Quantum fail-closed contract", () => {
   });
 
   it("fail-closes when only a Paperclip QUA-* id exists (no GitHub number)", async () => {
+    isolateIssueEnv();
     const worktreeCwd = mkWorktree();
     const result = await executeDeliveryHook({
       ...quantumBase,
@@ -260,6 +354,33 @@ describe("executeDeliveryHook Quantum fail-closed contract", () => {
       runProc: mkRunProc({ "git status --porcelain": { exitCode: 0, stdout: " M src/hook.ts\n" } }),
     });
     expect(result.reason).toBe("delivery_blocked: missing_github_issue_number_for_closes");
+  });
+
+  it("recovers Closes #n from PAPERCLIP_ISSUE_TITLE instead of inventing a QUA-* number", async () => {
+    isolateIssueEnv();
+    const worktreeCwd = mkWorktree();
+    const calls: string[][] = [];
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M src/hook.ts\n", stderr: "" };
+      if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
+      if (key === "gh label list") return { exitCode: 0, stdout: "[]", stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/2\n", stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const result = await executeDeliveryHook({
+      ...quantumBase,
+      env: { PAPERCLIP_ISSUE_TITLE: "fix(api): foo #1894" },
+      worktreeCwd,
+      runProc,
+    });
+    expect(result.reason).toBe("created");
+    const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
+    const body = createCall?.[createCall.indexOf("--body") + 1] ?? "";
+    expect(body).toMatch(/^Closes #1894$/m);
+    expect(body).not.toMatch(/Closes #21\b/);
   });
 
   it("blocks a docs: title when non-doc files are in the diff", async () => {
