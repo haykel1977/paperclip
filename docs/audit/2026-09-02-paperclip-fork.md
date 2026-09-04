@@ -2,10 +2,10 @@
 
 - **Date:** 2026-09-02
 - **Dépôt audité:** `https://github.com/haykel1977/paperclip`
-- **Branche / SHA:** `main` @ `fef2f8f86b05ab32daa37bd86c0c9f7cec57af3a`
-- **Agent (auteur de cet audit):** Cursor Cloud Agent `bc-cf6c0ba8-7c65-4c7c-b060-d6f934c09a31` — [run](https://cursor.com/agents/bc-cf6c0ba8-7c65-4c7c-b060-d6f934c09a31)
+- **Branche / SHA:** snapshot d’audit = `main` @ `fef2f8f86b05ab32daa37bd86c0c9f7cec57af3a` (la branche de PR a ensuite été rebasee sur un `main` plus récent incluant `#98` / `#100` ; ce document n’est pas une relecture de ces commits)
+- **Agent (auteur de cet audit):** Cursor Cloud Agent `bc-cf6c0ba8-7c65-4c7c-b060-d6f934c09a31`
 - **Modèle:** Cursor Grok 4.6 (`cursor-grok-4.6-high-fast`)
-- **Méthode:** lecture du code, des schémas, des tests et des docs **dans ce checkout**. Aucune connexion à `paperclip.kantum.dev`. Aucune feature implémentée. Aucun correctif appliqué.
+- **Méthode:** lecture du code, des schémas, des tests et des docs **dans ce checkout**. Aucune connexion à `paperclip.kantum.dev`. Aucune feature implémentée. Aucun correctif runtime appliqué.
 
 ## 0. Périmètre et règles de vérité
 
@@ -15,7 +15,7 @@ Interdits respectés:
 
 - pas d’implémentation de features
 - pas d’ADR inventé
-- pas de `GO_TOTAL` inventé (chaîne absente de ce dépôt)
+- pas de `GO_TOTAL` inventé comme décision ou livrable ; la chaîne est absente du code applicatif (`server/`, `packages/`, `ui/`, `cli/`) et n’apparaît ici que comme mention d’interdiction
 - si un secret réel avait été trouvé : fichier + ligne + *kind* seulement (aucun n’a été trouvé)
 
 Convention: chaque affirmation factuelle cite un chemin. Les citations `fichier:ligne` sont relatives à la racine du dépôt.
@@ -308,7 +308,7 @@ Aucun `.pem` live. Exemples:
 
 Commit de scrub: `96e1701c`. CI gitleaks: `.github/workflows/secret-scan.yml`.
 
-Scanner PR `.github/scripts/check-pr-security.mjs:8`: **exit toujours 0** (« never block the PR visibly »).
+Scanner PR `.github/scripts/check-pr-security.mjs`: le commentaire d’en-tête (`:8`) dit que les *flags* sécurité ne bloquent pas visiblement la PR. En pratique `main()` peut quand même `process.exit(1)` si un flag est détecté et que la création d’advisory échoue en 403 (`:355-360`), ou si `main()` throw (`:392`). Les findings sécurité restent donc **non-bloquants** seulement quand l’infra advisory fonctionne.
 
 ### 4.2 Auth
 
@@ -343,7 +343,7 @@ Logs: `Authorization` redacté (`server/src/middleware/logger.ts:32`); redaction
 
 - `adapterConfig.env.OPENAI_API_KEY` (plain ou secret_ref) est résolu (`server/src/services/secrets.ts`) puis **écrase** `process.env` pour OpenCode (`packages/adapters/opencode-local/src/server/execute.ts:367-371`)
 - Empty override traité comme manquant (`server/src/__tests__/opencode-local-adapter-environment.test.ts`)
-- Grep `Bifrost`, `x-bf-vk`, `virtualKey`: **zéro match**
+- Grep `Bifrost`, `x-bf-vk`, `virtualKey` dans le code applicatif (`server/`, `packages/`, `ui/`, `cli/`) : **aucun match** (hors mentions de cet audit)
 
 L’erreur live `x-bf-vk` (clé non-VK qui masque une virtual key conteneur) est **cohérente** avec l’ordre de merge, mais **Bifrost n’existe pas dans ce code**. Reste **observé live**.
 
@@ -377,7 +377,7 @@ Majorité des lanes (dont `pr.yml:21`, `docker.yml:23-47`) : **tags flottants** 
 
 ## 6. `AGENT_PR_WRAPPER_REQUIRED` et wrappers PR
 
-Grep repo-wide: **`AGENT_PR_WRAPPER_REQUIRED` absent**.
+Grep dans le code applicatif et les workflows (`server/`, `packages/`, `ui/`, `cli/`, `.github/`) : **`AGENT_PR_WRAPPER_REQUIRED` n’est ni lu ni implémenté**. Les seules occurrences dans ce tree après cet audit sont ce document.
 
 Ce qui existe à la place:
 
@@ -448,9 +448,9 @@ Paperclip V1 reste un **control plane multi-agents générique**, pas une usine 
 | PATCH `executionWorkspacePreference=isolated_workspace` / `workspaceStrategy git_worktree` n’a pas persisté | **Mécanisme in-repo:** flag `enableIsolatedWorkspaces` défaut false → champs **silencieusement droppés**; heartbeat ignore settings/policy. | `instance-settings.ts:58`; `issues.ts:4962-4967`; `heartbeat.ts:7927-7972` |
 | `DELETE /api/agents/{id}` souvent 500 après terminate; l’agent quitte la liste | **Mécanisme in-repo:** liste cache `terminated`; `remove()` rate des FK (`cost_events`, etc.). 500 live **non reproduits ici**. | `agents.ts:448-452`, `551-581`; `cost_events.ts:14` |
 | Reject hire termine des idle **du même nom** | **Pas dans ce code.** Reject = `terminate(payload.agentId)` seulement. Confusion plausible: le pending (même nom / suffixe) passe terminated et sort de la liste. | `approvals.ts:179-184` |
-| `adapterConfig.env.OPENAI_API_KEY` override la VK conteneur → `x-bf-vk` | **Override env: oui.** **Bifrost / `x-bf-vk`: absent de ce repo.** | `opencode-local/.../execute.ts:367-371`; grep vide |
+| `adapterConfig.env.OPENAI_API_KEY` override la VK conteneur → `x-bf-vk` | **Override env: oui.** **Bifrost / `x-bf-vk`: absents du code applicatif.** | `opencode-local/.../execute.ts:367-371` |
 | Checkout exige `agentId` + `expectedStatuses` | **Oui.** | `packages/shared/src/validators/issue.ts:460-463` |
-| `AGENT_PR_WRAPPER_REQUIRED` | **Absent** de ce dépôt. | grep vide |
+| `AGENT_PR_WRAPPER_REQUIRED` | **Non implémenté** (pas de lecture env dans le runtime). | grep applicatif vide ; voir §6 |
 
 ---
 
@@ -480,7 +480,7 @@ Séparation obligatoire: **dans ce repo** vs **seulement observé live**.
 
 7. **Actions GitHub majoritairement non pinées SHA.** `.github/workflows/pr.yml:21`; `.github/workflows/docker.yml:23-47`.
 
-8. **Scanner secrets PR non bloquant.** `.github/scripts/check-pr-security.mjs:8`.
+8. **Scanner secrets PR non bloquant pour les flags** (commentaire `:8`), sauf échec infra advisory (exit 1, `:360`). `.github/scripts/check-pr-security.mjs`.
 
 9. **`local_trusted` = board implicite.** `server/src/middleware/auth.ts:25-34`. Dangereux si exposé hors loopback.
 
@@ -492,7 +492,7 @@ Séparation obligatoire: **dans ce repo** vs **seulement observé live**.
 - Company « Core Banking Factory », agents `opencode_local`, cwd unique, `mode=shared_workspace` **sur cette instance**
 - DELETE 500 **constaté** sur cet hôte (le code *peut* le produire; pas de trace live dans cet audit)
 - Reject hire ayant **effectivement** terminé d’autres idle same-name (code ne le fait pas; si vu live: autre cause ou méprise UI)
-- Erreurs `x-bf-vk` / Bifrost (zéro code Bifrost ici)
+- Erreurs `x-bf-vk` / Bifrost (aucun code Bifrost dans `server/` / `packages/` / `ui/` / `cli/`)
 - Flag hôte `AGENT_PR_WRAPPER_REQUIRED`
 
 **Cet audit ne change rien au runtime Kantum.**
@@ -514,7 +514,7 @@ Séparation obligatoire: **dans ce repo** vs **seulement observé live**.
 ## 12. Ce qui n’a pas été fait
 
 - Pas de déploiement, pas de PATCH live, pas de prétention « Kantum fixed »
-- Pas d’ADR, pas de `GO_TOTAL`
+- Pas d’ADR rédigé, pas de livrable `GO_TOTAL`
 - Pas de `pnpm test` / typecheck / build (livrable = markdown d’audit; aucun runtime produit n’a changé)
 - Pas d’accès navigateur à `paperclip.kantum.dev`
 - Instance settings live (`enableIsolatedWorkspaces`) inconnues
