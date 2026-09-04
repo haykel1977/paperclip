@@ -106,7 +106,7 @@ describe("opencode local execution: workspace location", () => {
           cwd: worktree,
           source: "task_session",
           mode: "isolated_workspace",
-          branch: "QUA-1-task",
+          branchName: "QUA-1-task",
           repoUrl: "https://x-access-token:secret@github.com/acme/quantum.git",
         },
       },
