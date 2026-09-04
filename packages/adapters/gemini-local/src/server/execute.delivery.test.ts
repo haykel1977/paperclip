@@ -35,7 +35,7 @@ const savedGithubIssue = process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER;
 beforeEach(() => {
   delete process.env.PAPERCLIP_AUTONOMOUS_DELIVERY;
   delete process.env.PAPERCLIP_DELIVERY_BOT_TOKEN;
-  process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER = "222";
+  delete process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER;
 });
 
 afterEach(() => {

@@ -1717,16 +1717,23 @@ export async function executeConfiguredDeliveryHook(
 
   const issueIdentifier = readContextString(input.context, "identifier") ?? readContextString(input.context, "issueIdentifier");
   const deliveryEnv = applyCurrentIssueTextEnv(input.env, input.context);
-  const explicitGithubIssueNumber = asGithubIssueNumber(deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER);
-  if (explicitGithubIssueNumber != null) {
-    deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER = String(explicitGithubIssueNumber);
+  const textEnv = { ...deliveryEnv };
+  delete textEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER;
+  const recoveredFromCurrentText = resolveGithubIssueNumber({
+    issueIdentifier,
+    env: textEnv,
+  });
+  if (recoveredFromCurrentText != null) {
+    deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER = String(recoveredFromCurrentText);
   } else {
-    const recovered = resolveGithubIssueNumber({
-      issueIdentifier,
-      env: deliveryEnv,
-    });
-    if (recovered != null) deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER = String(recovered);
-    else delete deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER;
+    const envNumber = asGithubIssueNumber(deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER);
+    const processNumber = asGithubIssueNumber(process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER);
+    // Keep an explicit run-env number only when it is not a leftover process.env copy.
+    if (envNumber != null && envNumber !== processNumber) {
+      deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER = String(envNumber);
+    } else {
+      delete deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER;
+    }
   }
 
   // NOTE: createDeliveryLogRedactor is called inside executeDeliveryHook — do NOT wrap log here.

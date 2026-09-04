@@ -65,7 +65,7 @@ describe("executeDeliveryHook", () => {
     delete process.env.PAPERCLIP_AUTONOMOUS_DELIVERY;
     delete process.env.PAPERCLIP_DELIVERY_BOT_TOKEN;
     delete process.env.PAPERCLIP_DELIVERY_REMOTE_ENABLED;
-    process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER = "222";
+    delete process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER;
   });
 
   afterEach(() => {

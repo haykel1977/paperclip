@@ -177,15 +177,15 @@ describe("Quantum delivery helpers", () => {
 
   it("does not recover a leftover process.env title/description from a previous issue", () => {
     isolateIssueEnv();
-    process.env.PAPERCLIP_ISSUE_TITLE = "stale leftover Closes #9999";
-    process.env.PAPERCLIP_ISSUE_DESCRIPTION = "Fixes #8888";
-    process.env.PAPERCLIP_ISSUE_BODY = "Resolves #7777";
+    process.env["PAPERCLIP_ISSUE_TITLE"] = "stale leftover Closes #9999";
+    process.env["PAPERCLIP_ISSUE_DESCRIPTION"] = "Fixes #8888";
+    process.env["PAPERCLIP_ISSUE_BODY"] = "Resolves #7777";
     expect(resolveGithubIssueNumber({ issueIdentifier: "QUA-21", env: {} })).toBeNull();
     expect(resolveGithubIssueNumber({
       issueIdentifier: "QUA-21",
       env: { PAPERCLIP_ISSUE_TITLE: "fix(api): foo #1894" },
     })).toBe(1894);
-    process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER = "9999";
+    process.env["PAPERCLIP_GITHUB_ISSUE_NUMBER"] = "9999";
     expect(resolveGithubIssueNumber({ issueIdentifier: "QUA-21", env: {} })).toBeNull();
     expect(resolveGithubIssueNumber({
       issueIdentifier: "QUA-21",
@@ -404,7 +404,7 @@ describe("executeDeliveryHook Quantum fail-closed contract", () => {
 
   it("uses the current issue title instead of a leftover env Closes number", async () => {
     isolateIssueEnv();
-    process.env.PAPERCLIP_ISSUE_TITLE = "stale leftover Closes #9999";
+    process.env["PAPERCLIP_ISSUE_TITLE"] = "stale leftover Closes #9999";
     const worktreeCwd = mkWorktree();
     const calls: string[][] = [];
     const runProc = vi.fn(async (cmd: string, args: string[]) => {
@@ -444,6 +444,69 @@ describe("executeDeliveryHook Quantum fail-closed contract", () => {
       worktreeCwd,
       branch: "feat/agent-agent-1-ticket-qua-99-delivery",
       env: { PAPERCLIP_ISSUE_TITLE: "stale leftover Closes #9999" },
+      config: { deliveryRepo: "Beyn-SOLIDUS/quantum", deliveryBaseBranch: "main" },
+      context: {
+        identifier: "QUA-99",
+        issueId: "issue-uuid",
+        paperclipIssue: {
+          id: "issue-uuid",
+          identifier: "QUA-99",
+          title: "fix(api): foo #1894",
+        },
+      },
+      executionTargetIsRemote: false,
+      exitCode: 0,
+      runProc,
+    });
+    expect(recovered?.reason).toBe("created");
+    const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
+    const body = createCall?.[createCall.indexOf("--body") + 1] ?? "";
+    expect(body).toMatch(/^Closes #1894$/m);
+    expect(body).not.toMatch(/Closes #9999\b/);
+  });
+
+  it("does not close a leftover process.env GitHub number copied into the run env", async () => {
+    isolateIssueEnv();
+    process.env["PAPERCLIP_GITHUB_ISSUE_NUMBER"] = "9999";
+    const worktreeCwd = mkWorktree();
+    const calls: string[][] = [];
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
+      if (key === "git status --porcelain") return { exitCode: 0, stdout: " M src/hook.ts\n", stderr: "" };
+      if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
+      if (key === "gh label list") return { exitCode: 0, stdout: "[]", stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/4\n", stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const leftoverCopied = await executeConfiguredDeliveryHook({
+      ...quantumBase,
+      worktreeCwd,
+      branch: "feat/agent-agent-1-ticket-qua-99-delivery",
+      env: { PAPERCLIP_GITHUB_ISSUE_NUMBER: "9999" },
+      config: { deliveryRepo: "Beyn-SOLIDUS/quantum", deliveryBaseBranch: "main" },
+      context: {
+        identifier: "QUA-99",
+        issueId: "issue-uuid",
+        paperclipIssue: {
+          id: "issue-uuid",
+          identifier: "QUA-99",
+          title: "current issue with no github number",
+          description: "",
+        },
+      },
+      executionTargetIsRemote: false,
+      exitCode: 0,
+      runProc,
+    });
+    expect(leftoverCopied?.reason).toBe("delivery_blocked: missing_github_issue_number_for_closes");
+
+    const recovered = await executeConfiguredDeliveryHook({
+      ...quantumBase,
+      worktreeCwd,
+      branch: "feat/agent-agent-1-ticket-qua-99-delivery",
+      env: { PAPERCLIP_GITHUB_ISSUE_NUMBER: "9999" },
       config: { deliveryRepo: "Beyn-SOLIDUS/quantum", deliveryBaseBranch: "main" },
       context: {
         identifier: "QUA-99",
