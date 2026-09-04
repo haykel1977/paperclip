@@ -1,3 +1,4 @@
+import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -127,6 +128,190 @@ function buildFallbackDeliveryBranch(input: {
 
 function buildCanonicalIssueDeliveryBranch(issueId: string): string {
   return sanitizeDeliveryBranchName(`paperclip/${issueId}-delivery`);
+}
+
+const QUANTUM_DELIVERY_REPO = "beyn-solidus/quantum";
+const QUANTUM_MAKER_CI_RE = /Qwen3-[0-9]+[A-Z]*/;
+const QUANTUM_ADR_GOV_007_BRANCH_RE =
+  /^(feat\/agent-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-ticket-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-[A-Za-z0-9._-]+|fix\/paperclip-[A-Za-z0-9._/-]+|pr-learning\/.+)$/;
+const QUANTUM_MAX_NON_DOC_FILES = 3;
+const QUANTUM_DOC_EXT_RE = /\.(md|yaml|yml|txt|json)$/i;
+const QUANTUM_PR_WRAPPER_REL = path.join("scripts", "agent-pr-create.sh");
+
+export function isQuantumDeliveryTarget(repo: string, env: Record<string, string> = {}): boolean {
+  const convention = (env.PAPERCLIP_DELIVERY_BRANCH_CONVENTION ?? process.env.PAPERCLIP_DELIVERY_BRANCH_CONVENTION ?? "")
+    .trim()
+    .toLowerCase();
+  if (convention === "quantum") return true;
+  return repo.trim().toLowerCase() === QUANTUM_DELIVERY_REPO;
+}
+
+export function slugifyDeliveryToken(value: string | null | undefined, fallback = "unknown"): string {
+  const slug = (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32);
+  return slug || fallback;
+}
+
+export function isAdrGov007CompliantBranch(branch: string): boolean {
+  return QUANTUM_ADR_GOV_007_BRANCH_RE.test(branch.trim());
+}
+
+export function buildQuantumAgentBranch(input: {
+  agentId?: string | null;
+  issueIdentifier?: string | null;
+  issueId?: string | null;
+  shortSlug?: string | null;
+}): string {
+  const agentSlug = slugifyDeliveryToken(input.agentId, "paperclip");
+  const issueSlug = slugifyDeliveryToken(input.issueIdentifier ?? input.issueId, "ticket");
+  const shortSlug = slugifyDeliveryToken(input.shortSlug, "delivery");
+  return sanitizeDeliveryBranchName(`feat/agent-${agentSlug}-ticket-${issueSlug}-${shortSlug}`);
+}
+
+export function deriveQuantumMakerToken(
+  model: string | null | undefined,
+  env: Record<string, string> = {},
+): string | null {
+  const raw = nonEmpty(model)
+    ?? nonEmpty(env.PAPERCLIP_DELIVERY_MAKER_MODEL)
+    ?? nonEmpty(env.PAPERCLIP_MODEL)
+    ?? nonEmpty(process.env.PAPERCLIP_DELIVERY_MAKER_MODEL)
+    ?? nonEmpty(process.env.PAPERCLIP_MODEL);
+  if (!raw) return null;
+  const exact = raw.match(QUANTUM_MAKER_CI_RE);
+  if (exact) return exact[0];
+  const loose = raw.match(/qwen3(?:\.\d+)?[-_]?[a-z]*[-_]?(\d+)\s*([a-z]*)/i);
+  if (!loose) return null;
+  return `Qwen3-${loose[1]}${(loose[2] ?? "").toUpperCase()}`;
+}
+
+export function resolveGithubIssueNumber(input: {
+  issueIdentifier?: string | null;
+  env?: Record<string, string>;
+}): number | null {
+  const env = input.env ?? {};
+  const fromEnv = nonEmpty(env.PAPERCLIP_GITHUB_ISSUE_NUMBER) ?? nonEmpty(process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER);
+  if (fromEnv && /^\d+$/.test(fromEnv)) return Number(fromEnv);
+  const ident = input.issueIdentifier?.trim() ?? "";
+  if (/^\d+$/.test(ident)) return Number(ident);
+  if (/^#\d+$/.test(ident)) return Number(ident.slice(1));
+  return null;
+}
+
+export function isDocDeliveryPath(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, "/").replace(/^\.\//, "");
+  if (normalized === "docs" || normalized.startsWith("docs/")) return true;
+  return QUANTUM_DOC_EXT_RE.test(normalized);
+}
+
+export function isQuantumJunkPath(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, "/").replace(/^\.\//, "");
+  const base = normalized.split("/").pop() ?? normalized;
+  const root = !normalized.includes("/");
+  if (root && /_status\.txt$/i.test(base)) return true;
+  if (base.toLowerCase() === "pr_body.md") return true;
+  if (base === "FINAL_STATUS.md") return true;
+  if (normalized.startsWith(".agents/memory/")) return true;
+  if (/(^|\/)theater(\/|$)/i.test(normalized) || /theater/i.test(base)) return true;
+  if (root && /^(STATUS|PROGRESS|AGENT_STATUS|RUN_STATUS)\.(md|txt)$/i.test(base)) return true;
+  return false;
+}
+
+function uniqueDeliveryPaths(paths: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const raw of paths) {
+    const normalized = raw.replace(/\\/g, "/").replace(/^\.\//, "").trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
+}
+
+export function parseChangedPathsFromPorcelain(statusStdout: string): string[] {
+  const paths: string[] = [];
+  for (const line of statusStdout.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    if (/^R/i.test(line.trim())) {
+      const rename = line.match(/^.?. (.+?) -> (.+)$/);
+      if (rename) {
+        paths.push(rename[2].trim());
+        continue;
+      }
+    }
+    const rest = line.slice(3).trim();
+    if (rest) paths.push(rest);
+  }
+  return uniqueDeliveryPaths(paths);
+}
+
+function parseDiffNameOnly(stdout: string): string[] {
+  return uniqueDeliveryPaths(stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean));
+}
+
+export function classifyDeliveryTitleKind(changedPaths: string[]): "feat" | "fix" | "docs" | "chore" {
+  const nonDoc = changedPaths.filter((filePath) => !isDocDeliveryPath(filePath));
+  if (changedPaths.length === 0) return "chore";
+  if (nonDoc.length === 0) return "docs";
+  if (nonDoc.every((filePath) => /(^|\/)(\.github|scripts|ops)(\/|$)/i.test(filePath))) return "chore";
+  if (nonDoc.some((filePath) => /(^|\/)fix(es)?(\/|$)/i.test(filePath))) return "fix";
+  return "feat";
+}
+
+function summarizeChangedPaths(changedPaths: string[]): string {
+  if (changedPaths.length === 0) return "delivery";
+  if (changedPaths.length === 1) {
+    const base = changedPaths[0]!.replace(/\\/g, "/").split("/").pop();
+    return base || "delivery";
+  }
+  return `${changedPaths.length} paths`;
+}
+
+export function deriveQuantumDeliveryTitle(input: {
+  issueIdentifier: string | null;
+  changedPaths: string[];
+  makerToken?: string | null;
+}): string {
+  const issue = input.issueIdentifier?.trim() || "FACTORY";
+  const kind = classifyDeliveryTitleKind(input.changedPaths);
+  const summary = summarizeChangedPaths(input.changedPaths);
+  const maker = input.makerToken ? ` ${input.makerToken}` : "";
+  return `${kind}: ${issue} ${summary}${maker}`.replace(/\s+/g, " ").trim();
+}
+
+async function collectDeliveryChangedPaths(input: {
+  statusStdout: string;
+  baseBranch: string;
+  worktreeCwd: string;
+  env: Record<string, string>;
+  runProc: DeliveryHookRunProcess;
+}): Promise<string[]> {
+  const fromStatus = parseChangedPathsFromPorcelain(input.statusStdout);
+  const baseRef = input.baseBranch.startsWith("origin/") ? input.baseBranch : `origin/${input.baseBranch}`;
+  const [tripleDot, vsBase] = await Promise.all([
+    input.runProc("git", ["diff", "--name-only", `${baseRef}...HEAD`], input.worktreeCwd, input.env),
+    input.runProc("git", ["diff", "--name-only", baseRef], input.worktreeCwd, input.env),
+  ]);
+  return uniqueDeliveryPaths([
+    ...fromStatus,
+    ...(tripleDot.exitCode === 0 ? parseDiffNameOnly(tripleDot.stdout) : []),
+    ...(vsBase.exitCode === 0 ? parseDiffNameOnly(vsBase.stdout) : []),
+  ]);
+}
+
+async function resolveQuantumPrWrapper(worktreeCwd: string): Promise<string | null> {
+  const candidate = path.join(worktreeCwd, QUANTUM_PR_WRAPPER_REL);
+  try {
+    await fs.access(candidate, fsConstants.X_OK);
+    return candidate;
+  } catch {
+    return null;
+  }
 }
 
 function isGitBranchAlreadyExistsError(stderr: string): boolean {
@@ -697,7 +882,7 @@ function formatChangedFiles(statusStdout: string): string[] {
     .slice(0, 50);
 }
 
-function buildQuantumPrBody(input: {
+export function buildQuantumPrBody(input: {
   issueIdentifier: string | null;
   issueId: string | null;
   runId: string;
@@ -705,6 +890,8 @@ function buildQuantumPrBody(input: {
   adapterType?: string | null;
   agentId?: string | null;
   model?: string | null;
+  makerToken?: string | null;
+  githubIssueNumber?: number | null;
   branch: string;
   baseBranch: string;
   lane: string;
@@ -712,13 +899,16 @@ function buildQuantumPrBody(input: {
   autonomousDelivery: boolean;
   isDevTestLane: boolean;
   statusStdout: string;
+  changedPaths?: string[];
   qualityGateCommands: DeliveryQualityGateCommand[];
   signingPlan: DeliveryCommitSigningPlan;
 }): string {
   const issue = formatPrValue(input.issueIdentifier);
   const idempotencyKey = buildIssueDeliveryKey(input.repo, input.issueIdentifier, input.issueId);
-  const changedFiles = formatChangedFiles(input.statusStdout);
+  const changedFiles = uniqueDeliveryPaths(input.changedPaths ?? formatChangedFiles(input.statusStdout));
   const changedFileRows = changedFiles.length > 0 ? changedFiles.map((file) => `- \`${file}\``) : ["- No changed path reported"];
+  const makerToken = input.makerToken ?? null;
+  const closesLine = input.githubIssueNumber != null ? `Closes #${input.githubIssueNumber}` : null;
   const gateRows = input.qualityGateCommands.map(
     (command) => `| ${command.step} | \`${formatCommand(command)}\` | passed before commit/push |`,
   );
@@ -739,6 +929,7 @@ function buildQuantumPrBody(input: {
     "## Linked Issues or Issue Description",
     "### What happened",
     `Paperclip task ${issue} produced the changed paths listed below and requires delivery to the configured repository.`,
+    ...(closesLine ? ["", closesLine] : []),
     "",
     "### Expected behavior",
     "The focused agent output is reviewed and merged only after repository governance and required checks succeed.",
@@ -768,6 +959,7 @@ function buildQuantumPrBody(input: {
     `- Adapter: ${formatPrValue(input.adapterType)}`,
     `- Agent: ${formatPrValue(input.agentId)}`,
     `- Model: ${formatPrValue(input.model)}`,
+    ...(makerToken ? [`- Maker model: ${makerToken}`, `Maker model: ${makerToken}`] : []),
     `- Source branch: ${input.branch}`,
     `- Base branch: ${input.baseBranch}`,
     `- Lane: ${input.lane}`,
@@ -801,6 +993,8 @@ function buildQuantumPrBody(input: {
     "",
     "## Preuves",
     "- See Quality Gate Evidence and Delivery Metadata above.",
+    "- Changed paths in this delivery (from git):",
+    ...changedFileRows,
     "",
     "## Sécurité",
 
@@ -820,6 +1014,7 @@ function buildQuantumPrBody(input: {
     "",
     "## Model Used",
     `- ${formatPrValue(input.model)} via ${formatPrValue(input.adapterType)}; deterministic delivery and repository tooling were used after agent execution.`,
+    ...(makerToken ? [`- Maker model: ${makerToken}`] : []),
     "",
     "## Checklist",
     "- [x] I have searched GitHub for duplicate or related PRs and linked them above.",
@@ -977,13 +1172,23 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     return { delivered: false, prUrl: issuePrLookup.pr.url, reason: "issue_already_merged" };
   }
 
-  const canonicalIssueBranch = autonomousDelivery
-    ? buildCanonicalIssueDeliveryBranch(input.issueId!)
+  const quantumDelivery = isQuantumDeliveryTarget(input.repo, env);
+  const quantumCanonicalBranch = quantumDelivery
+    ? buildQuantumAgentBranch({
+      agentId: input.agentId,
+      issueIdentifier: input.issueIdentifier,
+      issueId: input.issueId,
+      shortSlug: "delivery",
+    })
     : null;
-  if (canonicalIssueBranch && branch !== canonicalIssueBranch) {
+  const canonicalIssueBranch = autonomousDelivery
+    ? (quantumCanonicalBranch ?? buildCanonicalIssueDeliveryBranch(input.issueId!))
+    : null;
+  const requiredDeliveryBranch = canonicalIssueBranch
+    ?? (quantumDelivery && !isAdrGov007CompliantBranch(branch) ? quantumCanonicalBranch : null);
+  if (requiredDeliveryBranch && branch !== requiredDeliveryBranch) {
     const canonicalCheckout = await checkoutNewOrExistingBranch({
-
-      branch: canonicalIssueBranch,
+      branch: requiredDeliveryBranch,
       worktreeCwd,
       env,
       runProc,
@@ -992,8 +1197,12 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
       await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="canonical_issue_branch_checkout_failed" detail="${firstNonEmptyLine(canonicalCheckout.stderr) || firstNonEmptyLine(canonicalCheckout.stdout) || "checkout failed"}"\n`);
       return { delivered: false, prUrl: null, reason: "delivery_blocked: canonical issue branch checkout failed" };
     }
-    branch = canonicalIssueBranch;
-    await log("stdout", `[delivery ${ts()}] canonical_issue_branch=${branch}${canonicalCheckout.reused ? " reused_local=true" : ""}\n`);
+    branch = requiredDeliveryBranch;
+    await log("stdout", `[delivery ${ts()}] ${quantumDelivery ? "quantum_delivery_branch" : "canonical_issue_branch"}=${branch}${canonicalCheckout.reused ? " reused_local=true" : ""}\n`);
+  }
+  if (quantumDelivery && !isAdrGov007CompliantBranch(branch)) {
+    await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="quantum_branch_not_adr_gov_007" branch=${branch}\n`);
+    return { delivered: false, prUrl: null, reason: "delivery_blocked: quantum_branch_not_adr_gov_007" };
   }
 
   if (await remoteBranchExists({ branch, worktreeCwd, env: deliveryCommandEnv, runProc })) {
@@ -1038,6 +1247,41 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     return { delivered: false, prUrl: null, reason: "delivery_blocked: signed commits not configured" };
   }
 
+  const changedPaths = await collectDeliveryChangedPaths({
+    statusStdout: status.stdout,
+    baseBranch: input.baseBranch,
+    worktreeCwd,
+    env,
+    runProc,
+  });
+  const makerToken = deriveQuantumMakerToken(input.model, env);
+  const githubIssueNumber = resolveGithubIssueNumber({
+    issueIdentifier: input.issueIdentifier,
+    env,
+  });
+  const junkPaths = changedPaths.filter((filePath) => isQuantumJunkPath(filePath));
+  const nonDocPaths = changedPaths.filter((filePath) => !isDocDeliveryPath(filePath));
+  if (quantumDelivery) {
+    if (junkPaths.length > 0) {
+      const detail = junkPaths.join(", ");
+      await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="quantum_junk_files" files="${detail}"\n`);
+      return { delivered: false, prUrl: null, reason: `delivery_blocked: quantum_junk_files: ${detail}` };
+    }
+    if (nonDocPaths.length > QUANTUM_MAX_NON_DOC_FILES) {
+      const detail = `${nonDocPaths.length} non-doc files (max ${QUANTUM_MAX_NON_DOC_FILES}): ${nonDocPaths.join(", ")}. Split the change into smaller PRs.`;
+      await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="quantum_scope_exceeded" detail="${detail}"\n`);
+      return { delivered: false, prUrl: null, reason: `delivery_blocked: quantum_scope_exceeded: ${detail}` };
+    }
+    if (!makerToken) {
+      await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="missing_quantum_maker_model"\n`);
+      return { delivered: false, prUrl: null, reason: "delivery_blocked: missing_quantum_maker_model" };
+    }
+    if (githubIssueNumber == null) {
+      await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="missing_github_issue_number_for_closes"\n`);
+      return { delivered: false, prUrl: null, reason: "delivery_blocked: missing_github_issue_number_for_closes" };
+    }
+  }
+
   // ── 4. quality gate ───────────────────────────────────────────────────────
   const qualityGate = await runDeliveryQualityGate({ worktreeCwd, env, runProc, log, ts });
   if (!qualityGate.ok) {
@@ -1046,7 +1290,15 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
   }
 
   // ── 5. PR body ────────────────────────────────────────────────────────────
-  const title = `${input.issueIdentifier ?? "FACTORY"}: factory delivery`;
+  const title = deriveQuantumDeliveryTitle({
+    issueIdentifier: input.issueIdentifier,
+    changedPaths,
+    makerToken,
+  });
+  if (quantumDelivery && /^docs\s*:/i.test(title) && nonDocPaths.length > 0) {
+    await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="docs_title_claim_vs_diff" title="${title}"\n`);
+    return { delivered: false, prUrl: null, reason: "delivery_blocked: docs_title_claim_vs_diff" };
+  }
   const body = buildQuantumPrBody({
     issueIdentifier: input.issueIdentifier,
     issueId: input.issueId,
@@ -1055,14 +1307,16 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     adapterType: input.adapterType,
     agentId: input.agentId,
     model: input.model,
+    makerToken,
+    githubIssueNumber,
     branch,
-
     baseBranch: input.baseBranch,
     lane,
     adrRef,
     autonomousDelivery,
     isDevTestLane,
     statusStdout: status.stdout,
+    changedPaths,
     qualityGateCommands: qualityGate.commands,
     signingPlan,
   });
@@ -1178,6 +1432,70 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     await log("stderr", `[delivery ${ts()}] labels_missing (Phase -1 not done?): ${missing.join(",")}\n`);
   }
 
+  let prBody = body;
+  const postCommitDiff = await runProc(
+    "git",
+    ["diff", "--name-only", `origin/${input.baseBranch}...HEAD`],
+    worktreeCwd,
+    env,
+  );
+  if (postCommitDiff.exitCode === 0) {
+    const deliveredPaths = parseDiffNameOnly(postCommitDiff.stdout);
+    if (deliveredPaths.length > 0) {
+      prBody = buildQuantumPrBody({
+        issueIdentifier: input.issueIdentifier,
+        issueId: input.issueId,
+        repo: input.repo,
+        runId: input.runId,
+        adapterType: input.adapterType,
+        agentId: input.agentId,
+        model: input.model,
+        makerToken,
+        githubIssueNumber,
+        branch,
+        baseBranch: input.baseBranch,
+        lane,
+        adrRef,
+        autonomousDelivery,
+        isDevTestLane,
+        statusStdout: status.stdout,
+        changedPaths: deliveredPaths,
+        qualityGateCommands: qualityGate.commands,
+        signingPlan,
+      });
+    }
+  }
+
+  if (quantumDelivery && !isAdrGov007CompliantBranch(branch)) {
+    await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="quantum_branch_not_adr_gov_007" branch=${branch}\n`);
+    return { delivered: false, prUrl: null, reason: "delivery_blocked: quantum_branch_not_adr_gov_007" };
+  }
+
+  const quantumWrapper = quantumDelivery ? await resolveQuantumPrWrapper(worktreeCwd) : null;
+  if (quantumWrapper) {
+    const wrapperPaths = postCommitDiff.exitCode === 0 && postCommitDiff.stdout.trim()
+      ? parseDiffNameOnly(postCommitDiff.stdout)
+      : changedPaths;
+    const summary = [
+      title,
+      "",
+      "Changed paths:",
+      ...wrapperPaths.map((file) => `- ${file}`),
+      makerToken ? `Maker model: ${makerToken}` : null,
+      githubIssueNumber != null ? `Closes #${githubIssueNumber}` : null,
+    ].filter((line): line is string => line != null).join("\n");
+    const wrapperArgs = ["--title", title, "--summary", summary];
+    if (githubIssueNumber != null) wrapperArgs.push("--issue", String(githubIssueNumber));
+    const wrapper = await runProc(quantumWrapper, wrapperArgs, worktreeCwd, deliveryCommandEnv);
+    if (wrapper.exitCode !== 0) {
+      await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="quantum_pr_wrapper_failed" detail="${firstNonEmptyLine(wrapper.stderr) || firstNonEmptyLine(wrapper.stdout) || `exit ${wrapper.exitCode}`}"\n`);
+      return { delivered: false, prUrl: null, reason: "delivery_blocked: quantum_pr_wrapper_failed" };
+    }
+    const wrapperUrl = (wrapper.stdout.match(/https:\/\/github\.com\/\S+\/pull\/\d+/) || [null])[0];
+    await log("stdout", `[delivery ${ts()}] result=created pr_url=${wrapperUrl} wrapper=${QUANTUM_PR_WRAPPER_REL}\n`);
+    return { delivered: true, prUrl: wrapperUrl, reason: "created" };
+  }
+
   const prArgs = [
     "pr",
     "create",
@@ -1187,11 +1505,10 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     branch,
     "--base",
     input.baseBranch,
-
     "--title",
     title,
     "--body",
-    body,
+    prBody,
   ];
   for (const label of labelsToApply) prArgs.push("--label", label);
 
@@ -1277,6 +1594,7 @@ export async function executeConfiguredDeliveryHook(
     return null;
   }
   const baseBranch = asString(input.config.deliveryBaseBranch, "main");
+  const configuredRepo = asString(input.config.deliveryRepo, "Beyn-SOLIDUS/quantum");
   const configuredBranch = input.branch?.trim() ?? "";
   let branch = configuredBranch && configuredBranch !== baseBranch ? configuredBranch : "";
   let currentBranch: string | null = null;
@@ -1289,10 +1607,21 @@ export async function executeConfiguredDeliveryHook(
     }
   }
   if (!branch && (configuredBranch === baseBranch || currentBranch === baseBranch || currentBranch === "HEAD")) {
-    const fallbackBranch = buildFallbackDeliveryBranch({
-      runId: input.runId,
-      context: input.context,
-    });
+    const issueIdentifier = readContextString(input.context, "identifier") ?? readContextString(input.context, "issueIdentifier");
+    const issueId = readContextString(input.context, "issueId") ?? readContextString(input.context, "id");
+    const agentId = nonEmpty(input.agentId) ?? nonEmpty(input.context.agentId);
+    const runSuffix = sanitizeDeliveryBranchName(input.runId).split("/").join("-").slice(0, 12) || "run";
+    const fallbackBranch = isQuantumDeliveryTarget(configuredRepo, input.env)
+      ? buildQuantumAgentBranch({
+        agentId,
+        issueIdentifier,
+        issueId,
+        shortSlug: runSuffix,
+      })
+      : buildFallbackDeliveryBranch({
+        runId: input.runId,
+        context: input.context,
+      });
     const createBranch = await input.runProc("git", ["checkout", "-b", fallbackBranch], input.worktreeCwd, input.env);
     if (createBranch.exitCode !== 0) {
       if (isGitBranchAlreadyExistsError(createBranch.stderr)) {
@@ -1330,7 +1659,7 @@ export async function executeConfiguredDeliveryHook(
     env: input.env,
     issueIdentifier: readContextString(input.context, "identifier") ?? readContextString(input.context, "issueIdentifier"),
     issueId: readContextString(input.context, "issueId") ?? readContextString(input.context, "id"),
-    repo: asString(input.config.deliveryRepo, "Beyn-SOLIDUS/quantum"),
+    repo: configuredRepo,
     baseBranch,
     adapterType: nonEmpty(input.adapterType) ?? nonEmpty(input.context.adapterType),
     agentId: nonEmpty(input.agentId) ?? nonEmpty(input.context.agentId),

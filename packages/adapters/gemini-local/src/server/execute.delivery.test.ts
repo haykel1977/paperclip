@@ -23,15 +23,19 @@ const base = {
   issueId: "uuid",
   repo: "Beyn-SOLIDUS/quantum",
   baseBranch: "main",
+  agentId: "agent-1",
+  model: "qwen3-coder-30b-sovereign",
   log: vi.fn(async () => {}),
 };
 
 const savedAutonomous = process.env.PAPERCLIP_AUTONOMOUS_DELIVERY;
 const savedBotToken = process.env.PAPERCLIP_DELIVERY_BOT_TOKEN;
+const savedGithubIssue = process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER;
 
 beforeEach(() => {
   delete process.env.PAPERCLIP_AUTONOMOUS_DELIVERY;
   delete process.env.PAPERCLIP_DELIVERY_BOT_TOKEN;
+  process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER = "222";
 });
 
 afterEach(() => {
@@ -39,6 +43,8 @@ afterEach(() => {
   else process.env.PAPERCLIP_AUTONOMOUS_DELIVERY = savedAutonomous;
   if (savedBotToken === undefined) delete process.env.PAPERCLIP_DELIVERY_BOT_TOKEN;
   else process.env.PAPERCLIP_DELIVERY_BOT_TOKEN = savedBotToken;
+  if (savedGithubIssue === undefined) delete process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER;
+  else process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER = savedGithubIssue;
   for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
