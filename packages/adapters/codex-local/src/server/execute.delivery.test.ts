@@ -35,6 +35,9 @@ function mkRunProc(seq: Record<string, { exitCode: number; stdout?: string; stde
   });
 }
 
+const QUANTUM_BRANCH = "feat/agent-agent-1-ticket-has-222-delivery";
+const QUANTUM_FALLBACK_BRANCH = "feat/agent-agent-1-ticket-has-222-r1";
+
 const base = {
   runId: "r1",
   branch: "codex/HAS-222-x",
@@ -45,7 +48,7 @@ const base = {
   baseBranch: "main",
   adapterType: "codex_local",
   agentId: "agent-1",
-  model: "sovereign-gpt-5",
+  model: "qwen3-coder-30b-sovereign",
   log: vi.fn(async () => {}),
 };
 
@@ -55,12 +58,14 @@ describe("executeDeliveryHook", () => {
   const savedAutonomous = process.env.PAPERCLIP_AUTONOMOUS_DELIVERY;
   const savedBotToken = process.env.PAPERCLIP_DELIVERY_BOT_TOKEN;
   const savedRemoteDelivery = process.env.PAPERCLIP_DELIVERY_REMOTE_ENABLED;
+  const savedGithubIssue = process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER;
 
   beforeEach(() => {
     delete process.env.PAPERCLIP_DELIVERY_LANE;
     delete process.env.PAPERCLIP_AUTONOMOUS_DELIVERY;
     delete process.env.PAPERCLIP_DELIVERY_BOT_TOKEN;
     delete process.env.PAPERCLIP_DELIVERY_REMOTE_ENABLED;
+    process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER = "222";
   });
 
   afterEach(() => {
@@ -72,6 +77,8 @@ describe("executeDeliveryHook", () => {
     else process.env.PAPERCLIP_DELIVERY_BOT_TOKEN = savedBotToken;
     if (savedRemoteDelivery === undefined) delete process.env.PAPERCLIP_DELIVERY_REMOTE_ENABLED;
     else process.env.PAPERCLIP_DELIVERY_REMOTE_ENABLED = savedRemoteDelivery;
+    if (savedGithubIssue === undefined) delete process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER;
+    else process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER = savedGithubIssue;
     for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
@@ -87,7 +94,7 @@ describe("executeDeliveryHook", () => {
     const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
     expect(result.reason).toBe("created");
     expect(runProc).toHaveBeenCalledWith("pnpm", ["run", "typecheck"], worktreeCwd, expect.objectContaining({ CI: "true" }));
-    expect(runProc).toHaveBeenCalledWith("git", ["push", "-u", "origin", base.branch], worktreeCwd, expect.any(Object)); // paperclip:allow-git-push: assertion verifying delivery-hook push call (PAPA-432)
+    expect(runProc).toHaveBeenCalledWith("git", ["push", "-u", "origin", QUANTUM_BRANCH], worktreeCwd, expect.any(Object)); // paperclip:allow-git-push: assertion verifying delivery-hook push call (PAPA-432)
   });
 
   it("no diff -> silent skip, no commit", async () => {
@@ -207,7 +214,9 @@ describe("executeDeliveryHook", () => {
     const body = bodyIndex >= 0 ? createCall?.[bodyIndex + 1] ?? "" : "";
     expect(body).toContain("Adapter: codex_local");
     expect(body).toContain("Agent: agent-1");
-    expect(body).toContain("Model: sovereign-gpt-5");
+    expect(body).toContain("Model: qwen3-coder-30b-sovereign");
+    expect(body).toContain("Maker model: Qwen3-30B");
+    expect(body).toMatch(/^Closes #222$/m);
     expect(body).toContain("## Supply Chain Attestation");
     expect(body).toContain("## Plan de rollback");
     expect(calls.find((call) => call.includes("--add-reviewer"))).toContain("haykel1977");
@@ -290,10 +299,10 @@ describe("executeDeliveryHook", () => {
     });
     const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
     expect(createCall).toBeDefined();
-    expect(createCall).toContain("paperclip/uuid-delivery");
-    expect(calls).toContainEqual(["git", "checkout", "-b", "paperclip/uuid-delivery"]);
+    expect(createCall).toContain(QUANTUM_BRANCH);
+    expect(calls).toContainEqual(["git", "checkout", "-b", QUANTUM_BRANCH]);
     // paperclip:allow-git-push: test assertion — verifies canonical autonomous delivery push (PAPA-432)
-    expect(calls).toContainEqual(["git", "push", "-u", "origin", "paperclip/uuid-delivery"]);
+    expect(calls).toContainEqual(["git", "push", "-u", "origin", QUANTUM_BRANCH]);
     expect(createCall).toContain("agent-pr");
 
     expect(createCall).toContain("truth-first");
@@ -359,7 +368,7 @@ describe("executeDeliveryHook", () => {
         return {
           exitCode: 1,
           stdout: "",
-          stderr: "! [rejected] paperclip/uuid-delivery -> paperclip/uuid-delivery (non-fast-forward)\n",
+          stderr: `! [rejected] ${QUANTUM_BRANCH} -> ${QUANTUM_BRANCH} (non-fast-forward)\n`,
         };
       }
       return { exitCode: 0, stdout: "", stderr: "" };
@@ -379,7 +388,7 @@ describe("executeDeliveryHook", () => {
 
     expect(result.reason).toBe("push_failed");
     expect(pushAttempts).toBe(1);
-    expect(calls.some((call) => call.includes("paperclip/uuid-delivery-remote-r1"))).toBe(false);
+    expect(calls.some((call) => call.includes(`${QUANTUM_BRANCH}-remote-r1`))).toBe(false);
     expect(calls.some((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create")).toBe(false);
   });
 
@@ -483,7 +492,7 @@ describe("executeDeliveryHook", () => {
       worktreeCwd,
       branch: null,
       config: {},
-      context: {},
+      context: { paperclipIssue: { identifier: "HAS-222", id: "issue-uuid" } },
       executionTargetIsRemote: false,
       exitCode: 0,
       runProc,
@@ -494,7 +503,7 @@ describe("executeDeliveryHook", () => {
     expect(log).toHaveBeenCalledWith("stdout", "[paperclip] delivery: recovered branch from git current_branch=codex/HAS-222-recovered\n");
     const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
     expect(createCall).toContain("--head");
-    expect(createCall).toContain("codex/HAS-222-recovered");
+    expect(createCall).toContain(QUANTUM_BRANCH);
   });
 
   it("configured delivery creates a PR branch when the current branch is the base branch", async () => {
@@ -526,10 +535,10 @@ describe("executeDeliveryHook", () => {
     });
 
     expect(result?.reason).toBe("created");
-    expect(calls).toContainEqual(["git", "checkout", "-b", "paperclip/HAS-222-r1"]);
-    expect(log).toHaveBeenCalledWith("stdout", "[paperclip] delivery: created branch for PR branch=paperclip/HAS-222-r1\n");
+    expect(calls).toContainEqual(["git", "checkout", "-b", QUANTUM_FALLBACK_BRANCH]);
+    expect(log).toHaveBeenCalledWith("stdout", `[paperclip] delivery: created branch for PR branch=${QUANTUM_FALLBACK_BRANCH}\n`);
     const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
-    expect(createCall).toContain("paperclip/HAS-222-r1");
+    expect(createCall).toContain(QUANTUM_FALLBACK_BRANCH);
   });
 
   it("configured delivery reuses the fallback PR branch if it already exists locally", async () => {
@@ -540,8 +549,8 @@ describe("executeDeliveryHook", () => {
       calls.push([cmd, ...args]);
       const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
       if (key === "git rev-parse --abbrev-ref") return { exitCode: 0, stdout: "main\n", stderr: "" };
-      if (key === "git checkout -b") return { exitCode: 1, stdout: "", stderr: "fatal: a branch named 'paperclip/HAS-222-r1' already exists\n" };
-      if (key === "git checkout paperclip/HAS-222-r1") return { exitCode: 0, stdout: "", stderr: "" };
+      if (key === "git checkout -b") return { exitCode: 1, stdout: "", stderr: `fatal: a branch named '${QUANTUM_FALLBACK_BRANCH}' already exists\n` };
+      if (key === `git checkout ${QUANTUM_FALLBACK_BRANCH}`) return { exitCode: 0, stdout: "", stderr: "" };
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
       if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
       if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "agent-pr", "truth-first"]), stderr: "" };
@@ -562,8 +571,8 @@ describe("executeDeliveryHook", () => {
     });
 
     expect(result?.reason).toBe("created");
-    expect(calls).toContainEqual(["git", "checkout", "paperclip/HAS-222-r1"]);
-    expect(log).toHaveBeenCalledWith("stdout", "[paperclip] delivery: checked out existing PR branch=paperclip/HAS-222-r1\n");
+    expect(calls).toContainEqual(["git", "checkout", QUANTUM_FALLBACK_BRANCH]);
+    expect(log).toHaveBeenCalledWith("stdout", `[paperclip] delivery: checked out existing PR branch=${QUANTUM_FALLBACK_BRANCH}\n`);
   });
 
   it("configured delivery skips safely when base-branch checkout cannot create a PR branch", async () => {
@@ -772,8 +781,8 @@ describe("executeDeliveryHook", () => {
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
       if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
       if (cmd === "git" && args[0] === "ls-remote") {
-        return args[4] === "codex/HAS-222-x"
-          ? { exitCode: 0, stdout: "abc123\trefs/heads/codex/HAS-222-x\n", stderr: "" }
+        return args[4] === QUANTUM_BRANCH
+          ? { exitCode: 0, stdout: `abc123\trefs/heads/${QUANTUM_BRANCH}\n`, stderr: "" }
           : { exitCode: 2, stdout: "", stderr: "" };
       }
 
@@ -786,11 +795,11 @@ describe("executeDeliveryHook", () => {
     const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
 
     expect(result.reason).toBe("created");
-    expect(calls).toContainEqual(["git", "checkout", "-b", "codex/HAS-222-x-remote-r1"]);
+    expect(calls).toContainEqual(["git", "checkout", "-b", `${QUANTUM_BRANCH}-remote-r1`]);
     // paperclip:allow-git-push: test assertion — verifies delivery hook invokes git push for remote branch (PAPA-432)
-    expect(calls).toContainEqual(["git", "push", "-u", "origin", "codex/HAS-222-x-remote-r1"]);
+    expect(calls).toContainEqual(["git", "push", "-u", "origin", `${QUANTUM_BRANCH}-remote-r1`]);
     const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
-    expect(createCall).toContain("codex/HAS-222-x-remote-r1");
+    expect(createCall).toContain(`${QUANTUM_BRANCH}-remote-r1`);
   });
 
   it("tries another remote-collision branch when the first candidate already exists remotely", async () => {
@@ -802,7 +811,7 @@ describe("executeDeliveryHook", () => {
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
       if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
       if (cmd === "git" && args[0] === "ls-remote") {
-        return args[4] === "codex/HAS-222-x" || args[4] === "codex/HAS-222-x-remote-r1"
+        return args[4] === QUANTUM_BRANCH || args[4] === `${QUANTUM_BRANCH}-remote-r1`
           ? { exitCode: 0, stdout: `abc123\trefs/heads/${args[4]}\n`, stderr: "" }
           : { exitCode: 2, stdout: "", stderr: "" };
       }
@@ -815,9 +824,9 @@ describe("executeDeliveryHook", () => {
     const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
 
     expect(result.reason).toBe("created");
-    expect(calls).toContainEqual(["git", "checkout", "-b", "codex/HAS-222-x-remote-r1-2"]);
+    expect(calls).toContainEqual(["git", "checkout", "-b", `${QUANTUM_BRANCH}-remote-r1-2`]);
     // paperclip:allow-git-push: test assertion — verifies delivery hook invokes git push for collision-resolved branch (PAPA-432)
-    expect(calls).toContainEqual(["git", "push", "-u", "origin", "codex/HAS-222-x-remote-r1-2"]);
+    expect(calls).toContainEqual(["git", "push", "-u", "origin", `${QUANTUM_BRANCH}-remote-r1-2`]);
   });
 
   it("reuses an existing local remote-collision branch when it is available", async () => {
@@ -829,12 +838,12 @@ describe("executeDeliveryHook", () => {
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
       if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
       if (cmd === "git" && args[0] === "ls-remote") {
-        return args[4] === "codex/HAS-222-x"
-          ? { exitCode: 0, stdout: "abc123\trefs/heads/codex/HAS-222-x\n", stderr: "" }
+        return args[4] === QUANTUM_BRANCH
+          ? { exitCode: 0, stdout: `abc123\trefs/heads/${QUANTUM_BRANCH}\n`, stderr: "" }
           : { exitCode: 2, stdout: "", stderr: "" };
       }
-      if (key === "git checkout -b") return { exitCode: 1, stdout: "", stderr: "fatal: a branch named 'codex/HAS-222-x-remote-r1' already exists\n" };
-      if (key === "git checkout codex/HAS-222-x-remote-r1") return { exitCode: 0, stdout: "", stderr: "" };
+      if (key === "git checkout -b") return { exitCode: 1, stdout: "", stderr: `fatal: a branch named '${QUANTUM_BRANCH}-remote-r1' already exists\n` };
+      if (key === `git checkout ${QUANTUM_BRANCH}-remote-r1`) return { exitCode: 0, stdout: "", stderr: "" };
       if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "agent-pr", "truth-first"]), stderr: "" };
       if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/102\n", stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
@@ -843,9 +852,9 @@ describe("executeDeliveryHook", () => {
     const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
 
     expect(result.reason).toBe("created");
-    expect(calls).toContainEqual(["git", "checkout", "codex/HAS-222-x-remote-r1"]);
+    expect(calls).toContainEqual(["git", "checkout", `${QUANTUM_BRANCH}-remote-r1`]);
     // paperclip:allow-git-push: test assertion — verifies delivery hook pushes reused local collision branch (PAPA-432)
-    expect(calls).toContainEqual(["git", "push", "-u", "origin", "codex/HAS-222-x-remote-r1"]);
+    expect(calls).toContainEqual(["git", "push", "-u", "origin", `${QUANTUM_BRANCH}-remote-r1`]);
   });
 
   it("push retry: transient 429 -> retries once, succeeds on second attempt", async () => {
@@ -885,7 +894,7 @@ describe("executeDeliveryHook", () => {
       if (cmd === "git" && args[0] === "push") {
         pushAttempts++;
         if (pushAttempts === 1) {
-          return { exitCode: 1, stdout: "", stderr: "! [rejected] codex/HAS-222-x -> codex/HAS-222-x (non-fast-forward)\nerror: failed to push some refs\n" };
+          return { exitCode: 1, stdout: "", stderr: `! [rejected] ${QUANTUM_BRANCH} -> ${QUANTUM_BRANCH} (non-fast-forward)\nerror: failed to push some refs\n` };
         }
         return { exitCode: 0, stdout: "", stderr: "" };
       }
@@ -895,12 +904,12 @@ describe("executeDeliveryHook", () => {
     const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
 
     expect(result.reason).toBe("created");
-    expect(calls).toContainEqual(["git", "checkout", "-b", "codex/HAS-222-x-remote-r1"]);
+    expect(calls).toContainEqual(["git", "checkout", "-b", `${QUANTUM_BRANCH}-remote-r1`]);
     // paperclip:allow-git-push: test assertion — verifies delivery hook retries git push after non-fast-forward race (PAPA-432)
-    expect(calls).toContainEqual(["git", "push", "-u", "origin", "codex/HAS-222-x-remote-r1"]);
+    expect(calls).toContainEqual(["git", "push", "-u", "origin", `${QUANTUM_BRANCH}-remote-r1`]);
 
     const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
-    expect(createCall).toContain("codex/HAS-222-x-remote-r1");
+    expect(createCall).toContain(`${QUANTUM_BRANCH}-remote-r1`);
     expect(pushAttempts).toBe(2);
   });
 
