@@ -958,7 +958,7 @@ describe("realizeExecutionWorkspace", () => {
     await expect(fs.readFile(path.join(identifierOnly.cwd, ".paperclip-github-issue"), "utf8")).resolves.toBe("\n");
 
     process.env[githubIssueEnvKey] = "3135";
-    const explicit = await realizeExecutionWorkspace({
+    const leftoverDoesNotWin = await realizeExecutionWorkspace({
       base: {
         baseCwd: repoRoot,
         source: "project_primary",
@@ -970,12 +970,12 @@ describe("realizeExecutionWorkspace", () => {
       config: {
         workspaceStrategy: {
           type: "git_worktree",
-          branchTemplate: "{{issue.identifier}}-explicit",
+          branchTemplate: "{{issue.identifier}}-leftover-env",
           provisionCommand: "bash ./scripts/provision.sh",
         },
       },
       issue: {
-        id: "issue-explicit",
+        id: "issue-leftover-env",
         identifier: "QUA-23",
         title: "fix(api): foo #1894",
       },
@@ -985,7 +985,36 @@ describe("realizeExecutionWorkspace", () => {
         companyId: "company-1",
       },
     });
-    await expect(fs.readFile(path.join(explicit.cwd, ".paperclip-github-issue"), "utf8")).resolves.toBe("3135\n");
+    await expect(fs.readFile(path.join(leftoverDoesNotWin.cwd, ".paperclip-github-issue"), "utf8")).resolves.toBe("1894\n");
+
+    const leftoverWithoutCurrentNumber = await realizeExecutionWorkspace({
+      base: {
+        baseCwd: repoRoot,
+        source: "project_primary",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: null,
+        repoRef: "HEAD",
+      },
+      config: {
+        workspaceStrategy: {
+          type: "git_worktree",
+          branchTemplate: "{{issue.identifier}}-leftover-cleared",
+          provisionCommand: "bash ./scripts/provision.sh",
+        },
+      },
+      issue: {
+        id: "issue-leftover-cleared",
+        identifier: "QUA-24",
+        title: "no recoverable github number",
+      },
+      agent: {
+        id: "agent-1",
+        name: "Codex Coder",
+        companyId: "company-1",
+      },
+    });
+    await expect(fs.readFile(path.join(leftoverWithoutCurrentNumber.cwd, ".paperclip-github-issue"), "utf8")).resolves.toBe("\n");
     } finally {
       if (previousGithubIssue === undefined) delete process.env[githubIssueEnvKey];
       else process.env[githubIssueEnvKey] = previousGithubIssue;
