@@ -6,7 +6,7 @@ import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { AdapterRuntimeServiceReport } from "@paperclipai/adapter-utils";
-import { asGithubIssueNumber, parseGithubIssueNumberFromText } from "@paperclipai/adapter-utils/delivery-hook";
+import { parseGithubIssueNumberFromText } from "@paperclipai/adapter-utils/delivery-hook";
 import type { Db } from "@paperclipai/db";
 import { executionWorkspaces, projectWorkspaces, workspaceRuntimeServices } from "@paperclipai/db";
 import {
@@ -842,19 +842,15 @@ function buildWorkspaceCommandEnv(input: {
   env.PAPERCLIP_ISSUE_TITLE = input.issue?.title ?? "";
   env.PAPERCLIP_ISSUE_DESCRIPTION = input.issue?.description ?? "";
   env.PAPERCLIP_ISSUE_WORK_MODE = input.issue?.workMode ?? "";
-  const existingGithubIssueNumber = asGithubIssueNumber(env.PAPERCLIP_GITHUB_ISSUE_NUMBER);
-  if (existingGithubIssueNumber != null) {
-    env.PAPERCLIP_GITHUB_ISSUE_NUMBER = String(existingGithubIssueNumber);
-  } else {
-    const recovered =
-      parseGithubIssueNumberFromText(input.issue?.title)
-      ?? parseGithubIssueNumberFromText(input.issue?.description);
-    if (recovered != null) {
-      env.PAPERCLIP_GITHUB_ISSUE_NUMBER = String(recovered);
-    } else {
-      delete env.PAPERCLIP_GITHUB_ISSUE_NUMBER;
-    }
-  }
+  // Bind Closes #<n> to the current issue only. Never keep leftover
+  // process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER from a previous run.
+  // Empty-string tombstone overwrites that leftover when adapters later
+  // merge `{ ...process.env, ...runtimeEnv }`.
+  const recoveredGithubIssueNumber =
+    parseGithubIssueNumberFromText(input.issue?.title)
+    ?? parseGithubIssueNumberFromText(input.issue?.description);
+  env.PAPERCLIP_GITHUB_ISSUE_NUMBER =
+    recoveredGithubIssueNumber != null ? String(recoveredGithubIssueNumber) : "";
   return env;
 }
 
