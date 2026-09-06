@@ -68,7 +68,9 @@ export async function logActivity(db: Db, input: LogActivityInput) {
   const currentUserRedactionOptions = {
     enabled: (await instanceSettingsService(db).getGeneral()).censorUsernameInLogs,
   };
-  const detailsWithKey = input.boardKeyId
+  // undefined = the call site does not carry the information; null = a board actor
+  // with no key (UI session). The two are different facts, so only undefined is dropped.
+  const detailsWithKey = input.boardKeyId !== undefined
     ? { ...(input.details ?? {}), boardKeyId: input.boardKeyId }
     : input.details;
   const sanitizedDetails = detailsWithKey ? sanitizeRecord(detailsWithKey) : null;
