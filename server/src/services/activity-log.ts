@@ -59,6 +59,8 @@ export interface LogActivityInput {
   entityId: string;
   agentId?: string | null;
   runId?: string | null;
+  /** Board API key that authenticated the request, when the actor is a board key. */
+  boardKeyId?: string | null;
   details?: Record<string, unknown> | null;
 }
 
@@ -66,7 +68,10 @@ export async function logActivity(db: Db, input: LogActivityInput) {
   const currentUserRedactionOptions = {
     enabled: (await instanceSettingsService(db).getGeneral()).censorUsernameInLogs,
   };
-  const sanitizedDetails = input.details ? sanitizeRecord(input.details) : null;
+  const detailsWithKey = input.boardKeyId
+    ? { ...(input.details ?? {}), boardKeyId: input.boardKeyId }
+    : input.details;
+  const sanitizedDetails = detailsWithKey ? sanitizeRecord(detailsWithKey) : null;
   const redactedDetails = sanitizedDetails
     ? redactCurrentUserValue(sanitizedDetails, currentUserRedactionOptions)
     : null;

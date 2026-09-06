@@ -90,5 +90,10 @@ export function getActorInfo(req: Request) {
     actorId: req.actor.userId ?? "board",
     agentId: null,
     runId: req.actor.runId ?? null,
+    // Every board API key of the same user logs the SAME actorId, so two
+    // different clients holding two different keys are indistinguishable in the
+    // activity log. Carry the key id so a mutation can be attributed to the key
+    // that made it, not just to the account it was minted under.
+    boardKeyId: req.actor.type === "board" ? (req.actor.keyId ?? null) : null,
   };
 }
