@@ -68,6 +68,29 @@ function prepareYamlLines(raw: string) {
     .filter((line) => line.content.length > 0 && !line.content.startsWith("#"));
 }
 
+// `key: >` / `key: |` (with an optional chomping indicator) introduces a block
+// scalar whose value is the indented lines that follow. Without this, the value
+// parsed as the literal string ">" and the text was dropped — which is how a
+// skill ended up advertising `description: ">"` to the model.
+const BLOCK_SCALAR = /^[|>][+-]?\d*$/;
+
+function readBlockScalar(
+  lines: Array<{ indent: number; content: string }>,
+  startIndex: number,
+  parentIndent: number,
+  folded: boolean,
+): { value: string; nextIndex: number } {
+  const parts: string[] = [];
+  let index = startIndex;
+  while (index < lines.length && lines[index]!.indent > parentIndent) {
+    parts.push(lines[index]!.content);
+    index += 1;
+  }
+  // Blank lines are already dropped by prepareYamlLines, so a folded block joins
+  // on spaces and a literal block keeps one line per source line.
+  return { value: parts.join(folded ? " " : "\n"), nextIndex: index };
+}
+
 function parseYamlBlock(
   lines: Array<{ indent: number; content: string }>,
   startIndex: number,
@@ -118,6 +141,12 @@ function parseYamlBlock(
     const key = line.content.slice(0, separatorIndex).trim();
     const remainder = line.content.slice(separatorIndex + 1).trim();
     index += 1;
+    if (BLOCK_SCALAR.test(remainder)) {
+      const block = readBlockScalar(lines, index, line.indent, remainder.startsWith(">"));
+      record[key] = block.value;
+      index = block.nextIndex;
+      continue;
+    }
     if (!remainder) {
       const nested = parseYamlBlock(lines, index, indentLevel + 2);
       record[key] = nested.value;
