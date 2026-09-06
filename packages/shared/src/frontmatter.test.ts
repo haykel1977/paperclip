@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseFrontmatterMarkdown } from "./frontmatter";
+import { parseFrontmatterMarkdown } from "./frontmatter.js";
 
 describe("parseFrontmatterMarkdown", () => {
   it("reads a plain scalar", () => {
