@@ -82,6 +82,10 @@ export function getActorInfo(req: Request) {
       actorId: req.actor.agentId ?? "unknown-agent",
       agentId: req.actor.agentId ?? null,
       runId: req.actor.runId ?? null,
+      // Always present so the return type is uniform and a caller can pass
+      // actor.boardKeyId without narrowing. An agent key already identifies the
+      // agent through actorId, so there is no board key to record.
+      boardKeyId: null,
     };
   }
 
@@ -90,5 +94,10 @@ export function getActorInfo(req: Request) {
     actorId: req.actor.userId ?? "board",
     agentId: null,
     runId: req.actor.runId ?? null,
+    // Every board API key of the same user logs the SAME actorId, so two
+    // different clients holding two different keys are indistinguishable in the
+    // activity log. Carry the key id so a mutation can be attributed to the key
+    // that made it, not just to the account it was minted under.
+    boardKeyId: req.actor.type === "board" ? (req.actor.keyId ?? null) : null,
   };
 }
