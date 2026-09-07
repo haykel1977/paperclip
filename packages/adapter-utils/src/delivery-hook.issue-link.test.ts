@@ -125,6 +125,31 @@ const parserCases: Array<[string, string | null, number | null]> = [
     "Closes https://github.com/other/project/issues/42; Related #12",
     null
   ],
+  // A link that is not a GitHub issue/PR URL is prose, not a closing target. Accepting
+  // any http(s) URL made "we fix https://…" a closing clause, and the foreign-target
+  // guard then refused the whole parse — an unambiguous "Closes #34" in the same body
+  // resolved to nothing and delivery was blocked.
+  [
+    "prose URL after a short verb, closing clause elsewhere",
+    "We fix https://example.com/x in this PR.\nCloses #34",
+    34
+  ],
+  [
+    "prose URL inside the closing clause itself",
+    "Closes #34 see https://example.com/x",
+    34
+  ],
+  [
+    "prose URL alone is not a closing clause",
+    "resolve https://example.com/y",
+    null
+  ],
+  // A real GitHub issue/PR URL stays a foreign closing target and still refuses.
+  [
+    "foreign GitHub pull URL, closing clause elsewhere",
+    "This will close https://github.com/a/b/pull/9.\nCloses #34",
+    null
+  ],
   [
     "qualified bare reference",
     "other/project#42",

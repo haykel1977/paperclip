@@ -198,9 +198,18 @@ const GITHUB_ISSUE_NUMBER_IN_TEXT_RE = /(?<![\w/#])#(\d+)(?![\w]|\.\d)/g;
 // letting "Fixed #34" / "Close #34" fall through to the bare-reference path.
 // Clause continues to the next semicolon or newline, so a multi-target list
 // "Closes #12, #34" and an invalid "Closes #42.5" are still refused.
+// The URL alternative is narrowed to a GitHub issue/PR URL, the only URL shape GitHub
+// actually closes on. Accepting any http(s) URL turned prose like
+// "we fix https://example.com/x" into a closing clause; the guard below then saw a
+// qualified reference and refused the whole parse, so an unambiguous "Closes #34"
+// elsewhere in the same body was dropped and delivery blocked.
 const GITHUB_ISSUE_CLOSING_CLAUSE_RE =
-  /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+(?=#|https?:\/\/|[\w.-]+\/[\w.-]+#)([^;\r\n]+)/gi;
+  /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+(?=#|[\w.-]+\/[\w.-]+#|https?:\/\/\S*\/(?:issues|pull)\/\d)([^;\r\n]+)/gi;
 const QUALIFIED_GITHUB_REFERENCE_RE = /[\w.-]+\/[\w.-]+#\d+|https?:\/\/\S+/i;
+// A closing target that resolves outside this repository: "owner/repo#N" or a GitHub
+// issue/PR URL. An unrelated link sitting in the same clause is not one of those and
+// must not delete a local "#N" standing beside it.
+const FOREIGN_CLOSING_TARGET_RE = /[\w.-]+\/[\w.-]+#\d+|https?:\/\/\S*\/(?:issues|pull)\/\d/i;
 
 export function asGithubIssueNumber(raw: string | null | undefined): number | null {
   const value = raw?.trim() ?? "";
@@ -234,7 +243,7 @@ export function parseGithubIssueNumberFromText(
     // in closing-clause mode the candidate is the clause itself, in bare mode
     // the candidate is the whole document, and a stray URL in the document
     // must not delete an otherwise unambiguous #N.
-    if (inClause && QUALIFIED_GITHUB_REFERENCE_RE.test(candidate)) return null;
+    if (inClause && FOREIGN_CLOSING_TARGET_RE.test(candidate)) return null;
     let found = false;
     for (const match of candidate.matchAll(GITHUB_ISSUE_NUMBER_IN_TEXT_RE)) {
       // In bare mode, refuse only if the retained reference itself sits next to
