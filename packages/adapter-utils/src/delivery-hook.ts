@@ -24,6 +24,8 @@ export type ExecuteDeliveryHookInput = {
   env: Record<string, string>;
   issueIdentifier: string | null;
   issueId: string | null;
+  // Internal decision: null forbids recovery; undefined preserves direct callers.
+  resolvedGithubIssueNumber?: number | null;
   repo: string;
   baseBranch: string;
   adapterType?: string | null;
@@ -189,7 +191,11 @@ export function deriveQuantumMakerToken(
   return `Qwen3-${loose[1]}${(loose[2] ?? "").toUpperCase()}`;
 }
 
-const GITHUB_ISSUE_NUMBER_IN_TEXT_RE = /(?:\b(?:closes|fixes|resolves)\s+)?#(\d+)\b/gi;
+// A repository-qualified reference must never become an unqualified local issue.
+const GITHUB_ISSUE_NUMBER_IN_TEXT_RE = /(?<![\w/#])#(\d+)(?![\w]|\.\d)/g;
+const GITHUB_ISSUE_CLOSING_CLAUSE_RE =
+  /\b(?:closes|fixes|resolves)\s*:?\s+(?=#|https?:\/\/|[\w.-]+\/[\w.-]+#)([^;\r\n]+)/gi;
+const QUALIFIED_GITHUB_REFERENCE_RE = /[\w.-]+\/[\w.-]+#\d+|https?:\/\/\S+/i;
 
 export function asGithubIssueNumber(raw: string | null | undefined): number | null {
   const value = raw?.trim() ?? "";
@@ -199,13 +205,39 @@ export function asGithubIssueNumber(raw: string | null | undefined): number | nu
   return n;
 }
 
-export function parseGithubIssueNumberFromText(text: string | null | undefined): number | null {
+/**
+ * Resolve a single textual candidate, not proof of a task/repository binding.
+ * Closing clauses take priority over incidental references. Distinct targets
+ * in the selected clauses are ambiguous and must not emit an arbitrary Closes.
+ * A sole bare reference remains supported for existing issue-title imports.
+ */
+export function parseGithubIssueNumberFromText(
+  text: string | null | undefined,
+  options: { allowBareReferences?: boolean } = {},
+): number | null {
   if (!text) return null;
-  for (const match of text.matchAll(GITHUB_ISSUE_NUMBER_IN_TEXT_RE)) {
-    const parsed = asGithubIssueNumber(match[1]);
-    if (parsed != null) return parsed;
+  const closingClauses = [...text.matchAll(GITHUB_ISSUE_CLOSING_CLAUSE_RE)];
+  if (closingClauses.length === 0 && options.allowBareReferences === false) return null;
+  const candidates = closingClauses.length > 0
+    ? closingClauses.map((match) => match[1]!)
+    : [text];
+  const numbers = new Set<number>();
+  for (const candidate of candidates) {
+    // This helper lacks a repository argument: do not strip a foreign repo/URL.
+    if (QUALIFIED_GITHUB_REFERENCE_RE.test(candidate)) return null;
+    let found = false;
+    for (const match of candidate.matchAll(GITHUB_ISSUE_NUMBER_IN_TEXT_RE)) {
+      const parsed = asGithubIssueNumber(match[1]);
+      if (parsed == null) {
+        if (closingClauses.length > 0) return null;
+        continue;
+      }
+      found = true;
+      numbers.add(parsed);
+    }
+    if (closingClauses.length > 0 && !found) return null;
   }
-  return null;
+  return numbers.size === 1 ? [...numbers][0]! : null;
 }
 
 function readPassedEnv(env: Record<string, string>, key: string): string | null {
@@ -215,6 +247,7 @@ function readPassedEnv(env: Record<string, string>, key: string): string | null 
 export function resolveGithubIssueNumber(input: {
   issueIdentifier?: string | null;
   env?: Record<string, string>;
+  allowBareReferences?: boolean;
 }): number | null {
   const env = input.env ?? {};
   const fromEnv = asGithubIssueNumber(readPassedEnv(env, "PAPERCLIP_GITHUB_ISSUE_NUMBER"));
@@ -223,17 +256,16 @@ export function resolveGithubIssueNumber(input: {
   const fromIdent = ident.startsWith("#") ? asGithubIssueNumber(ident.slice(1)) : asGithubIssueNumber(ident);
   if (fromIdent != null) return fromIdent;
 
-  // Current-issue text and numbers come only from the passed run env.
-  // Leftover process.env from a previous run must not emit Closes #<stale>.
-  const fromTitle = parseGithubIssueNumberFromText(readPassedEnv(env, "PAPERCLIP_ISSUE_TITLE"));
-  if (fromTitle != null) return fromTitle;
-
-  const fromDescription = parseGithubIssueNumberFromText(
-    readPassedEnv(env, "PAPERCLIP_ISSUE_DESCRIPTION") ?? readPassedEnv(env, "PAPERCLIP_ISSUE_BODY"),
-  );
-  if (fromDescription != null) return fromDescription;
-
-  return null;
+  // Resolve all current-issue text together: a title cannot hide a closing
+  // instruction (or a conflicting target) in the description/body.
+  // Do not consult process.env: it can belong to a different run.
+  return parseGithubIssueNumberFromText([
+    readPassedEnv(env, "PAPERCLIP_ISSUE_TITLE"),
+    readPassedEnv(env, "PAPERCLIP_ISSUE_DESCRIPTION"),
+    readPassedEnv(env, "PAPERCLIP_ISSUE_BODY"),
+  ].filter((value): value is string => value != null).join("\n"), {
+    allowBareReferences: input.allowBareReferences,
+  });
 }
 
 function applyCurrentIssueTextEnv(
@@ -1319,10 +1351,15 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     runProc,
   });
   const makerToken = deriveQuantumMakerToken(input.model, env);
-  const githubIssueNumber = resolveGithubIssueNumber({
-    issueIdentifier: input.issueIdentifier,
-    env,
-  });
+  // Do not re-parse text after the configured hook rejected a close target.
+  // Only callers that did not supply a decision may use the legacy resolver.
+  const githubIssueNumber = input.resolvedGithubIssueNumber === undefined
+    ? resolveGithubIssueNumber({ issueIdentifier: input.issueIdentifier, env })
+    : asGithubIssueNumber(
+      typeof input.resolvedGithubIssueNumber === "number"
+        ? String(input.resolvedGithubIssueNumber)
+        : null,
+    );
   const junkPaths = changedPaths.filter((filePath) => isQuantumJunkPath(filePath));
   const nonDocPaths = changedPaths.filter((filePath) => !isDocDeliveryPath(filePath));
   if (quantumDelivery) {
@@ -1717,27 +1754,28 @@ export async function executeConfiguredDeliveryHook(
 
   const issueIdentifier = readContextString(input.context, "identifier") ?? readContextString(input.context, "issueIdentifier");
   const deliveryEnv = applyCurrentIssueTextEnv(input.env, input.context);
-  const textEnv = { ...deliveryEnv };
-  delete textEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER;
-  const recoveredFromCurrentText = resolveGithubIssueNumber({
+  const envNumber = asGithubIssueNumber(deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER);
+  const processNumber = asGithubIssueNumber(process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER);
+  // Preserve the existing stale-process defense, but apply it BEFORE the
+  // resolver's explicit-number precedence instead of overwriting that result.
+  if (envNumber == null || envNumber === processNumber) {
+    delete deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER;
+  }
+  const recoveredNumber = resolveGithubIssueNumber({
     issueIdentifier,
-    env: textEnv,
+    env: deliveryEnv,
+    // After rejecting an inherited number, incidental text cannot replace it.
+    allowBareReferences: envNumber == null || envNumber !== processNumber,
   });
-  if (recoveredFromCurrentText != null) {
-    deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER = String(recoveredFromCurrentText);
+  if (recoveredNumber != null) {
+    deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER = String(recoveredNumber);
   } else {
-    const envNumber = asGithubIssueNumber(deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER);
-    const processNumber = asGithubIssueNumber(process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER);
-    // Keep an explicit run-env number only when it is not a leftover process.env copy.
-    if (envNumber != null && envNumber !== processNumber) {
-      deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER = String(envNumber);
-    } else {
-      delete deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER;
-    }
+    delete deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER;
   }
 
   // NOTE: createDeliveryLogRedactor is called inside executeDeliveryHook — do NOT wrap log here.
   const delivery = await executeDeliveryHook({
+    resolvedGithubIssueNumber: recoveredNumber,
     runId: input.runId,
     worktreeCwd: input.worktreeCwd,
     branch,
