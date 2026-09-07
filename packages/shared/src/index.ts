@@ -28,6 +28,7 @@ export {
   asStringArray,
   isPlainRecord as isFrontmatterPlainRecord,
   parseFrontmatterMarkdown,
+  parseYamlFrontmatter,
   type MarkdownDoc,
 } from "./frontmatter.js";
 export {
