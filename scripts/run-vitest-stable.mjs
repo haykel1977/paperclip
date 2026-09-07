@@ -15,6 +15,19 @@ const nonServerProjects = [
   "@paperclipai/adapter-acpx-local",
   "@paperclipai/adapter-codex-local",
   "@paperclipai/adapter-opencode-local",
+  // These shipped with a vitest project entry but were never named here, so no CI job
+  // has ever run them. packages/teams-catalog had two assertions failing on main since
+  // c7a43976a and nothing reported it.
+  "@paperclipai/adapter-claude-local",
+  "@paperclipai/adapter-cursor-cloud",
+  "@paperclipai/adapter-gemini-local",
+  "@paperclipai/adapter-grok-local",
+  "@paperclipai/adapter-pi-local",
+  "@paperclipai/teams-catalog",
+  // Deliberately still absent: @paperclipai/adapter-cursor-local. Its
+  // src/server/execute.test.ts "fresh sandbox lease" case runs the binary named by
+  // config.command and exits 127 when that binary is missing, so wiring it in would
+  // turn CI red for an environment reason rather than a code one.
   "@paperclipai/plugin-sdk",
   "@paperclipai/create-paperclip-plugin",
   "@paperclipai/ui",
