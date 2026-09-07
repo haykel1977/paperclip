@@ -154,6 +154,70 @@ const parserCases: Array<[string, string | null, number | null]> = [
     "null",
     null,
     null
+  ],
+  // Closing verbs: GitHub recognises nine forms, all must resolve.
+  [
+    "verb close",
+    "Close #34",
+    34
+  ],
+  [
+    "verb closed",
+    "Closed #34",
+    34
+  ],
+  [
+    "verb fix",
+    "Fix #34",
+    34
+  ],
+  [
+    "verb fixed",
+    "Fixed #34",
+    34
+  ],
+  [
+    "verb resolve",
+    "Resolve #34",
+    34
+  ],
+  [
+    "verb resolved",
+    "Resolved #34",
+    34
+  ],
+  [
+    "title mention + description fixed clause",
+    "Related #12\nFixed #34",
+    34
+  ],
+  // Bare-mode qualifier scoping: a stray URL in an unrelated field must not
+  // delete an otherwise unambiguous bare reference.
+  [
+    "bare reference plus unrelated http URL",
+    "Bug #34\nRepro: https://example.com/trace",
+    34
+  ],
+  [
+    "bare reference plus unrelated github URL in body",
+    "Bug #34\nSee https://github.com/other/repo/issues/999 for context",
+    34
+  ],
+  [
+    "adjacent org/repo qualifier still refuses",
+    "See also org/repo#42",
+    null
+  ],
+  [
+    "two distinct closing clauses multiline still ambiguous",
+    "Closes #34\nfixes #12",
+    null
+  ],
+  // Verb boundaries: must not match inside words like "fixture" or "closeout".
+  [
+    "fixture is not a closing verb",
+    "See fixture #34",
+    34
   ]
 ];
 

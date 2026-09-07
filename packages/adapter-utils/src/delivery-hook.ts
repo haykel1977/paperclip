@@ -193,8 +193,13 @@ export function deriveQuantumMakerToken(
 
 // A repository-qualified reference must never become an unqualified local issue.
 const GITHUB_ISSUE_NUMBER_IN_TEXT_RE = /(?<![\w/#])#(\d+)(?![\w]|\.\d)/g;
+// GitHub recognises nine closing verbs: close/closes/closed, fix/fixes/fixed,
+// resolve/resolves/resolved. Only the three -s forms were caught previously,
+// letting "Fixed #34" / "Close #34" fall through to the bare-reference path.
+// Clause continues to the next semicolon or newline, so a multi-target list
+// "Closes #12, #34" and an invalid "Closes #42.5" are still refused.
 const GITHUB_ISSUE_CLOSING_CLAUSE_RE =
-  /\b(?:closes|fixes|resolves)\s*:?\s+(?=#|https?:\/\/|[\w.-]+\/[\w.-]+#)([^;\r\n]+)/gi;
+  /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+(?=#|https?:\/\/|[\w.-]+\/[\w.-]+#)([^;\r\n]+)/gi;
 const QUALIFIED_GITHUB_REFERENCE_RE = /[\w.-]+\/[\w.-]+#\d+|https?:\/\/\S+/i;
 
 export function asGithubIssueNumber(raw: string | null | undefined): number | null {
@@ -221,21 +226,38 @@ export function parseGithubIssueNumberFromText(
   const candidates = closingClauses.length > 0
     ? closingClauses.map((match) => match[1]!)
     : [text];
+  const inClause = closingClauses.length > 0;
   const numbers = new Set<number>();
   for (const candidate of candidates) {
     // This helper lacks a repository argument: do not strip a foreign repo/URL.
-    if (QUALIFIED_GITHUB_REFERENCE_RE.test(candidate)) return null;
+    // Only refuse when the candidate scope actually contains such a reference:
+    // in closing-clause mode the candidate is the clause itself, in bare mode
+    // the candidate is the whole document, and a stray URL in the document
+    // must not delete an otherwise unambiguous #N.
+    if (inClause && QUALIFIED_GITHUB_REFERENCE_RE.test(candidate)) return null;
     let found = false;
     for (const match of candidate.matchAll(GITHUB_ISSUE_NUMBER_IN_TEXT_RE)) {
+      // In bare mode, refuse only if the retained reference itself sits next to
+      // a qualifier ("org/repo#N" or a bare "#N" glued to a URL that GitHub
+      // would resolve elsewhere). A plain "#34" plus an unrelated URL in the
+      // text is legitimate and must resolve.
+      if (!inClause) {
+        const start = match.index ?? 0;
+        const end = start + match[0].length;
+        const before = candidate.slice(Math.max(0, start - 64), start);
+        const after = candidate.slice(end, end + 64);
+        if (/[\w.-]+\/[\w.-]+$/.test(before)) return null;
+        if (/^\/\S/.test(after)) return null;
+      }
       const parsed = asGithubIssueNumber(match[1]);
       if (parsed == null) {
-        if (closingClauses.length > 0) return null;
+        if (inClause) return null;
         continue;
       }
       found = true;
       numbers.add(parsed);
     }
-    if (closingClauses.length > 0 && !found) return null;
+    if (inClause && !found) return null;
   }
   return numbers.size === 1 ? [...numbers][0]! : null;
 }
