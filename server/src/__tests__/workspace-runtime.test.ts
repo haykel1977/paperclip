@@ -897,36 +897,50 @@ describe("realizeExecutionWorkspace", () => {
     await expect(fs.readFile(path.join(fromTitle.cwd, ".paperclip-github-issue"), "utf8")).resolves.toBe("1894\n");
     await expect(fs.readFile(path.join(fromTitle.cwd, ".paperclip-issue-description"), "utf8")).resolves.toBe("\n");
 
-    const fromDescription = await realizeExecutionWorkspace({
-      base: {
-        baseCwd: repoRoot,
-        source: "project_primary",
-        projectId: "project-1",
-        workspaceId: "workspace-1",
-        repoUrl: null,
-        repoRef: "HEAD",
-      },
-      config: {
-        workspaceStrategy: {
-          type: "git_worktree",
-          branchTemplate: "{{issue.identifier}}-from-description",
-          provisionCommand: "bash ./scripts/provision.sh",
+    // Exercise the real worktree provision environment, not only the parser.
+    const descriptionCases = [
+      { name: "description-only", title: "no hash in title", description: "Closes #2210", expected: "2210" },
+      { name: "closing-wins", title: "Related #12", description: "Closes #34", expected: "34" },
+      { name: "closing-conflict", title: "Closes #12", description: "Fixes #34", expected: "" },
+      { name: "mention-conflict", title: "Related #12", description: "Related #34", expected: "" },
+      { name: "invalid-closing", title: "Closes #0", description: "Closes #34", expected: "" },
+      { name: "qualified-closing", title: "Closes other/project#42", description: "Closes #34", expected: "" },
+      { name: "same-target", title: "Related #34", description: "Closes #34", expected: "34" },
+    ];
+    for (const testCase of descriptionCases) {
+      const fromDescription = await realizeExecutionWorkspace({
+        base: {
+          baseCwd: repoRoot,
+          source: "project_primary",
+          projectId: "project-1",
+          workspaceId: "workspace-1",
+          repoUrl: null,
+          repoRef: "HEAD",
         },
-      },
-      issue: {
-        id: "issue-description",
-        identifier: "QUA-22",
-        title: "no hash in title",
-        description: "Closes #2210",
-      },
-      agent: {
-        id: "agent-1",
-        name: "Codex Coder",
-        companyId: "company-1",
-      },
-    });
-    await expect(fs.readFile(path.join(fromDescription.cwd, ".paperclip-github-issue"), "utf8")).resolves.toBe("2210\n");
-    await expect(fs.readFile(path.join(fromDescription.cwd, ".paperclip-issue-description"), "utf8")).resolves.toBe("Closes #2210\n");
+        config: {
+          workspaceStrategy: {
+            type: "git_worktree",
+            branchTemplate: `{{issue.identifier}}-${testCase.name}`,
+            provisionCommand: "bash ./scripts/provision.sh",
+          },
+        },
+        issue: {
+          id: `issue-${testCase.name}`,
+          identifier: "QUA-22",
+          title: testCase.title,
+          description: testCase.description,
+        },
+        agent: {
+          id: "agent-1",
+          name: "Codex Coder",
+          companyId: "company-1",
+        },
+      });
+      await expect(fs.readFile(path.join(fromDescription.cwd, ".paperclip-github-issue"), "utf8"))
+        .resolves.toBe(`${testCase.expected}\n`);
+      await expect(fs.readFile(path.join(fromDescription.cwd, ".paperclip-issue-description"), "utf8"))
+        .resolves.toBe(`${testCase.description}\n`);
+    }
 
     const identifierOnly = await realizeExecutionWorkspace({
       base: {

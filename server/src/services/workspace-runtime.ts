@@ -846,9 +846,13 @@ function buildWorkspaceCommandEnv(input: {
   // process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER from a previous run.
   // Empty-string tombstone overwrites that leftover when adapters later
   // merge `{ ...process.env, ...runtimeEnv }`.
-  const recoveredGithubIssueNumber =
-    parseGithubIssueNumberFromText(input.issue?.title)
-    ?? parseGithubIssueNumberFromText(input.issue?.description);
+  // Resolve the fields together before promoting a textual candidate to env:
+  // a title mention must not hide a closing clause or a conflicting target.
+  const recoveredGithubIssueNumber = parseGithubIssueNumberFromText(
+    [input.issue?.title, input.issue?.description]
+      .filter((value): value is string => value != null)
+      .join("\n"),
+  );
   env.PAPERCLIP_GITHUB_ISSUE_NUMBER =
     recoveredGithubIssueNumber != null ? String(recoveredGithubIssueNumber) : "";
   return env;
