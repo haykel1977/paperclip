@@ -15,9 +15,11 @@ const nonServerProjects = [
   "@paperclipai/adapter-acpx-local",
   "@paperclipai/adapter-codex-local",
   "@paperclipai/adapter-opencode-local",
-  // These shipped with a vitest project entry but were never named here, so no CI job
-  // has ever run them. packages/teams-catalog had two assertions failing on main since
-  // c7a43976a and nothing reported it.
+  // No CI job has ever run these. The five adapters already had a vitest project entry
+  // and were simply never named in this list; packages/teams-catalog was missing from
+  // both, and this change adds it here and to vitest.config.ts. Either way the effect
+  // was the same — teams-catalog had two assertions failing on main since c7a43976a
+  // and nothing reported it.
   "@paperclipai/adapter-claude-local",
   "@paperclipai/adapter-cursor-cloud",
   "@paperclipai/adapter-gemini-local",
