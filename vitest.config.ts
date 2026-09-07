@@ -5,6 +5,9 @@ export default defineConfig({
     projects: [
       "packages/shared",
       "packages/skills-catalog",
+      // Absent until now: its shipped-catalog assertions were failing on main and no
+      // CI job ran them.
+      "packages/teams-catalog",
       "packages/db",
       "packages/adapter-utils",
       "packages/adapters/acpx-local",

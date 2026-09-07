@@ -10,6 +10,12 @@ const EXPECTED_BUNDLED_KEYS = [
   "paperclipai/bundled/company-defaults/core-exec-team",
   "paperclipai/bundled/product/product-design",
   "paperclipai/bundled/software-development/product-engineering",
+  // Fork-local team, added with the Quantum programme's five real agents
+  // (quantum-cto, core-banking-coder, delivery-pipeline-coder, quantum-qa,
+  // quantum-security) and one project. It shipped in c7a43976a and this list was
+  // never updated, so both assertions here have been red on main ever since —
+  // unnoticed because the package was missing from the root vitest projects.
+  "paperclipai/bundled/software-development/quantum-core-banking-finalization",
 ];
 
 const EXPECTED_OPTIONAL_KEYS = [
