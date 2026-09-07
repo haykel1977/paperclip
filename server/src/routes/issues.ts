@@ -124,6 +124,7 @@ import {
   setIssueExecutionPolicyMonitorScheduledBy,
 } from "../services/issue-execution-policy.js";
 import { parseIssueExecutionWorkspaceSettings } from "../services/execution-workspace-policy.js";
+import { isFabricatedWrapperResult } from "../wrapper-result.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
 import {
   buildPromotedSourceTrust,
@@ -1957,6 +1958,27 @@ export function issueRoutes(
       error: "Only board users may set structured comment presentation or metadata",
       details: {
         securityPrinciples: ["Least Privilege", "Secure Defaults", "Complete Mediation"],
+      },
+    });
+    return false;
+  }
+
+  /**
+   * An agent may not write a `result=` line claiming an open pull request: only
+   * `scripts/agent-pr-create.sh` may, and it signs the comment it posts. See wrapper-result.ts for
+   * the incident this closes. `result=blocked` stays hand-writable — the agent instructions require it.
+   */
+  function assertWrapperAuthoredResultAllowed(req: Request, res: Response, body: unknown) {
+    if (req.actor.type !== "agent") return true;
+    if (!isFabricatedWrapperResult(body)) return true;
+    res.status(422).json({
+      error:
+        "A result= line claiming an open pull request must be posted by scripts/agent-pr-create.sh, not typed by hand",
+      details: {
+        reason: "fabricated_wrapper_result",
+        allowed: "result=blocked reason=<CF slug>",
+        fix: "Run scripts/agent-pr-create.sh once; it posts the result= line itself and sets the ticket. If a guard refused the delivery, fix the diff and re-run it — do not describe the outcome instead.",
+        securityPrinciples: ["Complete Mediation", "Secure Defaults"],
       },
     });
     return false;
@@ -4661,6 +4683,7 @@ export function issueRoutes(
     assertNoAgentHostWorkspaceCommandMutation(req, collectIssueWorkspaceCommandPaths(req.body));
     if (!(await assertAgentIssueMutationAllowed(req, res, existing))) return;
     if (!(await assertCheapRecoveryIssueAssigneeProfileAllowed(req, res, existing, req.body))) return;
+    if (!assertWrapperAuthoredResultAllowed(req, res, req.body.comment)) return;
 
     const actor = getActorInfo(req);
     const isClosed = isClosedIssueStatus(existing.status);
@@ -6472,6 +6495,7 @@ export function issueRoutes(
       presentation: req.body.presentation,
       metadata: req.body.metadata,
     })) return;
+    if (!assertWrapperAuthoredResultAllowed(req, res, req.body.body)) return;
     const closedExecutionWorkspace = await getClosedIssueExecutionWorkspace(issue);
     if (closedExecutionWorkspace) {
       respondClosedIssueExecutionWorkspace(res, closedExecutionWorkspace);
