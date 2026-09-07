@@ -9,7 +9,7 @@
  * board read the ticket as delivered while the pull request body still described an older head.
  *
  * `result=blocked` stays hand-writable on purpose: the agent instructions require the agent itself
- * to post it when a guard is not its to fix.
+ * to post it when a guard is not the agent's to fix.
  */
 export const WRAPPER_RESULT_SIGNATURE = "(posted by scripts/agent-pr-create.sh)";
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { WRAPPER_RESULT_SIGNATURE, isFabricatedWrapperResult } from "../wrapper-result";
+import { WRAPPER_RESULT_SIGNATURE, isFabricatedWrapperResult } from "../wrapper-result.js";
 
 describe("isFabricatedWrapperResult", () => {
   it("flags the hand-typed claim observed on QUA-1345", () => {
