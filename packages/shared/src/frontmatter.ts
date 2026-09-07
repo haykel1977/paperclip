@@ -51,7 +51,10 @@ export function parseFrontmatterMarkdown(raw: string): MarkdownDoc {
   };
 }
 
-function parseYamlFrontmatter(raw: string): Record<string, unknown> {
+// Exported so the server services parse frontmatter through this one implementation
+// instead of keeping their own copies — the divergence that let a fix land in this file
+// while the skill-import path kept reading `description: ">"`.
+export function parseYamlFrontmatter(raw: string): Record<string, unknown> {
   const prepared = prepareYamlLines(raw);
   if (prepared.length === 0) return {};
   const parsed = parseYamlBlock(prepared, 0, prepared[0]!.indent);
@@ -115,6 +118,33 @@ function parseYamlBlock(
         const nested = parseYamlBlock(lines, index, indentLevel + 2);
         values.push(nested.value);
         index = nested.nextIndex;
+        continue;
+      }
+
+      // `- kind: github-dir` starts a mapping on the dash line itself, with any further
+      // keys indented under it. The two server services parsed this shape; this file did
+      // not, and read the whole line back as the string "kind: github-dir". Both forms
+      // have to work here now that everything parses through this one function.
+      const inlineObjectSeparator = remainder.indexOf(":");
+      if (
+        inlineObjectSeparator > 0 &&
+        !remainder.startsWith("\"") &&
+        !remainder.startsWith("{") &&
+        !remainder.startsWith("[")
+      ) {
+        const inlineKey = remainder.slice(0, inlineObjectSeparator).trim();
+        const inlineValue = remainder.slice(inlineObjectSeparator + 1).trim();
+        const nextObject: Record<string, unknown> = {
+          [inlineKey]: parseYamlScalar(inlineValue),
+        };
+        if (index < lines.length && lines[index]!.indent > indentLevel) {
+          const nested = parseYamlBlock(lines, index, indentLevel + 2);
+          if (isPlainRecord(nested.value)) {
+            Object.assign(nextObject, nested.value);
+          }
+          index = nested.nextIndex;
+        }
+        values.push(nextObject);
         continue;
       }
 

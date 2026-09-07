@@ -51,7 +51,10 @@ export function parseFrontmatterMarkdown(raw: string): MarkdownDoc {
   };
 }
 
-function parseYamlFrontmatter(raw: string): Record<string, unknown> {
+// Exported so the server services parse frontmatter through this one implementation
+// instead of keeping their own copies — the divergence that let a fix land in this file
+// while the skill-import path kept reading `description: ">"`.
+export function parseYamlFrontmatter(raw: string): Record<string, unknown> {
   const prepared = prepareYamlLines(raw);
   if (prepared.length === 0) return {};
   const parsed = parseYamlBlock(prepared, 0, prepared[0]!.indent);
@@ -66,6 +69,29 @@ function prepareYamlLines(raw: string) {
       content: line.trim(),
     }))
     .filter((line) => line.content.length > 0 && !line.content.startsWith("#"));
+}
+
+// `key: >` / `key: |` (with an optional chomping indicator) introduces a block
+// scalar whose value is the indented lines that follow. Without this, the value
+// parsed as the literal string ">" and the text was dropped — which is how a
+// skill ended up advertising `description: ">"` to the model.
+const BLOCK_SCALAR = /^[|>][+-]?\d*$/;
+
+function readBlockScalar(
+  lines: Array<{ indent: number; content: string }>,
+  startIndex: number,
+  parentIndent: number,
+  folded: boolean,
+): { value: string; nextIndex: number } {
+  const parts: string[] = [];
+  let index = startIndex;
+  while (index < lines.length && lines[index]!.indent > parentIndent) {
+    parts.push(lines[index]!.content);
+    index += 1;
+  }
+  // Blank lines are already dropped by prepareYamlLines, so a folded block joins
+  // on spaces and a literal block keeps one line per source line.
+  return { value: parts.join(folded ? " " : "\n"), nextIndex: index };
 }
 
 function parseYamlBlock(
@@ -95,6 +121,33 @@ function parseYamlBlock(
         continue;
       }
 
+      // `- kind: github-dir` starts a mapping on the dash line itself, with any further
+      // keys indented under it. The two server services parsed this shape; this file did
+      // not, and read the whole line back as the string "kind: github-dir". Both forms
+      // have to work here now that everything parses through this one function.
+      const inlineObjectSeparator = remainder.indexOf(":");
+      if (
+        inlineObjectSeparator > 0 &&
+        !remainder.startsWith("\"") &&
+        !remainder.startsWith("{") &&
+        !remainder.startsWith("[")
+      ) {
+        const inlineKey = remainder.slice(0, inlineObjectSeparator).trim();
+        const inlineValue = remainder.slice(inlineObjectSeparator + 1).trim();
+        const nextObject: Record<string, unknown> = {
+          [inlineKey]: parseYamlScalar(inlineValue),
+        };
+        if (index < lines.length && lines[index]!.indent > indentLevel) {
+          const nested = parseYamlBlock(lines, index, indentLevel + 2);
+          if (isPlainRecord(nested.value)) {
+            Object.assign(nextObject, nested.value);
+          }
+          index = nested.nextIndex;
+        }
+        values.push(nextObject);
+        continue;
+      }
+
       values.push(parseYamlScalar(remainder));
     }
     return { value: values, nextIndex: index };
@@ -118,6 +171,12 @@ function parseYamlBlock(
     const key = line.content.slice(0, separatorIndex).trim();
     const remainder = line.content.slice(separatorIndex + 1).trim();
     index += 1;
+    if (BLOCK_SCALAR.test(remainder)) {
+      const block = readBlockScalar(lines, index, line.indent, remainder.startsWith(">"));
+      record[key] = block.value;
+      index = block.nextIndex;
+      continue;
+    }
     if (!remainder) {
       const nested = parseYamlBlock(lines, index, indentLevel + 2);
       record[key] = nested.value;
@@ -138,7 +197,7 @@ function parseYamlScalar(rawValue: string): unknown {
   if (trimmed === "false") return false;
   if (trimmed === "[]") return [];
   if (trimmed === "{}") return {};
-  if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
+  if (/^-?\d+(\.\d)?\d*$/.test(trimmed)) return Number(trimmed);
   if (
     trimmed.startsWith("\"") ||
     trimmed.startsWith("[") ||
