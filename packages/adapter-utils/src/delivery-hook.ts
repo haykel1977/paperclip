@@ -24,6 +24,8 @@ export type ExecuteDeliveryHookInput = {
   env: Record<string, string>;
   issueIdentifier: string | null;
   issueId: string | null;
+  // Internal decision: null forbids recovery; undefined preserves direct callers.
+  resolvedGithubIssueNumber?: number | null;
   repo: string;
   baseBranch: string;
   adapterType?: string | null;
@@ -189,7 +191,28 @@ export function deriveQuantumMakerToken(
   return `Qwen3-${loose[1]}${(loose[2] ?? "").toUpperCase()}`;
 }
 
-const GITHUB_ISSUE_NUMBER_IN_TEXT_RE = /(?:\b(?:closes|fixes|resolves)\s+)?#(\d+)\b/gi;
+// A repository-qualified reference must never become an unqualified local issue.
+const GITHUB_ISSUE_NUMBER_IN_TEXT_RE = /(?<![\w/#])#(\d+)(?![\w]|\.\d)/g;
+// GitHub recognises nine closing verbs: close/closes/closed, fix/fixes/fixed,
+// resolve/resolves/resolved. Only the three -s forms were caught previously,
+// letting "Fixed #34" / "Close #34" fall through to the bare-reference path.
+// Clause continues to the next semicolon or newline, so a multi-target list
+// "Closes #12, #34" and an invalid "Closes #42.5" are still refused.
+// The URL alternative is narrowed to a github.com issue/PR URL, the only URL shape
+// GitHub actually closes on. Matching any host whose path merely contains "/issues/"
+// swept in third-party trackers — a Sentry or GitLab link after a close verb became a
+// closing clause and voided the parse just as any http(s) URL used to. Accepting any http(s) URL turned prose like
+// "we fix https://example.com/x" into a closing clause; the guard below then saw a
+// qualified reference and refused the whole parse, so an unambiguous "Closes #34"
+// elsewhere in the same body was dropped and delivery blocked.
+const GITHUB_ISSUE_CLOSING_CLAUSE_RE =
+  /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+(?=#|[\w.-]+\/[\w.-]+#|https?:\/\/(?:[\w-]+\.)*github\.com\/[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d)([^;\r\n]+)/gi;
+const QUALIFIED_GITHUB_REFERENCE_RE = /[\w.-]+\/[\w.-]+#\d+|https?:\/\/\S+/i;
+// A closing target that resolves outside this repository: "owner/repo#N" or a
+// github.com issue/PR URL. Host-anchored on purpose: a link to another tracker is
+// not a closing target, and treating it as one blocks delivery. An unrelated link sitting in the same clause is not one of those and
+// must not delete a local "#N" standing beside it.
+const FOREIGN_CLOSING_TARGET_RE = /[\w.-]+\/[\w.-]+#\d+|https?:\/\/(?:[\w-]+\.)*github\.com\/[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d/i;
 
 export function asGithubIssueNumber(raw: string | null | undefined): number | null {
   const value = raw?.trim() ?? "";
@@ -199,13 +222,56 @@ export function asGithubIssueNumber(raw: string | null | undefined): number | nu
   return n;
 }
 
-export function parseGithubIssueNumberFromText(text: string | null | undefined): number | null {
+/**
+ * Resolve a single textual candidate, not proof of a task/repository binding.
+ * Closing clauses take priority over incidental references. Distinct targets
+ * in the selected clauses are ambiguous and must not emit an arbitrary Closes.
+ * A sole bare reference remains supported for existing issue-title imports.
+ */
+export function parseGithubIssueNumberFromText(
+  text: string | null | undefined,
+  options: { allowBareReferences?: boolean } = {},
+): number | null {
   if (!text) return null;
-  for (const match of text.matchAll(GITHUB_ISSUE_NUMBER_IN_TEXT_RE)) {
-    const parsed = asGithubIssueNumber(match[1]);
-    if (parsed != null) return parsed;
+  const closingClauses = [...text.matchAll(GITHUB_ISSUE_CLOSING_CLAUSE_RE)];
+  if (closingClauses.length === 0 && options.allowBareReferences === false) return null;
+  const candidates = closingClauses.length > 0
+    ? closingClauses.map((match) => match[1]!)
+    : [text];
+  const inClause = closingClauses.length > 0;
+  const numbers = new Set<number>();
+  for (const candidate of candidates) {
+    // This helper lacks a repository argument: do not strip a foreign repo/URL.
+    // Only refuse when the candidate scope actually contains such a reference:
+    // in closing-clause mode the candidate is the clause itself, in bare mode
+    // the candidate is the whole document, and a stray URL in the document
+    // must not delete an otherwise unambiguous #N.
+    if (inClause && FOREIGN_CLOSING_TARGET_RE.test(candidate)) return null;
+    let found = false;
+    for (const match of candidate.matchAll(GITHUB_ISSUE_NUMBER_IN_TEXT_RE)) {
+      // In bare mode, refuse only if the retained reference itself sits next to
+      // a qualifier ("org/repo#N" or a bare "#N" glued to a URL that GitHub
+      // would resolve elsewhere). A plain "#34" plus an unrelated URL in the
+      // text is legitimate and must resolve.
+      if (!inClause) {
+        const start = match.index ?? 0;
+        const end = start + match[0].length;
+        const before = candidate.slice(Math.max(0, start - 64), start);
+        const after = candidate.slice(end, end + 64);
+        if (/[\w.-]+\/[\w.-]+$/.test(before)) return null;
+        if (/^\/\S/.test(after)) return null;
+      }
+      const parsed = asGithubIssueNumber(match[1]);
+      if (parsed == null) {
+        if (inClause) return null;
+        continue;
+      }
+      found = true;
+      numbers.add(parsed);
+    }
+    if (inClause && !found) return null;
   }
-  return null;
+  return numbers.size === 1 ? [...numbers][0]! : null;
 }
 
 function readPassedEnv(env: Record<string, string>, key: string): string | null {
@@ -215,6 +281,7 @@ function readPassedEnv(env: Record<string, string>, key: string): string | null 
 export function resolveGithubIssueNumber(input: {
   issueIdentifier?: string | null;
   env?: Record<string, string>;
+  allowBareReferences?: boolean;
 }): number | null {
   const env = input.env ?? {};
   const fromEnv = asGithubIssueNumber(readPassedEnv(env, "PAPERCLIP_GITHUB_ISSUE_NUMBER"));
@@ -223,17 +290,16 @@ export function resolveGithubIssueNumber(input: {
   const fromIdent = ident.startsWith("#") ? asGithubIssueNumber(ident.slice(1)) : asGithubIssueNumber(ident);
   if (fromIdent != null) return fromIdent;
 
-  // Current-issue text and numbers come only from the passed run env.
-  // Leftover process.env from a previous run must not emit Closes #<stale>.
-  const fromTitle = parseGithubIssueNumberFromText(readPassedEnv(env, "PAPERCLIP_ISSUE_TITLE"));
-  if (fromTitle != null) return fromTitle;
-
-  const fromDescription = parseGithubIssueNumberFromText(
-    readPassedEnv(env, "PAPERCLIP_ISSUE_DESCRIPTION") ?? readPassedEnv(env, "PAPERCLIP_ISSUE_BODY"),
-  );
-  if (fromDescription != null) return fromDescription;
-
-  return null;
+  // Resolve all current-issue text together: a title cannot hide a closing
+  // instruction (or a conflicting target) in the description/body.
+  // Do not consult process.env: it can belong to a different run.
+  return parseGithubIssueNumberFromText([
+    readPassedEnv(env, "PAPERCLIP_ISSUE_TITLE"),
+    readPassedEnv(env, "PAPERCLIP_ISSUE_DESCRIPTION"),
+    readPassedEnv(env, "PAPERCLIP_ISSUE_BODY"),
+  ].filter((value): value is string => value != null).join("\n"), {
+    allowBareReferences: input.allowBareReferences,
+  });
 }
 
 function applyCurrentIssueTextEnv(
@@ -1319,10 +1385,15 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     runProc,
   });
   const makerToken = deriveQuantumMakerToken(input.model, env);
-  const githubIssueNumber = resolveGithubIssueNumber({
-    issueIdentifier: input.issueIdentifier,
-    env,
-  });
+  // Do not re-parse text after the configured hook rejected a close target.
+  // Only callers that did not supply a decision may use the legacy resolver.
+  const githubIssueNumber = input.resolvedGithubIssueNumber === undefined
+    ? resolveGithubIssueNumber({ issueIdentifier: input.issueIdentifier, env })
+    : asGithubIssueNumber(
+      typeof input.resolvedGithubIssueNumber === "number"
+        ? String(input.resolvedGithubIssueNumber)
+        : null,
+    );
   const junkPaths = changedPaths.filter((filePath) => isQuantumJunkPath(filePath));
   const nonDocPaths = changedPaths.filter((filePath) => !isDocDeliveryPath(filePath));
   if (quantumDelivery) {
@@ -1717,27 +1788,28 @@ export async function executeConfiguredDeliveryHook(
 
   const issueIdentifier = readContextString(input.context, "identifier") ?? readContextString(input.context, "issueIdentifier");
   const deliveryEnv = applyCurrentIssueTextEnv(input.env, input.context);
-  const textEnv = { ...deliveryEnv };
-  delete textEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER;
-  const recoveredFromCurrentText = resolveGithubIssueNumber({
+  const envNumber = asGithubIssueNumber(deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER);
+  const processNumber = asGithubIssueNumber(process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER);
+  // Preserve the existing stale-process defense, but apply it BEFORE the
+  // resolver's explicit-number precedence instead of overwriting that result.
+  if (envNumber == null || envNumber === processNumber) {
+    delete deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER;
+  }
+  const recoveredNumber = resolveGithubIssueNumber({
     issueIdentifier,
-    env: textEnv,
+    env: deliveryEnv,
+    // After rejecting an inherited number, incidental text cannot replace it.
+    allowBareReferences: envNumber == null || envNumber !== processNumber,
   });
-  if (recoveredFromCurrentText != null) {
-    deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER = String(recoveredFromCurrentText);
+  if (recoveredNumber != null) {
+    deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER = String(recoveredNumber);
   } else {
-    const envNumber = asGithubIssueNumber(deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER);
-    const processNumber = asGithubIssueNumber(process.env.PAPERCLIP_GITHUB_ISSUE_NUMBER);
-    // Keep an explicit run-env number only when it is not a leftover process.env copy.
-    if (envNumber != null && envNumber !== processNumber) {
-      deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER = String(envNumber);
-    } else {
-      delete deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER;
-    }
+    delete deliveryEnv.PAPERCLIP_GITHUB_ISSUE_NUMBER;
   }
 
   // NOTE: createDeliveryLogRedactor is called inside executeDeliveryHook — do NOT wrap log here.
   const delivery = await executeDeliveryHook({
+    resolvedGithubIssueNumber: recoveredNumber,
     runId: input.runId,
     worktreeCwd: input.worktreeCwd,
     branch,

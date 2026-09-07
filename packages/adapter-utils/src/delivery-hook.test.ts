@@ -216,7 +216,7 @@ describe("Quantum delivery helpers", () => {
         PAPERCLIP_ISSUE_TITLE: "fix(api): foo #1894",
         PAPERCLIP_ISSUE_DESCRIPTION: "Closes #9",
       },
-    })).toBe(1894);
+    })).toBe(9);
   });
 
   it("classifies docs vs non-doc and never titles docs: when code changed", () => {
@@ -515,7 +515,7 @@ describe("executeDeliveryHook Quantum fail-closed contract", () => {
         paperclipIssue: {
           id: "issue-uuid",
           identifier: "QUA-99",
-          title: "fix(api): foo #1894",
+          title: "Closes #1894",
         },
       },
       executionTargetIsRemote: false,
