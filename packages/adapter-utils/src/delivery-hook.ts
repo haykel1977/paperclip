@@ -198,18 +198,21 @@ const GITHUB_ISSUE_NUMBER_IN_TEXT_RE = /(?<![\w/#])#(\d+)(?![\w]|\.\d)/g;
 // letting "Fixed #34" / "Close #34" fall through to the bare-reference path.
 // Clause continues to the next semicolon or newline, so a multi-target list
 // "Closes #12, #34" and an invalid "Closes #42.5" are still refused.
-// The URL alternative is narrowed to a GitHub issue/PR URL, the only URL shape GitHub
-// actually closes on. Accepting any http(s) URL turned prose like
+// The URL alternative is narrowed to a github.com issue/PR URL, the only URL shape
+// GitHub actually closes on. Matching any host whose path merely contains "/issues/"
+// swept in third-party trackers — a Sentry or GitLab link after a close verb became a
+// closing clause and voided the parse just as any http(s) URL used to. Accepting any http(s) URL turned prose like
 // "we fix https://example.com/x" into a closing clause; the guard below then saw a
 // qualified reference and refused the whole parse, so an unambiguous "Closes #34"
 // elsewhere in the same body was dropped and delivery blocked.
 const GITHUB_ISSUE_CLOSING_CLAUSE_RE =
-  /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+(?=#|[\w.-]+\/[\w.-]+#|https?:\/\/\S*\/(?:issues|pull)\/\d)([^;\r\n]+)/gi;
+  /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+(?=#|[\w.-]+\/[\w.-]+#|https?:\/\/(?:[\w-]+\.)*github\.com\/[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d)([^;\r\n]+)/gi;
 const QUALIFIED_GITHUB_REFERENCE_RE = /[\w.-]+\/[\w.-]+#\d+|https?:\/\/\S+/i;
-// A closing target that resolves outside this repository: "owner/repo#N" or a GitHub
-// issue/PR URL. An unrelated link sitting in the same clause is not one of those and
+// A closing target that resolves outside this repository: "owner/repo#N" or a
+// github.com issue/PR URL. Host-anchored on purpose: a link to another tracker is
+// not a closing target, and treating it as one blocks delivery. An unrelated link sitting in the same clause is not one of those and
 // must not delete a local "#N" standing beside it.
-const FOREIGN_CLOSING_TARGET_RE = /[\w.-]+\/[\w.-]+#\d+|https?:\/\/\S*\/(?:issues|pull)\/\d/i;
+const FOREIGN_CLOSING_TARGET_RE = /[\w.-]+\/[\w.-]+#\d+|https?:\/\/(?:[\w-]+\.)*github\.com\/[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d/i;
 
 export function asGithubIssueNumber(raw: string | null | undefined): number | null {
   const value = raw?.trim() ?? "";

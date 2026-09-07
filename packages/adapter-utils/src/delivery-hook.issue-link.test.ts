@@ -150,6 +150,18 @@ const parserCases: Array<[string, string | null, number | null]> = [
     "This will close https://github.com/a/b/pull/9.\nCloses #34",
     null
   ],
+  // Host-anchored: a third-party tracker link is not a GitHub closing target. Matching
+  // any host whose path contains "/issues/" swept these in and voided the parse.
+  [
+    "third-party tracker link after a close verb",
+    "See close https://sentry.io/issues/999 first.\nCloses #34",
+    34
+  ],
+  [
+    "GitLab issue link after a short verb",
+    "we fix https://gitlab.com/a/b/issues/7\nCloses #34",
+    34
+  ],
   [
     "qualified bare reference",
     "other/project#42",
