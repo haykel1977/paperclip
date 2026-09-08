@@ -701,6 +701,13 @@
       "when": 1780534400000,
       "tag": "0099_cost_events_agent_id_nullable",
       "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1780534600000,
+      "tag": "0100_heartbeat_runs_company_created_idx",
+      "breakpoints": true
     }
   ]
 }

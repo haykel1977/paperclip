@@ -78,5 +78,16 @@ export const heartbeatRuns = pgTable(
       table.status,
       table.processStartedAt,
     ),
+    // Per-company run listing always sorts by created_at descending. The indexes above all
+    // place another column ahead of created_at, so none of them can order that scan: without
+    // this one, Postgres reads the whole table and then keeps 200 rows. Measured on an
+    // instance at 149,754 rows: 185 MB of heap read and two parallel workers spawned per
+    // request. What removes the sort is the (company_id, created_at) key order, not the
+    // direction — an ascending index serves the same query through a backward scan. DESC is
+    // declared only so the walk runs forward, matching how the rows are read.
+    companyCreatedIdx: index("heartbeat_runs_company_created_idx").on(
+      table.companyId,
+      table.createdAt.desc(),
+    ),
   }),
 );
