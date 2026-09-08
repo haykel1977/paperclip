@@ -279,6 +279,10 @@ async function buildOpenCodeSkillsDir(config: Record<string, unknown>): Promise<
   return target;
 }
 
+// Silence beyond this is treated as a stuck run. Healthy OpenCode runs emit tool traffic every
+// few seconds; the stalls measured on 2026-09-08 were an order of magnitude past this.
+const DEFAULT_IDLE_TIMEOUT_SEC = 300;
+
 export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
   const { runId, agent, runtime, config, context, onLog, onMeta, onSpawn, authToken } = ctx;
   const executionTarget = readAdapterExecutionTarget({
@@ -413,6 +417,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       executionTarget,
       asNumber(config.timeoutSec, 0),
     );
+    // A live child that stops streaming is not slow, it is stuck: its pid still resolves, so the
+    // `process_lost` detection never fires and the run holds its slot until `timeoutSec`.
+    // Observed 2026-09-08: five runs silent between 515 s and 946 s, the queue frozen behind
+    // them. Bound the silence separately; 0 disables and keeps the old behaviour.
+    const idleTimeoutSec = Math.max(0, asNumber(config.idleTimeoutSec, DEFAULT_IDLE_TIMEOUT_SEC));
     const graceSec = asNumber(config.graceSec, 20);
     await ensureAdapterExecutionTargetRuntimeCommandInstalled({
       runId,
@@ -705,6 +714,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         env: executionTargetIsRemote ? preparedRuntimeConfig.env : runtimeEnv,
         stdin: prompt,
         timeoutSec,
+        idleTimeoutSec,
         graceSec,
         onSpawn,
         onLog,
@@ -718,7 +728,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
     const toResult = (
       attempt: {
-        proc: { exitCode: number | null; signal: string | null; timedOut: boolean; stdout: string; stderr: string };
+        proc: { exitCode: number | null; signal: string | null; timedOut: boolean; idleTimedOut?: boolean; stdout: string; stderr: string };
         rawStderr: string;
         parsed: ReturnType<typeof parseOpenCodeJsonl>;
       },
@@ -729,7 +739,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           exitCode: attempt.proc.exitCode,
           signal: attempt.proc.signal,
           timedOut: true,
-          errorMessage: `Timed out after ${timeoutSec}s`,
+          // Two different failures, two different messages: reporting a stall as a plain
+          // timeout is what made five stuck runs indistinguishable from slow ones.
+          errorMessage: attempt.proc.idleTimedOut
+            ? `No output for ${idleTimeoutSec}s — run treated as stalled and terminated`
+            : `Timed out after ${timeoutSec}s`,
           clearSession: clearSessionOnMissingSession,
         };
       }

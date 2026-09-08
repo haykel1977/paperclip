@@ -74,6 +74,11 @@ export interface PreparedAdapterExecutionTargetRuntime {
 }
 
 export interface AdapterExecutionTargetProcessOptions {
+  /**
+   * Kill the child after this many seconds without any stdout/stderr. Distinct from
+   * `timeoutSec`, which bounds total duration: a silent child is stuck, a slow one is not.
+   */
+  idleTimeoutSec?: number;
   cwd: string;
   env: Record<string, string>;
   stdin?: string;
@@ -428,6 +433,7 @@ export async function runAdapterExecutionTargetProcess(
     env,
     stdin: options.stdin,
     timeoutSec: options.timeoutSec,
+    idleTimeoutSec: options.idleTimeoutSec,
     graceSec: options.graceSec,
     onLog: options.onLog,
     onSpawn: options.onSpawn,

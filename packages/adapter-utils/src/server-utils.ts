@@ -15,6 +15,13 @@ export interface RunProcessResult {
   exitCode: number | null;
   signal: string | null;
   timedOut: boolean;
+  /**
+   * True when the run was killed for producing no output for `idleTimeoutSec`, as opposed to
+   * exceeding `timeoutSec` overall. The two are different failures and must not be reported
+   * with the same message: a run that streamed for 25 minutes and finished late is healthy but
+   * slow, while a run that went silent after 30 seconds is stuck and will never finish.
+   */
+  idleTimedOut?: boolean;
   stdout: string;
   stderr: string;
   pid: number | null;
@@ -2135,6 +2142,15 @@ export async function runChildProcess(
     env: Record<string, string>;
     timeoutSec: number;
     graceSec: number;
+    /**
+     * Kill the child when it emits nothing on stdout or stderr for this many seconds.
+     *
+     * `timeoutSec` alone cannot catch a stuck run: the child is alive, its pid resolves, so the
+     * `process_lost` detection never fires, and the slot stays held until the total timeout —
+     * observed on 2026-09-08 as five runs silent for 515 to 946 seconds with the queue frozen
+     * behind them. Zero or omitted keeps the previous behaviour.
+     */
+    idleTimeoutSec?: number;
     onLog: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
     onLogError?: (err: unknown, runId: string, message: string) => void;
     onSpawn?: (meta: { pid: number; processGroupId: number | null; startedAt: string }) => Promise<void>;
@@ -2191,6 +2207,7 @@ export async function runChildProcess(
         runningProcesses.set(runId, { child, graceSec: opts.graceSec, processGroupId });
 
         let timedOut = false;
+        let idleTimedOut = false;
         let stdout = "";
         let stderr = "";
         let logChain: Promise<void> = Promise.resolve();
@@ -2255,12 +2272,38 @@ export async function runChildProcess(
               }, opts.timeoutSec * 1000)
             : null;
 
+        // Idle watchdog. Rearmed by every chunk, so a run that keeps streaming is never touched
+        // however long it takes; only silence trips it.
+        const idleSec = Math.max(0, opts.idleTimeoutSec ?? 0);
+        let idleTimer: NodeJS.Timeout | null = null;
+        const clearIdleTimer = () => {
+          if (idleTimer) {
+            clearTimeout(idleTimer);
+            idleTimer = null;
+          }
+        };
+        const armIdleTimer = () => {
+          if (idleSec <= 0 || timedOut) return;
+          clearIdleTimer();
+          idleTimer = setTimeout(() => {
+            timedOut = true;
+            idleTimedOut = true;
+            clearTerminalCleanupTimers();
+            signalRunningProcess({ child, processGroupId }, "SIGTERM");
+            setTimeout(() => {
+              signalRunningProcess({ child, processGroupId }, "SIGKILL");
+            }, Math.max(1, opts.graceSec) * 1000);
+          }, idleSec * 1000);
+        };
+        armIdleTimer();
+
         child.stdout?.on("data", (chunk: unknown) => {
           const readable = child.stdout;
           if (!readable) return;
           readable.pause();
           const text = String(chunk);
           stdout = appendWithCap(stdout, text);
+          armIdleTimer();
           maybeArmTerminalResultCleanup();
           logChain = logChain
             .then(() => opts.onLog("stdout", text))
@@ -2277,6 +2320,7 @@ export async function runChildProcess(
           readable.pause();
           const text = String(chunk);
           stderr = appendWithCap(stderr, text);
+          armIdleTimer();
           maybeArmTerminalResultCleanup();
           logChain = logChain
             .then(() => opts.onLog("stderr", text))
@@ -2298,6 +2342,7 @@ export async function runChildProcess(
 
         child.on("error", (err: Error) => {
           if (timeout) clearTimeout(timeout);
+          clearIdleTimer();
           clearTerminalCleanupTimers();
           runningProcesses.delete(runId);
           void target.cleanup?.();
@@ -2316,6 +2361,7 @@ export async function runChildProcess(
 
         child.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
           if (timeout) clearTimeout(timeout);
+          clearIdleTimer();
           clearTerminalCleanupTimers();
           runningProcesses.delete(runId);
           void logChain.finally(() => {
@@ -2326,6 +2372,7 @@ export async function runChildProcess(
                 exitCode: code,
                 signal,
                 timedOut,
+                idleTimedOut,
                 stdout,
                 stderr,
                 pid: child.pid ?? null,
