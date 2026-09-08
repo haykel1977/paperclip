@@ -409,6 +409,33 @@ describe("runChildProcess", () => {
     expect(result.stdout).toBe("done");
   });
 
+  it("survives a child that closes its stdin before the write lands", async () => {
+    // Regression of a real crash on 2026-09-08: cancelling a backlog of queued runs killed
+    // several children at once, the deferred write to their stdin raised EPIPE, and a socket
+    // with no error listener took the whole server down. systemd restarted it ten seconds
+    // later, killing every run that was in flight.
+    //
+    // The child exits immediately without reading its input, and the payload is larger than the
+    // pipe buffer so the write cannot be absorbed silently. Without the guard the test process
+    // dies on an unhandled `error` instead of reaching the assertions below.
+    const result = await runChildProcess(
+      randomUUID(),
+      process.execPath,
+      ["-e", "process.stdin.destroy(); process.exit(0);"],
+      {
+        cwd: process.cwd(),
+        env: {},
+        timeoutSec: 0,
+        graceSec: 1,
+        stdin: "x".repeat(2_000_000),
+        onLog: async () => {},
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.timedOut).toBe(false);
+  });
+
   it("waits for onSpawn before sending stdin to the child", async () => {
     const spawnDelayMs = 150;
     const startedAt = Date.now();

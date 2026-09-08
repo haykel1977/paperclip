@@ -2351,10 +2351,40 @@ export async function runChildProcess(
 
         const stdin = child.stdin;
         if (opts.stdin != null && stdin) {
+          // A child that has already exited leaves a closed pipe. Writing to it raises EPIPE as
+          // an `error` event on the socket, and a socket with no error listener takes the whole
+          // process down — the server, not just this run. The `child.killed || stdin.destroyed`
+          // check below cannot prevent that on its own: the child can exit between the check and
+          // the write, which is precisely what happens when several runs are cancelled at once.
+          // Observed on 2026-09-08: cancelling a backlog of queued runs crashed the API with
+          // `EPIPE` thrown from this line, and systemd restarted it ten seconds later, killing
+          // every run that was in flight.
+          //
+          // Losing the stdin of a child that is already gone costs nothing; losing the server
+          // costs every concurrent run. Only the pipe-is-gone codes are absorbed, though:
+          // anything else on this socket is unexpected and is logged rather than swallowed, so
+          // an unrelated stream failure stays visible instead of disappearing behind the guard.
+          const stdinPipeGone = new Set(["EPIPE", "ERR_STREAM_DESTROYED", "ERR_STREAM_WRITE_AFTER_END"]);
+          // One filter for both paths. The pipe can fail asynchronously, through the socket's
+          // `error` event, or synchronously, by throwing out of `write`/`end`; treating them
+          // differently would let an unexpected failure disappear down whichever path the
+          // runtime happened to take.
+          const handleStdinError = (err: unknown) => {
+            const code = (err as NodeJS.ErrnoException | undefined)?.code;
+            if (code != null && stdinPipeGone.has(code)) return;
+            onLogError(err, runId, "unexpected error on child stdin");
+          };
+          // `on`, not `once`: a second error would otherwise reach no listener and take the
+          // process down again, which is the exact failure this block exists to prevent.
+          stdin.on("error", handleStdinError);
           void spawnPersistPromise.finally(() => {
-            if (child.killed || stdin.destroyed) return;
-            stdin.write(opts.stdin as string);
-            stdin.end();
+            if (child.killed || stdin.destroyed || stdin.writableEnded) return;
+            try {
+              stdin.write(opts.stdin as string);
+              stdin.end();
+            } catch (err) {
+              handleStdinError(err);
+            }
           });
         }
 
