@@ -77,6 +77,12 @@ export interface AdapterExecutionTargetProcessOptions {
   /**
    * Kill the child after this many seconds without any stdout/stderr. Distinct from
    * `timeoutSec`, which bounds total duration: a silent child is stuck, a slow one is not.
+   *
+   * **Local and SSH targets only.** A sandbox target delegates to the provider's own
+   * `runner.execute`, which has no idle watchdog of its own and takes only `timeoutMs`; the
+   * value is silently unused there. Do not read this option as a guarantee that a stalled
+   * sandbox run will be reclaimed — it will not, and that gap needs the provider's own
+   * mechanism.
    */
   idleTimeoutSec?: number;
   cwd: string;

@@ -2148,7 +2148,11 @@ export async function runChildProcess(
      * `timeoutSec` alone cannot catch a stuck run: the child is alive, its pid resolves, so the
      * `process_lost` detection never fires, and the slot stays held until the total timeout —
      * observed on 2026-09-08 as five runs silent for 515 to 946 seconds with the queue frozen
-     * behind them. Zero or omitted keeps the previous behaviour.
+     * behind them. Zero, omitted, or any non-finite value keeps the previous behaviour.
+     *
+     * Applies to processes this function spawns. Callers that route through a sandbox provider
+     * never reach here, so the option does not cover them — see
+     * `AdapterExecutionTargetProcessOptions.idleTimeoutSec`.
      */
     idleTimeoutSec?: number;
     onLog: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
@@ -2260,21 +2264,17 @@ export async function runChildProcess(
           }, graceMs);
         };
 
-        const timeout =
-          opts.timeoutSec > 0
-            ? setTimeout(() => {
-                timedOut = true;
-                clearTerminalCleanupTimers();
-                signalRunningProcess({ child, processGroupId }, "SIGTERM");
-                setTimeout(() => {
-                  signalRunningProcess({ child, processGroupId }, "SIGKILL");
-                }, Math.max(1, opts.graceSec) * 1000);
-              }, opts.timeoutSec * 1000)
-            : null;
-
-        // Idle watchdog. Rearmed by every chunk, so a run that keeps streaming is never touched
-        // however long it takes; only silence trips it.
-        const idleSec = Math.max(0, opts.idleTimeoutSec ?? 0);
+        // Chien de garde d'inactivité. Réarmé par chaque chunk : un run qui produit en continu
+        // n'est jamais touché, quelle que soit sa durée ; seul le silence le déclenche.
+        //
+        // Number.isFinite, et pas seulement > 0 : setTimeout coerce NaN et Infinity en 1 ms, donc
+        // une valeur de configuration aberrante armerait un garde qui tue le run immédiatement.
+        // Toute valeur non finie désarme, comme une valeur absente.
+        const rawIdleSec = opts.idleTimeoutSec;
+        const idleSec =
+          typeof rawIdleSec === "number" && Number.isFinite(rawIdleSec) && rawIdleSec > 0
+            ? rawIdleSec
+            : 0;
         let idleTimer: NodeJS.Timeout | null = null;
         const clearIdleTimer = () => {
           if (idleTimer) {
@@ -2295,6 +2295,24 @@ export async function runChildProcess(
             }, Math.max(1, opts.graceSec) * 1000);
           }, idleSec * 1000);
         };
+
+        const timeout =
+          opts.timeoutSec > 0
+            ? setTimeout(() => {
+                timedOut = true;
+                // Désarmer l'inactivité ici. Sinon un minuteur déjà programmé peut tirer pendant
+                // la fenêtre de grâce et poser idleTimedOut : le dépassement de durée serait
+                // rapporté comme un blocage, c'est-à-dire exactement la confusion que ce garde
+                // est censé lever.
+                clearIdleTimer();
+                clearTerminalCleanupTimers();
+                signalRunningProcess({ child, processGroupId }, "SIGTERM");
+                setTimeout(() => {
+                  signalRunningProcess({ child, processGroupId }, "SIGKILL");
+                }, Math.max(1, opts.graceSec) * 1000);
+              }, opts.timeoutSec * 1000)
+            : null;
+
         armIdleTimer();
 
         child.stdout?.on("data", (chunk: unknown) => {
