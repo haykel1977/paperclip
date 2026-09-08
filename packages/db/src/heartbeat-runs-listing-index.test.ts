@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
 import postgres from "postgres";
-import { applyPendingMigrations } from "./client.js";
 import {
   getEmbeddedPostgresTestSupport,
   startEmbeddedPostgresTestDatabase,
@@ -18,24 +17,24 @@ afterEach(async () => {
 });
 
 /**
- * Le tableau de bord interroge GET /companies/:id/heartbeat-runs?limit=200, qui se traduit par
- * « where company_id = ? order by created_at desc limit 200 ». Tant que le seul index utile
- * porte sur (company_id, agent_id, started_at) ou (company_id, liveness_state, created_at),
- * PostgreSQL ne peut pas satisfaire ce tri : il balaie toute la table puis garde 200 lignes.
+ * The dashboard polls GET /companies/:id/heartbeat-runs?limit=200, which becomes
+ * `where company_id = ? order by created_at desc limit 200`. As long as every index on the
+ * table places another column ahead of created_at — agent_id, liveness_state, status —
+ * Postgres cannot order that scan: it reads the whole table and then keeps 200 rows.
  *
- * Ce n'est pas une inefficacité théorique. Sur l'instance quantum-dev, la table avait atteint
- * 149 754 lignes pour 185 Mo de tas ; chaque appel lançait deux workers parallèles et lisait
- * l'intégralité du tas, et le tableau de bord appelait la route environ dix-neuf fois par
- * minute. L'API a cessé de répondre.
+ * This is not a theoretical inefficiency. On one instance the table had reached 149,754 rows
+ * and 185 MB of heap; each request read all of it and spawned two parallel workers, and the
+ * dashboard called the route roughly nineteen times a minute. The API stopped responding.
  *
- * Le test échoue si l'index (company_id, created_at DESC) disparaît du schéma : sans lui le
- * plan retombe sur un Seq Scan, ce qui est exactement le défaut de production.
+ * The test fails if the (company_id, created_at) index leaves the schema: the plan falls back
+ * to a Seq Scan, which is exactly the production defect.
  */
-describeEmbeddedPostgres("liste des runs par entreprise", () => {
-  it("sert le tri created_at desc par un index, sans balayer la table", async () => {
+describeEmbeddedPostgres("per-company run listing", () => {
+  it("serves the created_at desc sort from an index instead of scanning the table", async () => {
+    // startEmbeddedPostgresTestDatabase applies pending migrations itself, so the schema —
+    // including the index under test — is already in place here.
     const db = await startEmbeddedPostgresTestDatabase("paperclip-runs-index-");
     cleanups.push(db.cleanup);
-    await applyPendingMigrations(db.connectionString);
 
     const sql = postgres(db.connectionString, { max: 1 });
     cleanups.push(async () => {
@@ -49,9 +48,9 @@ describeEmbeddedPostgres("liste des runs par entreprise", () => {
       insert into agents (company_id, name) values (${company.id}, 'Fixture Agent') returning id
     `;
 
-    // Assez de lignes, et assez larges, pour qu'un balayage séquentiel coûte franchement plus
-    // cher que 200 entrées d'index : en dessous, le planificateur choisirait le balayage même
-    // avec l'index en place et le test ne prouverait rien.
+    // Enough rows, and wide enough, that a sequential scan costs clearly more than 200 index
+    // entries. Below that the planner would pick the scan even with the index in place, and
+    // the test would prove nothing.
     await sql`
       insert into heartbeat_runs (company_id, agent_id, status, created_at, context_snapshot)
       select ${company.id}, ${agent.id}, 'succeeded',
