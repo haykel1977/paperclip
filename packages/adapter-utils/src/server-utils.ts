@@ -2351,10 +2351,29 @@ export async function runChildProcess(
 
         const stdin = child.stdin;
         if (opts.stdin != null && stdin) {
+          // A child that has already exited leaves a closed pipe. Writing to it raises EPIPE as
+          // an `error` event on the socket, and a socket with no error listener takes the whole
+          // process down — the server, not just this run. The `child.killed || stdin.destroyed`
+          // check below cannot prevent that on its own: the child can exit between the check and
+          // the write, which is precisely what happens when several runs are cancelled at once.
+          // Observed on 2026-09-08: cancelling a backlog of queued runs crashed the API with
+          // `EPIPE` thrown from this line, and systemd restarted it ten seconds later, killing
+          // every run that was in flight.
+          //
+          // Losing the stdin of a child that is already gone costs nothing; losing the server
+          // costs every concurrent run. So the pipe error is absorbed here and nowhere else.
+          stdin.on("error", () => {
+            // Deliberately empty: the only writer is the block below, and the only failure mode
+            // that reaches here is a pipe whose reader has gone away.
+          });
           void spawnPersistPromise.finally(() => {
-            if (child.killed || stdin.destroyed) return;
-            stdin.write(opts.stdin as string);
-            stdin.end();
+            if (child.killed || stdin.destroyed || stdin.writableEnded) return;
+            try {
+              stdin.write(opts.stdin as string);
+              stdin.end();
+            } catch {
+              // Synchronous throw on an already-closed pipe: same reasoning as the handler above.
+            }
           });
         }
 

@@ -409,6 +409,33 @@ describe("runChildProcess", () => {
     expect(result.stdout).toBe("done");
   });
 
+  it("survives a child that closes its stdin before the write lands", async () => {
+    // Régression d'un plantage réel du 2026-09-08 : annuler d'un coup une file de runs tuait
+    // plusieurs enfants, l'écriture différée sur leur stdin levait EPIPE, et la socket sans
+    // écouteur d'erreur faisait tomber tout le serveur. Systemd le relevait dix secondes plus
+    // tard, emportant chaque run en vol.
+    //
+    // L'enfant sort immédiatement sans lire son entrée. La charge dépasse le tampon du tube
+    // pour que l'écriture ne puisse pas être absorbée en silence. Sans le garde, le processus
+    // de test meurt sur un `error` non géré au lieu de voir cette assertion.
+    const result = await runChildProcess(
+      randomUUID(),
+      process.execPath,
+      ["-e", "process.stdin.destroy(); process.exit(0);"],
+      {
+        cwd: process.cwd(),
+        env: {},
+        timeoutSec: 0,
+        graceSec: 1,
+        stdin: "x".repeat(2_000_000),
+        onLog: async () => {},
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.timedOut).toBe(false);
+  });
+
   it("waits for onSpawn before sending stdin to the child", async () => {
     const spawnDelayMs = 150;
     const startedAt = Date.now();
