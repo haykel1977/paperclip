@@ -1212,3 +1212,131 @@ describe("appendWithByteCap", () => {
     expect(Buffer.byteLength(output, "utf8")).toBeLessThanOrEqual(7);
   });
 });
+
+describe("runChildProcess idle watchdog", () => {
+  it("kills a child that stops producing output", async () => {
+    // A live child that never writes again is stuck, not slow: its pid still resolves, so the
+    // process_lost detection never fires and the run would hold its slot until timeoutSec.
+    const result = await runChildProcess(
+      randomUUID(),
+      process.execPath,
+      ["-e", "process.stdout.write('start'); setTimeout(() => {}, 60000);"],
+      {
+        cwd: process.cwd(),
+        env: {},
+        timeoutSec: 60,
+        idleTimeoutSec: 2,
+        graceSec: 1,
+        onLog: async () => {},
+      },
+    );
+
+    expect(result.timedOut).toBe(true);
+    expect(result.idleTimedOut).toBe(true);
+    expect(result.stdout).toBe("start");
+  }, 30000);
+
+  it("leaves a child alone for as long as it keeps writing", async () => {
+    // The watchdog is rearmed by every chunk, so a genuinely long run is never touched. The
+    // child writes for ~8s in 100ms steps against a 4s threshold: the run must outlive the
+    // threshold or the test proves nothing — a first attempt used a 3s child and still passed
+    // with the rearm removed. With the rearm, no single gap ever approaches 4s. The 40x margin
+    // between write interval and threshold is deliberate — a 1s threshold with 150ms writes
+    // flaked once under a loaded parallel run, and a flaky guard is worse than none.
+    const result = await runChildProcess(
+      randomUUID(),
+      process.execPath,
+      [
+        "-e",
+        "let n=0;const t=setInterval(()=>{process.stdout.write('.');if(++n===80){clearInterval(t);process.stdout.write('done');}},100);",
+      ],
+      {
+        cwd: process.cwd(),
+        env: {},
+        timeoutSec: 30,
+        idleTimeoutSec: 4,
+        graceSec: 1,
+        onLog: async () => {},
+      },
+    );
+
+    expect(result.timedOut).toBe(false);
+    expect(result.idleTimedOut).toBeFalsy();
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.endsWith("done")).toBe(true);
+  }, 30000);
+
+  it("does not arm the watchdog when idleTimeoutSec is omitted", async () => {
+    // Omitting the option must preserve the previous behaviour exactly: silence is tolerated.
+    const result = await runChildProcess(
+      randomUUID(),
+      process.execPath,
+      ["-e", "setTimeout(() => process.stdout.write('late'), 1200);"],
+      {
+        cwd: process.cwd(),
+        env: {},
+        timeoutSec: 30,
+        graceSec: 1,
+        onLog: async () => {},
+      },
+    );
+
+    expect(result.timedOut).toBe(false);
+    expect(result.idleTimedOut).toBeFalsy();
+    expect(result.stdout).toBe("late");
+  }, 30000);
+});
+
+describe("runChildProcess idle watchdog — edge cases from review", () => {
+  it("ignores a non-finite idleTimeoutSec instead of killing immediately", async () => {
+    // setTimeout coerces NaN and Infinity to 1ms, so a bad config value would arm a watchdog
+    // that fires before the child writes anything. Non-finite must disarm, like an absent value.
+    const result = await runChildProcess(
+      randomUUID(),
+      process.execPath,
+      ["-e", "setTimeout(() => process.stdout.write('survived'), 800);"],
+      {
+        cwd: process.cwd(),
+        env: {},
+        timeoutSec: 30,
+        idleTimeoutSec: Number.NaN,
+        graceSec: 1,
+        onLog: async () => {},
+      },
+    );
+
+    expect(result.timedOut).toBe(false);
+    expect(result.idleTimedOut).toBeFalsy();
+    expect(result.stdout).toBe("survived");
+  }, 30000);
+
+  it("reports a duration timeout as a timeout, never as a stall", async () => {
+    // The race only exists inside the SIGTERM→SIGKILL grace window, so the child must survive
+    // SIGTERM for it to open: a child that dies immediately is closed before the idle timer can
+    // fire, and the close handler clears it. A first version of this test used a compliant child
+    // and passed even with the disarm removed — it proved nothing.
+    //
+    // Timeline: write at t=0 arms idle for t=3. Duration limit fires at t=2 and sends SIGTERM,
+    // which the child ignores. Without clearIdleTimer() in that handler, the idle timer fires at
+    // t=3, inside the 5s grace, and flips idleTimedOut — reporting a slow run as a stuck one.
+    const result = await runChildProcess(
+      randomUUID(),
+      process.execPath,
+      [
+        "-e",
+        "process.on('SIGTERM', () => {}); process.stdout.write('x'); setTimeout(() => {}, 60000);",
+      ],
+      {
+        cwd: process.cwd(),
+        env: {},
+        timeoutSec: 2,
+        idleTimeoutSec: 3,
+        graceSec: 5,
+        onLog: async () => {},
+      },
+    );
+
+    expect(result.timedOut).toBe(true);
+    expect(result.idleTimedOut).toBeFalsy();
+  }, 30000);
+});
