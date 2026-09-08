@@ -78,5 +78,14 @@ export const heartbeatRuns = pgTable(
       table.status,
       table.processStartedAt,
     ),
+    // La liste des runs d'une entreprise trie toujours par created_at décroissant. Sans cet
+    // index, PostgreSQL balaie toute la table avant de garder 200 lignes : mesuré à 149 754
+    // lignes et 185 Mo lus par appel sur l'instance quantum-dev, avec deux workers parallèles
+    // à chaque requête. Le tri décroissant est déclaré ici pour que le parcours d'index soit
+    // direct plutôt que rétrograde.
+    companyCreatedIdx: index("heartbeat_runs_company_created_idx").on(
+      table.companyId,
+      table.createdAt.desc(),
+    ),
   }),
 );
