@@ -410,14 +410,14 @@ describe("runChildProcess", () => {
   });
 
   it("survives a child that closes its stdin before the write lands", async () => {
-    // Régression d'un plantage réel du 2026-09-08 : annuler d'un coup une file de runs tuait
-    // plusieurs enfants, l'écriture différée sur leur stdin levait EPIPE, et la socket sans
-    // écouteur d'erreur faisait tomber tout le serveur. Systemd le relevait dix secondes plus
-    // tard, emportant chaque run en vol.
+    // Regression of a real crash on 2026-09-08: cancelling a backlog of queued runs killed
+    // several children at once, the deferred write to their stdin raised EPIPE, and a socket
+    // with no error listener took the whole server down. systemd restarted it ten seconds
+    // later, killing every run that was in flight.
     //
-    // L'enfant sort immédiatement sans lire son entrée. La charge dépasse le tampon du tube
-    // pour que l'écriture ne puisse pas être absorbée en silence. Sans le garde, le processus
-    // de test meurt sur un `error` non géré au lieu de voir cette assertion.
+    // The child exits immediately without reading its input, and the payload is larger than the
+    // pipe buffer so the write cannot be absorbed silently. Without the guard the test process
+    // dies on an unhandled `error` instead of reaching the assertions below.
     const result = await runChildProcess(
       randomUUID(),
       process.execPath,

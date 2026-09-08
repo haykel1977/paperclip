@@ -2362,9 +2362,17 @@ export async function runChildProcess(
           //
           // Losing the stdin of a child that is already gone costs nothing; losing the server
           // costs every concurrent run. So the pipe error is absorbed here and nowhere else.
-          stdin.on("error", () => {
-            // Deliberately empty: the only writer is the block below, and the only failure mode
-            // that reaches here is a pipe whose reader has gone away.
+          // Only the pipe-is-gone codes are absorbed. Anything else on this socket is unexpected
+          // and is logged rather than swallowed, so an unrelated stream failure stays visible in
+          // production instead of disappearing behind this guard.
+          //
+          // `on`, not `once`: a second error would otherwise reach no listener and take the
+          // process down again, which is the exact failure this block exists to prevent.
+          const stdinPipeGone = new Set(["EPIPE", "ERR_STREAM_DESTROYED", "ERR_STREAM_WRITE_AFTER_END"]);
+          stdin.on("error", (err: NodeJS.ErrnoException) => {
+            const code = err?.code;
+            if (code != null && stdinPipeGone.has(code)) return;
+            onLogError(err, runId, "unexpected error on child stdin");
           });
           void spawnPersistPromise.finally(() => {
             if (child.killed || stdin.destroyed || stdin.writableEnded) return;
