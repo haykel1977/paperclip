@@ -181,10 +181,10 @@ const NON_RETRYABLE_CONTINUATION_ERROR_CODES = new Set<string>([
 
 const CONTINUATION_RECOVERY_TRANSIENT_MAX_ATTEMPTS = 3;
 const CONTINUATION_RECOVERY_DEFAULT_MAX_ATTEMPTS = 1;
-// Plafond de la récupération source-scoped. Sans lui, `max_attempts` restait `null` et la
-// récupération se relançait sans fin : chaque échec bascule un ticket de plus en `blocked`.
-// Trois tentatives laissent la place à une panne passagère — un redémarrage du serveur, un
-// modèle lent — sans transformer une panne durable en hémorragie de tickets.
+// Attempt cap for source-scoped recovery. Without it `max_attempts` stayed `null`, so recovery
+// retried forever and every failure pushed one more issue into `blocked`. Three attempts leave
+// room for a transient fault — a server restart, a slow model — without turning a lasting one
+// into a steady drain of issues.
 const SOURCE_SCOPED_RECOVERY_MAX_ATTEMPTS = 3;
 const CONTINUATION_RECOVERY_TRANSIENT_BASE_BACKOFF_MS = 60_000;
 
@@ -2155,10 +2155,10 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
   }) {
     if (input.recoveryCause === "workspace_validation_failed") return;
     if (!input.action.ownerAgentId) return;
-    // Plafond atteint : on arrête de réveiller le propriétaire. L'action reste `active` et
-    // visible dans le fil du ticket, donc un humain la voit toujours ; ce qui cesse, c'est la
-    // boucle qui consommait un ticket toutes les cinq minutes en le passant en `blocked`.
-    // Réveiller une quatrième fois un chemin qui a échoué trois fois n'apprend rien de plus.
+    // Cap reached: stop waking the owner. The action stays `active` and visible in the issue
+    // thread, so a human still sees it; what stops is the loop that consumed one issue every
+    // five minutes by pushing it to `blocked`. Waking a fourth time on a path that has failed
+    // three times teaches nothing new.
     const maxAttempts = input.action.maxAttempts;
     if (maxAttempts !== null && maxAttempts !== undefined && input.action.attemptCount > maxAttempts) {
       logger.warn(

@@ -756,9 +756,9 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       returnOwnerAgentId: input.agentId,
       cause: input.cause ?? "stranded_assigned_issue",
       attemptCount: 1,
-      // Le plafond est désormais renseigné à la création. Il valait `null`, donc la
-      // récupération se relançait sans fin : chaque échec basculait un ticket de plus en
-      // `blocked`. Voir SOURCE_SCOPED_RECOVERY_MAX_ATTEMPTS dans recovery/service.ts.
+      // The cap is now set at creation time. It used to be `null`, so recovery retried forever
+      // and every failure pushed one more issue into `blocked`. See
+      // SOURCE_SCOPED_RECOVERY_MAX_ATTEMPTS in recovery/service.ts.
       maxAttempts: 3,
     });
     expect(action.evidence).toMatchObject({
@@ -1721,20 +1721,20 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
   });
 
   it("stops waking the owner once the source-scoped recovery attempt cap is reached", async () => {
-    // Régression d'une boucle observée en production le 2026-09-08. `max_attempts` était écrit
-    // `null` en dur, donc jamais atteint, et la récupération se relançait indéfiniment : onze
-    // tickets sont passés en `blocked` entre 13:24 et 15:00, un toutes les cinq à dix minutes,
-    // sans qu'aucun ait de cause propre. Le réveil `source_scoped_recovery_action` totalisait
-    // alors 9 runs pour 7 expirations et zéro réussite.
+    // Regression test for a loop observed in production on 2026-09-08. `max_attempts` was
+    // hardcoded to `null`, so it was never reached and recovery retried forever: eleven issues
+    // moved to `blocked` between 13:24 and 15:00, one every five to ten minutes, none of them
+    // for a cause of its own. Over that window the `source_scoped_recovery_action` wake had
+    // 9 runs, 7 timeouts and zero successes.
     //
-    // Le test tient en un seul passage de réconciliation, et c'est nécessaire : dès qu'un
-    // réveil est en file, `hasActiveExecutionPath` fait sauter l'issue au passage suivant. Un
-    // test qui appelait `reconcileStrandedAssignedIssues()` deux fois n'atteignait donc jamais
-    // le code du plafond et passait aussi bien sans lui — il ne prouvait rien. On sème à la
-    // place une action déjà à trois tentatives, comme après trois escalades réelles :
-    // `upsertSourceScoped` l'incrémente à quatre, et c'est ce quatrième réveil qu'on refuse.
-    // `agent_not_invokable` est non réessayable : la réconciliation va droit à l'escalade
-    // source-scoped, sans passer par les réessais de continuation qui ont leur propre plafond.
+    // This test uses a SINGLE reconcile pass, and that is required: once a wake is queued,
+    // `hasActiveExecutionPath` skips the issue on the next pass. A test that called
+    // `reconcileStrandedAssignedIssues()` twice therefore never reached the cap code and passed
+    // just as well without it — it proved nothing. Instead we seed an action already at three
+    // attempts, the state left by three real escalations: `upsertSourceScoped` bumps it to
+    // four, and it is that fourth wake we refuse.
+    // `agent_not_invokable` is non-retryable: reconcile goes straight to source-scoped
+    // escalation, bypassing continuation retries, which have a cap of their own.
     const { companyId, agentId, issueId } = await seedStrandedIssueFixture({
       status: "in_progress",
       runStatus: "failed",
@@ -1774,13 +1774,13 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       .where(eq(issueRecoveryActions.sourceIssueId, issueId))
       .then((rows) => rows[0] ?? null);
 
-    // L'escalade a bien eu lieu : on a traversé le chemin de récupération, pas contourné par
-    // un `skipped`. Sans ces deux assertions, un test vert pourrait ne rien avoir exécuté.
+    // The escalation did happen: we went through the recovery path rather than around it via a
+    // `skipped`. Without these two assertions a green test could have executed nothing.
     expect(result.escalated).toBe(1);
     expect(action?.attemptCount).toBe(4);
 
-    // Ce que le plafond change, et seulement cela : le propriétaire n'est plus réveillé.
-    // L'action reste `active`, donc visible dans le fil du ticket pour un humain.
+    // What the cap changes, and only that: the owner is no longer woken. The action stays
+    // `active`, so it remains visible to a human in the issue thread.
     expect(await countRecoveryWakes()).toBe(0);
     expect(action?.status).toBe("active");
   });
