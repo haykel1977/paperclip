@@ -756,7 +756,10 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       returnOwnerAgentId: input.agentId,
       cause: input.cause ?? "stranded_assigned_issue",
       attemptCount: 1,
-      maxAttempts: null,
+      // Le plafond est désormais renseigné à la création. Il valait `null`, donc la
+      // récupération se relançait sans fin : chaque échec basculait un ticket de plus en
+      // `blocked`. Voir SOURCE_SCOPED_RECOVERY_MAX_ATTEMPTS dans recovery/service.ts.
+      maxAttempts: 3,
     });
     expect(action.evidence).toMatchObject({
       sourceIssueId: input.issueId,
@@ -1715,6 +1718,71 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     const activityDetailsText = JSON.stringify(handoffActivity?.details ?? {});
     expect(activityDetailsText).not.toContain(bearerSecret);
     expect(activityDetailsText).not.toContain(apiKeySecret);
+  });
+
+  it("stops waking the owner once the source-scoped recovery attempt cap is reached", async () => {
+    // Régression d'une boucle observée en production le 2026-09-08. `max_attempts` était écrit
+    // `null` en dur, donc jamais atteint, et la récupération se relançait indéfiniment : onze
+    // tickets sont passés en `blocked` entre 13:24 et 15:00, un toutes les cinq à dix minutes,
+    // sans qu'aucun ait de cause propre. Le réveil `source_scoped_recovery_action` totalisait
+    // alors 9 runs pour 7 expirations et zéro réussite.
+    //
+    // Le test tient en un seul passage de réconciliation, et c'est nécessaire : dès qu'un
+    // réveil est en file, `hasActiveExecutionPath` fait sauter l'issue au passage suivant. Un
+    // test qui appelait `reconcileStrandedAssignedIssues()` deux fois n'atteignait donc jamais
+    // le code du plafond et passait aussi bien sans lui — il ne prouvait rien. On sème à la
+    // place une action déjà à trois tentatives, comme après trois escalades réelles :
+    // `upsertSourceScoped` l'incrémente à quatre, et c'est ce quatrième réveil qu'on refuse.
+    // `agent_not_invokable` est non réessayable : la réconciliation va droit à l'escalade
+    // source-scoped, sans passer par les réessais de continuation qui ont leur propre plafond.
+    const { companyId, agentId, issueId } = await seedStrandedIssueFixture({
+      status: "in_progress",
+      runStatus: "failed",
+      runErrorCode: "agent_not_invokable",
+    });
+
+    await db.insert(issueRecoveryActions).values({
+      companyId,
+      sourceIssueId: issueId,
+      kind: "stranded_assigned_issue",
+      status: "active",
+      ownerType: "agent",
+      ownerAgentId: agentId,
+      previousOwnerAgentId: agentId,
+      returnOwnerAgentId: agentId,
+      cause: "stranded_assigned_issue",
+      fingerprint: `source_scoped_recovery:${companyId}:${issueId}:stranded_assigned_issue`,
+      nextAction: "Restore a live execution path.",
+      attemptCount: 3,
+      maxAttempts: 3,
+    });
+
+    const countRecoveryWakes = async () =>
+      db
+        .select()
+        .from(agentWakeupRequests)
+        .where(eq(agentWakeupRequests.agentId, agentId))
+        .then((rows) => rows.filter((w) => w.reason === "source_scoped_recovery_action").length);
+    expect(await countRecoveryWakes()).toBe(0);
+
+    const heartbeat = heartbeatService(db);
+    const result = await heartbeat.reconcileStrandedAssignedIssues();
+
+    const action = await db
+      .select()
+      .from(issueRecoveryActions)
+      .where(eq(issueRecoveryActions.sourceIssueId, issueId))
+      .then((rows) => rows[0] ?? null);
+
+    // L'escalade a bien eu lieu : on a traversé le chemin de récupération, pas contourné par
+    // un `skipped`. Sans ces deux assertions, un test vert pourrait ne rien avoir exécuté.
+    expect(result.escalated).toBe(1);
+    expect(action?.attemptCount).toBe(4);
+
+    // Ce que le plafond change, et seulement cela : le propriétaire n'est plus réveillé.
+    // L'action reste `active`, donc visible dans le fil du ticket pour un humain.
+    expect(await countRecoveryWakes()).toBe(0);
+    expect(action?.status).toBe("active");
   });
 
   it("escalates an exhausted failed successful-run handoff without using generic continuation recovery first", async () => {

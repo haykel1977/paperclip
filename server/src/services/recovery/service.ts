@@ -181,6 +181,11 @@ const NON_RETRYABLE_CONTINUATION_ERROR_CODES = new Set<string>([
 
 const CONTINUATION_RECOVERY_TRANSIENT_MAX_ATTEMPTS = 3;
 const CONTINUATION_RECOVERY_DEFAULT_MAX_ATTEMPTS = 1;
+// Plafond de la récupération source-scoped. Sans lui, `max_attempts` restait `null` et la
+// récupération se relançait sans fin : chaque échec bascule un ticket de plus en `blocked`.
+// Trois tentatives laissent la place à une panne passagère — un redémarrage du serveur, un
+// modèle lent — sans transformer une panne durable en hémorragie de tickets.
+const SOURCE_SCOPED_RECOVERY_MAX_ATTEMPTS = 3;
 const CONTINUATION_RECOVERY_TRANSIENT_BASE_BACKOFF_MS = 60_000;
 
 type ContinuationRetryClassification = {
@@ -2135,7 +2140,7 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
           reason: "no_invokable_recovery_owner",
         },
       monitorPolicy: null,
-      maxAttempts: null,
+      maxAttempts: SOURCE_SCOPED_RECOVERY_MAX_ATTEMPTS,
       lastAttemptAt: now,
     });
 
@@ -2150,6 +2155,24 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
   }) {
     if (input.recoveryCause === "workspace_validation_failed") return;
     if (!input.action.ownerAgentId) return;
+    // Plafond atteint : on arrête de réveiller le propriétaire. L'action reste `active` et
+    // visible dans le fil du ticket, donc un humain la voit toujours ; ce qui cesse, c'est la
+    // boucle qui consommait un ticket toutes les cinq minutes en le passant en `blocked`.
+    // Réveiller une quatrième fois un chemin qui a échoué trois fois n'apprend rien de plus.
+    const maxAttempts = input.action.maxAttempts;
+    if (maxAttempts !== null && maxAttempts !== undefined && input.action.attemptCount > maxAttempts) {
+      logger.warn(
+        {
+          recoveryActionId: input.action.id,
+          issueId: input.issue.id,
+          attemptCount: input.action.attemptCount,
+          maxAttempts,
+          recoveryCause: input.recoveryCause,
+        },
+        "source-scoped recovery attempt cap reached; not waking the owner again",
+      );
+      return;
+    }
     await deps.enqueueWakeup(input.action.ownerAgentId, {
       source: "assignment",
       triggerDetail: "system",
