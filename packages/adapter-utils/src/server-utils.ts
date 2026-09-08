@@ -2361,26 +2361,29 @@ export async function runChildProcess(
           // every run that was in flight.
           //
           // Losing the stdin of a child that is already gone costs nothing; losing the server
-          // costs every concurrent run. So the pipe error is absorbed here and nowhere else.
-          // Only the pipe-is-gone codes are absorbed. Anything else on this socket is unexpected
-          // and is logged rather than swallowed, so an unrelated stream failure stays visible in
-          // production instead of disappearing behind this guard.
-          //
-          // `on`, not `once`: a second error would otherwise reach no listener and take the
-          // process down again, which is the exact failure this block exists to prevent.
+          // costs every concurrent run. Only the pipe-is-gone codes are absorbed, though:
+          // anything else on this socket is unexpected and is logged rather than swallowed, so
+          // an unrelated stream failure stays visible instead of disappearing behind the guard.
           const stdinPipeGone = new Set(["EPIPE", "ERR_STREAM_DESTROYED", "ERR_STREAM_WRITE_AFTER_END"]);
-          stdin.on("error", (err: NodeJS.ErrnoException) => {
-            const code = err?.code;
+          // One filter for both paths. The pipe can fail asynchronously, through the socket's
+          // `error` event, or synchronously, by throwing out of `write`/`end`; treating them
+          // differently would let an unexpected failure disappear down whichever path the
+          // runtime happened to take.
+          const handleStdinError = (err: unknown) => {
+            const code = (err as NodeJS.ErrnoException | undefined)?.code;
             if (code != null && stdinPipeGone.has(code)) return;
             onLogError(err, runId, "unexpected error on child stdin");
-          });
+          };
+          // `on`, not `once`: a second error would otherwise reach no listener and take the
+          // process down again, which is the exact failure this block exists to prevent.
+          stdin.on("error", handleStdinError);
           void spawnPersistPromise.finally(() => {
             if (child.killed || stdin.destroyed || stdin.writableEnded) return;
             try {
               stdin.write(opts.stdin as string);
               stdin.end();
-            } catch {
-              // Synchronous throw on an already-closed pipe: same reasoning as the handler above.
+            } catch (err) {
+              handleStdinError(err);
             }
           });
         }
