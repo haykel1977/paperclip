@@ -181,6 +181,11 @@ const NON_RETRYABLE_CONTINUATION_ERROR_CODES = new Set<string>([
 
 const CONTINUATION_RECOVERY_TRANSIENT_MAX_ATTEMPTS = 3;
 const CONTINUATION_RECOVERY_DEFAULT_MAX_ATTEMPTS = 1;
+// Attempt cap for source-scoped recovery. Without it `max_attempts` stayed `null`, so recovery
+// retried forever and every failure pushed one more issue into `blocked`. Three attempts leave
+// room for a transient fault — a server restart, a slow model — without turning a lasting one
+// into a steady drain of issues.
+const SOURCE_SCOPED_RECOVERY_MAX_ATTEMPTS = 3;
 const CONTINUATION_RECOVERY_TRANSIENT_BASE_BACKOFF_MS = 60_000;
 
 type ContinuationRetryClassification = {
@@ -2135,7 +2140,7 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
           reason: "no_invokable_recovery_owner",
         },
       monitorPolicy: null,
-      maxAttempts: null,
+      maxAttempts: SOURCE_SCOPED_RECOVERY_MAX_ATTEMPTS,
       lastAttemptAt: now,
     });
 
@@ -2150,6 +2155,24 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
   }) {
     if (input.recoveryCause === "workspace_validation_failed") return;
     if (!input.action.ownerAgentId) return;
+    // Cap reached: stop waking the owner. The action stays `active` and visible in the issue
+    // thread, so a human still sees it; what stops is the loop that consumed one issue every
+    // five minutes by pushing it to `blocked`. Waking a fourth time on a path that has failed
+    // three times teaches nothing new.
+    const maxAttempts = input.action.maxAttempts;
+    if (maxAttempts !== null && maxAttempts !== undefined && input.action.attemptCount > maxAttempts) {
+      logger.warn(
+        {
+          recoveryActionId: input.action.id,
+          issueId: input.issue.id,
+          attemptCount: input.action.attemptCount,
+          maxAttempts,
+          recoveryCause: input.recoveryCause,
+        },
+        "source-scoped recovery attempt cap reached; not waking the owner again",
+      );
+      return;
+    }
     await deps.enqueueWakeup(input.action.ownerAgentId, {
       source: "assignment",
       triggerDetail: "system",

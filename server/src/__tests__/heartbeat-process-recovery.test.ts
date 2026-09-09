@@ -756,7 +756,10 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       returnOwnerAgentId: input.agentId,
       cause: input.cause ?? "stranded_assigned_issue",
       attemptCount: 1,
-      maxAttempts: null,
+      // The cap is now set at creation time. It used to be `null`, so recovery retried forever
+      // and every failure pushed one more issue into `blocked`. See
+      // SOURCE_SCOPED_RECOVERY_MAX_ATTEMPTS in recovery/service.ts.
+      maxAttempts: 3,
     });
     expect(action.evidence).toMatchObject({
       sourceIssueId: input.issueId,
@@ -1715,6 +1718,71 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     const activityDetailsText = JSON.stringify(handoffActivity?.details ?? {});
     expect(activityDetailsText).not.toContain(bearerSecret);
     expect(activityDetailsText).not.toContain(apiKeySecret);
+  });
+
+  it("stops waking the owner once the source-scoped recovery attempt cap is reached", async () => {
+    // Regression test for a loop observed in production on 2026-09-08. `max_attempts` was
+    // hardcoded to `null`, so it was never reached and recovery retried forever: eleven issues
+    // moved to `blocked` between 13:24 and 15:00, one every five to ten minutes, none of them
+    // for a cause of its own. Over that window the `source_scoped_recovery_action` wake had
+    // 9 runs, 7 timeouts and zero successes.
+    //
+    // This test uses a SINGLE reconcile pass, and that is required: once a wake is queued,
+    // `hasActiveExecutionPath` skips the issue on the next pass. A test that called
+    // `reconcileStrandedAssignedIssues()` twice therefore never reached the cap code and passed
+    // just as well without it — it proved nothing. Instead we seed an action already at three
+    // attempts, the state left by three real escalations: `upsertSourceScoped` bumps it to
+    // four, and it is that fourth wake we refuse.
+    // `agent_not_invokable` is non-retryable: reconcile goes straight to source-scoped
+    // escalation, bypassing continuation retries, which have a cap of their own.
+    const { companyId, agentId, issueId } = await seedStrandedIssueFixture({
+      status: "in_progress",
+      runStatus: "failed",
+      runErrorCode: "agent_not_invokable",
+    });
+
+    await db.insert(issueRecoveryActions).values({
+      companyId,
+      sourceIssueId: issueId,
+      kind: "stranded_assigned_issue",
+      status: "active",
+      ownerType: "agent",
+      ownerAgentId: agentId,
+      previousOwnerAgentId: agentId,
+      returnOwnerAgentId: agentId,
+      cause: "stranded_assigned_issue",
+      fingerprint: `source_scoped_recovery:${companyId}:${issueId}:stranded_assigned_issue`,
+      nextAction: "Restore a live execution path.",
+      attemptCount: 3,
+      maxAttempts: 3,
+    });
+
+    const countRecoveryWakes = async () =>
+      db
+        .select()
+        .from(agentWakeupRequests)
+        .where(eq(agentWakeupRequests.agentId, agentId))
+        .then((rows) => rows.filter((w) => w.reason === "source_scoped_recovery_action").length);
+    expect(await countRecoveryWakes()).toBe(0);
+
+    const heartbeat = heartbeatService(db);
+    const result = await heartbeat.reconcileStrandedAssignedIssues();
+
+    const action = await db
+      .select()
+      .from(issueRecoveryActions)
+      .where(eq(issueRecoveryActions.sourceIssueId, issueId))
+      .then((rows) => rows[0] ?? null);
+
+    // The escalation did happen: we went through the recovery path rather than around it via a
+    // `skipped`. Without these two assertions a green test could have executed nothing.
+    expect(result.escalated).toBe(1);
+    expect(action?.attemptCount).toBe(4);
+
+    // What the cap changes, and only that: the owner is no longer woken. The action stays
+    // `active`, so it remains visible to a human in the issue thread.
+    expect(await countRecoveryWakes()).toBe(0);
+    expect(action?.status).toBe("active");
   });
 
   it("escalates an exhausted failed successful-run handoff without using generic continuation recovery first", async () => {
