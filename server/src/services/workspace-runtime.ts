@@ -405,6 +405,50 @@ function sanitizeBranchName(value: string): string {
     .slice(0, 120) || "paperclip-work";
 }
 
+/**
+ * Two issues with the same title (a weekday routine creates one every day) render the same
+ * branch when the template carries only `{{slug}}`; because the worktree path is derived from
+ * the branch, the second issue then fails with "already exists and is not a reusable git
+ * worktree". When the project's branch policy requires the issue identifier, put it in front of
+ * the slug so that every issue owns its own branch and worktree.
+ */
+function enforceIssueIdentifierInBranch(input: {
+  renderedBranch: string;
+  issueIdentifier: string | null;
+  issueTitle: string | null;
+  required: boolean;
+}): { branchName: string; warning: string | null } {
+  const branchName = sanitizeBranchName(input.renderedBranch);
+  if (!input.required) {
+    return { branchName, warning: null };
+  }
+  const identifierPart = sanitizeSlugPart(input.issueIdentifier, "");
+  if (!identifierPart) {
+    return {
+      branchName,
+      warning:
+        "branchPolicy.requireIssueIdentifier is set but the issue carries no identifier; the branch " +
+        `"${branchName}" is derived from the title alone and issues sharing a title will share a worktree.`,
+    };
+  }
+  if (branchName.toLowerCase().includes(identifierPart)) {
+    return { branchName, warning: null };
+  }
+  // Insert next to the LAST occurrence of the slug: an earlier segment (agent name, prefix) may
+  // contain the same characters, and `{{slug}}` conventionally ends the template.
+  const slug = sanitizeSlugPart(input.issueTitle, "");
+  const slugAt = slug ? input.renderedBranch.lastIndexOf(slug) : -1;
+  const withIdentifier = slugAt >= 0
+    ? `${input.renderedBranch.slice(0, slugAt)}${identifierPart}-${input.renderedBranch.slice(slugAt)}`
+    : `${input.renderedBranch}-${identifierPart}`;
+  return {
+    branchName: sanitizeBranchName(withIdentifier),
+    warning:
+      `Branch template omitted the issue identifier; "${identifierPart}" was inserted ` +
+      "so that issues sharing a title do not share a worktree (branchPolicy.requireIssueIdentifier).",
+  };
+}
+
 function isAbsolutePath(value: string) {
   return path.isAbsolute(value) || value.startsWith("~");
 }
@@ -1156,7 +1200,13 @@ export async function realizeExecutionWorkspace(input: {
     projectId: input.base.projectId,
     repoRef: input.base.repoRef,
   });
-  const branchName = sanitizeBranchName(renderedBranch);
+  const branchPolicy = parseObject(input.config.branchPolicy);
+  const { branchName, warning: identifierWarning } = enforceIssueIdentifierInBranch({
+    renderedBranch,
+    issueIdentifier: input.issue?.identifier ?? null,
+    issueTitle: input.issue?.title ?? null,
+    required: branchPolicy.requireIssueIdentifier === true,
+  });
   const configuredParentDir = asString(rawStrategy.worktreeParentDir, "");
   const worktreeParentDir = configuredParentDir
     ? resolveConfiguredPath(configuredParentDir, repoRoot)
@@ -1169,6 +1219,7 @@ export async function realizeExecutionWorkspace(input: {
     ?? await detectDefaultBranch(repoRoot)
     ?? "HEAD";
   const baseRefreshWarnings = await refreshRemoteTrackingBaseRef(repoRoot, baseRef);
+  if (identifierWarning) baseRefreshWarnings.unshift(identifierWarning);
   const currentBaseRefSha = await resolveBaseRefSha(repoRoot, baseRef);
 
   await fs.mkdir(worktreeParentDir, { recursive: true });

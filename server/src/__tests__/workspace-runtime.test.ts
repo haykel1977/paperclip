@@ -427,6 +427,117 @@ describe("realizeExecutionWorkspace", () => {
     expect(second.branchName).toBe(first.branchName);
   });
 
+  it("inserts the issue identifier when the branch template omits it and the policy requires it", async () => {
+    const repoRoot = await createTempRepo();
+    const realize = (identifier: string) =>
+      realizeExecutionWorkspace({
+        base: {
+          baseCwd: repoRoot,
+          source: "project_primary",
+          projectId: "project-1",
+          workspaceId: "workspace-1",
+          repoUrl: null,
+          repoRef: "HEAD",
+        },
+        config: {
+          branchPolicy: { requireIssueIdentifier: true },
+          workspaceStrategy: {
+            type: "git_worktree",
+            branchTemplate: "feat/agent-{{agent.name}}-ticket-{{slug}}",
+          },
+        },
+        // A weekday routine creates one issue per day with the very same title.
+        issue: { id: `issue-${identifier}`, identifier, title: "CTO daily résumé (weekdays 08:00 PT)" },
+        agent: { id: "agent-1", name: "Quantum-CTO", companyId: "company-1" },
+      });
+
+    const monday = await realize("QUA-1366");
+    const tuesday = await realize("QUA-1368");
+
+    expect(monday.branchName).toBe("feat/agent-Quantum-CTO-ticket-qua-1366-cto-daily-r-sum-weekdays-08-00-pt");
+    expect(tuesday.branchName).toBe("feat/agent-Quantum-CTO-ticket-qua-1368-cto-daily-r-sum-weekdays-08-00-pt");
+    expect(tuesday.created).toBe(true);
+    expect(tuesday.cwd).not.toBe(monday.cwd);
+    expect(tuesday.warnings.some((warning) => warning.includes("qua-1368"))).toBe(true);
+  });
+
+  it("inserts the identifier next to the last occurrence of the slug", async () => {
+    const repoRoot = await createTempRepo();
+    const realized = await realizeExecutionWorkspace({
+      base: {
+        baseCwd: repoRoot,
+        source: "project_primary",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: null,
+        repoRef: "HEAD",
+      },
+      config: {
+        branchPolicy: { requireIssueIdentifier: true },
+        workspaceStrategy: {
+          type: "git_worktree",
+          // The slug appears twice: the identifier must land next to the trailing one.
+          branchTemplate: "{{slug}}/agent-{{agent.name}}-ticket-{{slug}}",
+        },
+      },
+      issue: { id: "issue-1", identifier: "QUA-1368", title: "Daily summary" },
+      agent: { id: "agent-1", name: "Quantum-CTO", companyId: "company-1" },
+    });
+
+    expect(realized.branchName).toBe("daily-summary/agent-Quantum-CTO-ticket-qua-1368-daily-summary");
+  });
+
+  it("warns instead of inserting when the policy requires an identifier the issue does not have", async () => {
+    const repoRoot = await createTempRepo();
+    const realized = await realizeExecutionWorkspace({
+      base: {
+        baseCwd: repoRoot,
+        source: "project_primary",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: null,
+        repoRef: "HEAD",
+      },
+      config: {
+        branchPolicy: { requireIssueIdentifier: true },
+        workspaceStrategy: {
+          type: "git_worktree",
+          branchTemplate: "feat/agent-{{agent.name}}-ticket-{{slug}}",
+        },
+      },
+      issue: { id: "issue-1", identifier: "", title: "CTO daily résumé (weekdays 08:00 PT)" },
+      agent: { id: "agent-1", name: "Quantum-CTO", companyId: "company-1" },
+    });
+
+    expect(realized.branchName).toBe("feat/agent-Quantum-CTO-ticket-cto-daily-r-sum-weekdays-08-00-pt");
+    expect(realized.warnings.some((warning) => warning.includes("carries no identifier"))).toBe(true);
+  });
+
+  it("keeps the rendered branch when the policy does not require the issue identifier", async () => {
+    const repoRoot = await createTempRepo();
+    const realized = await realizeExecutionWorkspace({
+      base: {
+        baseCwd: repoRoot,
+        source: "project_primary",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: null,
+        repoRef: "HEAD",
+      },
+      config: {
+        workspaceStrategy: {
+          type: "git_worktree",
+          branchTemplate: "feat/agent-{{agent.name}}-ticket-{{slug}}",
+        },
+      },
+      issue: { id: "issue-1", identifier: "QUA-1366", title: "CTO daily résumé (weekdays 08:00 PT)" },
+      agent: { id: "agent-1", name: "Quantum-CTO", companyId: "company-1" },
+    });
+
+    expect(realized.branchName).toBe("feat/agent-Quantum-CTO-ticket-cto-daily-r-sum-weekdays-08-00-pt");
+    expect(realized.warnings.some((warning) => warning.includes("issue identifier"))).toBe(false);
+  });
+
   it("warns when reusing a git worktree whose base ref has advanced", async () => {
     const repoRoot = await createTempRepo();
 

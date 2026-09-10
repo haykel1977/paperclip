@@ -320,8 +320,18 @@ export function buildExecutionWorkspaceAdapterConfig(input: {
         parseExecutionWorkspaceStrategy(nextConfig.workspaceStrategy) ??
         ({ type: "git_worktree" } satisfies ExecutionWorkspaceStrategy);
       nextConfig.workspaceStrategy = strategy as unknown as Record<string, unknown>;
+      // The branch policy travels with the strategy: realizeExecutionWorkspace reads
+      // `branchPolicy.requireIssueIdentifier` from this config, so a project-level policy that
+      // is not copied here is silently a no-op in production.
+      const branchPolicy = cloneRecord(input.projectPolicy?.branchPolicy);
+      if (branchPolicy) {
+        nextConfig.branchPolicy = branchPolicy;
+      } else {
+        delete nextConfig.branchPolicy;
+      }
     } else {
       delete nextConfig.workspaceStrategy;
+      delete nextConfig.branchPolicy;
     }
 
     if (input.mode === "agent_default") {
