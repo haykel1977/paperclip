@@ -86,6 +86,39 @@ describe("execution workspace policy helpers", () => {
     });
   });
 
+  it("forwards the project branch policy with the strategy when isolation is enabled", () => {
+    const result = buildExecutionWorkspaceAdapterConfig({
+      agentConfig: {},
+      projectPolicy: {
+        enabled: true,
+        defaultMode: "isolated_workspace",
+        workspaceStrategy: { type: "git_worktree", branchTemplate: "feat/agent-{{agent.name}}-ticket-{{slug}}" },
+        branchPolicy: { requireIssueIdentifier: true, branchPrefix: "feat/agent-" },
+      },
+      issueSettings: null,
+      mode: "isolated_workspace",
+      legacyUseProjectWorkspace: null,
+    });
+
+    expect(result.branchPolicy).toEqual({ requireIssueIdentifier: true, branchPrefix: "feat/agent-" });
+  });
+
+  it("drops a stale branch policy when the issue opts out of isolation", () => {
+    const result = buildExecutionWorkspaceAdapterConfig({
+      agentConfig: { branchPolicy: { requireIssueIdentifier: true } },
+      projectPolicy: {
+        enabled: true,
+        defaultMode: "isolated_workspace",
+        branchPolicy: { requireIssueIdentifier: true },
+      },
+      issueSettings: { mode: "project_primary" },
+      mode: "project_primary",
+      legacyUseProjectWorkspace: null,
+    });
+
+    expect(result.branchPolicy).toBeUndefined();
+  });
+
   it("preserves project authorization policy for trust-preset resolution", () => {
     expect(parseProjectExecutionWorkspacePolicy({
       enabled: true,

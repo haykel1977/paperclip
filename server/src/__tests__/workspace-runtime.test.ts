@@ -461,6 +461,58 @@ describe("realizeExecutionWorkspace", () => {
     expect(tuesday.warnings.some((warning) => warning.includes("qua-1368"))).toBe(true);
   });
 
+  it("inserts the identifier next to the last occurrence of the slug", async () => {
+    const repoRoot = await createTempRepo();
+    const realized = await realizeExecutionWorkspace({
+      base: {
+        baseCwd: repoRoot,
+        source: "project_primary",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: null,
+        repoRef: "HEAD",
+      },
+      config: {
+        branchPolicy: { requireIssueIdentifier: true },
+        workspaceStrategy: {
+          type: "git_worktree",
+          // The slug appears twice: the identifier must land next to the trailing one.
+          branchTemplate: "{{slug}}/agent-{{agent.name}}-ticket-{{slug}}",
+        },
+      },
+      issue: { id: "issue-1", identifier: "QUA-1368", title: "Daily summary" },
+      agent: { id: "agent-1", name: "Quantum-CTO", companyId: "company-1" },
+    });
+
+    expect(realized.branchName).toBe("daily-summary/agent-Quantum-CTO-ticket-qua-1368-daily-summary");
+  });
+
+  it("warns instead of inserting when the policy requires an identifier the issue does not have", async () => {
+    const repoRoot = await createTempRepo();
+    const realized = await realizeExecutionWorkspace({
+      base: {
+        baseCwd: repoRoot,
+        source: "project_primary",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: null,
+        repoRef: "HEAD",
+      },
+      config: {
+        branchPolicy: { requireIssueIdentifier: true },
+        workspaceStrategy: {
+          type: "git_worktree",
+          branchTemplate: "feat/agent-{{agent.name}}-ticket-{{slug}}",
+        },
+      },
+      issue: { id: "issue-1", identifier: "", title: "CTO daily résumé (weekdays 08:00 PT)" },
+      agent: { id: "agent-1", name: "Quantum-CTO", companyId: "company-1" },
+    });
+
+    expect(realized.branchName).toBe("feat/agent-Quantum-CTO-ticket-cto-daily-r-sum-weekdays-08-00-pt");
+    expect(realized.warnings.some((warning) => warning.includes("carries no identifier"))).toBe(true);
+  });
+
   it("keeps the rendered branch when the policy does not require the issue identifier", async () => {
     const repoRoot = await createTempRepo();
     const realized = await realizeExecutionWorkspace({

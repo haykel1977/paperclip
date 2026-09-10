@@ -419,13 +419,27 @@ function enforceIssueIdentifierInBranch(input: {
   required: boolean;
 }): { branchName: string; warning: string | null } {
   const branchName = sanitizeBranchName(input.renderedBranch);
-  const identifierPart = sanitizeSlugPart(input.issueIdentifier, "");
-  if (!input.required || !identifierPart || branchName.toLowerCase().includes(identifierPart)) {
+  if (!input.required) {
     return { branchName, warning: null };
   }
+  const identifierPart = sanitizeSlugPart(input.issueIdentifier, "");
+  if (!identifierPart) {
+    return {
+      branchName,
+      warning:
+        "branchPolicy.requireIssueIdentifier is set but the issue carries no identifier; the branch " +
+        `"${branchName}" is derived from the title alone and issues sharing a title will share a worktree.`,
+    };
+  }
+  if (branchName.toLowerCase().includes(identifierPart)) {
+    return { branchName, warning: null };
+  }
+  // Insert next to the LAST occurrence of the slug: an earlier segment (agent name, prefix) may
+  // contain the same characters, and `{{slug}}` conventionally ends the template.
   const slug = sanitizeSlugPart(input.issueTitle, "");
-  const withIdentifier = slug && input.renderedBranch.includes(slug)
-    ? input.renderedBranch.replace(slug, `${identifierPart}-${slug}`)
+  const slugAt = slug ? input.renderedBranch.lastIndexOf(slug) : -1;
+  const withIdentifier = slugAt >= 0
+    ? `${input.renderedBranch.slice(0, slugAt)}${identifierPart}-${input.renderedBranch.slice(slugAt)}`
     : `${input.renderedBranch}-${identifierPart}`;
   return {
     branchName: sanitizeBranchName(withIdentifier),
