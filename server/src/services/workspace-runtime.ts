@@ -617,6 +617,29 @@ async function refreshRemoteTrackingBaseRef(repoRoot: string, baseRef: string): 
   }
 }
 
+// A base ref that names a LOCAL branch ("main") is never refreshed by refreshRemoteTrackingBaseRef, so
+// every execution workspace forks from whatever that branch last was in the shared repo — three days
+// behind on the Quantum fleet (2026-09-11: baseRef "main" while origin/main had moved 60+ commits).
+// Resolve it to its upstream (or origin/<branch>) so the worktree starts from a refreshable remote tip.
+async function resolveLocalBranchUpstream(repoRoot: string, baseRef: string): Promise<string | null> {
+  if (!baseRef || baseRef === "HEAD" || parseRemoteTrackingRef(baseRef)) return null;
+  if (!/^[A-Za-z0-9._\/-]+$/.test(baseRef) || baseRef.startsWith("refs/")) return null;
+  const isLocalBranch = await runGit(["rev-parse", "--verify", "--quiet", `refs/heads/${baseRef}`], repoRoot)
+    .then(() => true)
+    .catch(() => false);
+  if (!isLocalBranch) return null;
+  const upstream = await runGit(
+    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", `${baseRef}@{upstream}`],
+    repoRoot,
+  ).catch(() => null);
+  if (upstream && parseRemoteTrackingRef(upstream)) return upstream;
+  const candidate = `origin/${baseRef}`;
+  const candidateExists = await runGit(["rev-parse", "--verify", "--quiet", `refs/remotes/${candidate}`], repoRoot)
+    .then(() => true)
+    .catch(() => false);
+  return candidateExists ? candidate : null;
+}
+
 async function resolveBaseRefSha(repoRoot: string, baseRef: string): Promise<string | null> {
   return await runGit(["rev-parse", "--verify", `${baseRef}^{commit}`], repoRoot).catch(() => null);
 }
@@ -1215,10 +1238,17 @@ export async function realizeExecutionWorkspace(input: {
   const configuredBaseRef = typeof rawStrategy.baseRef === "string" && rawStrategy.baseRef.length > 0
     ? rawStrategy.baseRef
     : input.base.repoRef ?? null;
-  const baseRef = configuredBaseRef
+  const requestedBaseRef = configuredBaseRef
     ?? await detectDefaultBranch(repoRoot)
     ?? "HEAD";
+  const upstreamBaseRef = await resolveLocalBranchUpstream(repoRoot, requestedBaseRef);
+  const baseRef = upstreamBaseRef ?? requestedBaseRef;
   const baseRefreshWarnings = await refreshRemoteTrackingBaseRef(repoRoot, baseRef);
+  if (upstreamBaseRef) {
+    baseRefreshWarnings.unshift(
+      `Base ref ${requestedBaseRef} names a local branch; the execution workspace starts from its refreshed upstream ${upstreamBaseRef} instead.`,
+    );
+  }
   if (identifierWarning) baseRefreshWarnings.unshift(identifierWarning);
   const currentBaseRefSha = await resolveBaseRefSha(repoRoot, baseRef);
 
