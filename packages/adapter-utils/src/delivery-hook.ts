@@ -30,6 +30,7 @@ export type ExecuteDeliveryHookInput = {
   adapterType?: string | null;
   agentId?: string | null;
   model?: string | null;
+  executionTargetIsRemote?: boolean;
   runProc: DeliveryHookRunProcess;
   log: DeliveryHookLog;
 };
@@ -1525,7 +1526,12 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
       await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="latest commit is unsigned"\n`);
       return { delivered: false, prUrl: null, reason: "delivery_blocked: unsigned commit" };
     }
-    return invokeQuantumPrWrapper(input, quantumWrapper, deliveryCommandEnv, log, changedPaths, githubIssueNumber);
+    const validatedWrapper = await resolveQuantumPrWrapper(input, deliveryCommandEnv);
+    if (!validatedWrapper) {
+      await log("stderr", `[delivery] result=delivery_blocked reason=quantum_pr_wrapper_changed wrapper=${QUANTUM_PR_WRAPPER_REL}\n`);
+      return { delivered: false, prUrl: null, reason: "delivery_blocked: quantum_pr_wrapper_changed" };
+    }
+    return invokeQuantumPrWrapper(input, validatedWrapper, deliveryCommandEnv, log, changedPaths, githubIssueNumber);
   }
 
   // ── 5. PR body ────────────────────────────────────────────────────────────
@@ -1593,6 +1599,11 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
 
   // Quantum's wrapper owns pre-push guards, pushing, PR creation and body refresh.
   if (quantumWrapper) {
+    const validatedWrapper = await resolveQuantumPrWrapper(input, deliveryCommandEnv);
+    if (!validatedWrapper) {
+      await log("stderr", `[delivery] result=delivery_blocked reason=quantum_pr_wrapper_changed wrapper=${QUANTUM_PR_WRAPPER_REL}\n`);
+      return { delivered: false, prUrl: null, reason: "delivery_blocked: quantum_pr_wrapper_changed" };
+    }
     const committedStatus = await runProc("git", ["status", "--porcelain"], worktreeCwd, deliveryCommandEnv);
     const committedPaths = await collectDeliveryChangedPaths({
       statusStdout: committedStatus.exitCode === 0 ? committedStatus.stdout : "",
@@ -1603,7 +1614,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     });
     return invokeQuantumPrWrapper(
       input,
-      quantumWrapper,
+      validatedWrapper,
       deliveryCommandEnv,
       log,
       committedPaths.length > 0 ? committedPaths : changedPaths,
@@ -1920,6 +1931,7 @@ export async function executeConfiguredDeliveryHook(
     adapterType: nonEmpty(input.adapterType) ?? nonEmpty(input.context.adapterType),
     agentId: nonEmpty(input.agentId) ?? nonEmpty(input.context.agentId),
     model: nonEmpty(input.model) ?? nonEmpty(input.context.model) ?? nonEmpty(input.config.model),
+    executionTargetIsRemote: input.executionTargetIsRemote,
     runProc: input.runProc,
     log: input.log,
   });

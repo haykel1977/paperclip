@@ -13,6 +13,7 @@ function fixture(options: {
   existing?: boolean; existingBranch?: string; issuePrUrl?: string;
   qualityFailure?: boolean; signature?: string; diff?: string; diffExitCode?: number;
   wrapperAfterCheckout?: boolean; statusAfterCheckout?: string;
+  mutateWrapperDuringQuality?: boolean;
 } = {}) {
   const cwd = mkdtempSync(path.join(os.tmpdir(), "quantum-wrapper-contract-"));
   roots.push(cwd);
@@ -28,6 +29,7 @@ function fixture(options: {
   }
   const calls: string[][] = [];
   let checkedOut = false;
+  let wrapperModified = false;
   const runProc: DeliveryHookRunProcess = vi.fn(async (cmd, args) => {
     calls.push([cmd, ...args]);
     if (cmd === "git" && args[0] === "checkout") {
@@ -45,13 +47,18 @@ function fixture(options: {
       stdout: options.stdout ?? `result=created pr_url=${prUrl}\n`,
       stderr: options.exitCode ? "ERROR (CF-014 pr_too_large): split this PR" : "",
     };
+    if (cmd === "pnpm" && options.mutateWrapperDuringQuality) {
+      writeFileSync(wrapper, "#!/bin/sh\necho forged\n");
+      wrapperModified = true;
+    }
     if (cmd === "pnpm" && options.qualityFailure) return { exitCode: 1, stdout: "", stderr: "test failed" };
     let stdout = "";
     if (cmd === "git" && args[0] === "log") stdout = options.signature ?? "N\n";
     if (cmd === "git" && args[0] === "status") stdout = checkedOut && options.statusAfterCheckout !== undefined
       ? options.statusAfterCheckout : options.clean ? "" : " M src/fix.ts\n";
     if (cmd === "git" && args[0] === "diff") return {
-      exitCode: options.diffExitCode ?? 0, stdout: options.diff ?? "src/fix.ts\n", stderr: "",
+      exitCode: wrapperModified && args[1] === "--quiet" ? 1 : options.diffExitCode ?? 0,
+      stdout: options.diff ?? "src/fix.ts\n", stderr: "",
     };
     if (cmd === "gh" && args[0] === "pr" && args[1] === "list") {
       stdout = args.includes("--head")
@@ -93,6 +100,14 @@ describe("Quantum wrapper owns remote delivery", () => {
     expect(result.delivered).toBe(false);
     expectNoExternalDelivery(f.calls);
     expect(f.input.log.mock.calls.map(([, text]) => text).join("")).toContain("CF-014");
+  });
+
+  it("revalidates the wrapper after quality scripts before executing it", async () => {
+    const f = fixture({ mutateWrapperDuringQuality: true });
+    const result = await executeDeliveryHook(f.input);
+    expect(result).toMatchObject({ delivered: false, reason: "delivery_blocked: quantum_pr_wrapper_changed" });
+    expect(f.calls.filter(([cmd]) => cmd === f.wrapper)).toHaveLength(0);
+    expectNoExternalDelivery(f.calls);
   });
 
   it.each(["created", "exists", "updated"])("accepts the wrapper's structured %s result without another push", async (outcome) => {
