@@ -850,7 +850,7 @@ describe("executeDeliveryHook", () => {
           : { exitCode: 2, stdout: "", stderr: "" };
       }
       if (key === "git checkout -b") return { exitCode: 1, stdout: "", stderr: `fatal: a branch named '${GENERIC_BRANCH}-remote-r1' already exists\n` };
-      if (key === `git checkout ${GENERIC_BRANCH}-remote-r1`) return { exitCode: 0, stdout: "", stderr: "" };
+      if (key === "git checkout -B") return { exitCode: 0, stdout: "", stderr: "" };
       if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "agent-pr", "truth-first"]), stderr: "" };
       if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/example/project/pull/102\n", stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
@@ -859,7 +859,7 @@ describe("executeDeliveryHook", () => {
     const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
 
     expect(result.reason).toBe("created");
-    expect(calls).toContainEqual(["git", "checkout", `${GENERIC_BRANCH}-remote-r1`]);
+    expect(calls).toContainEqual(["git", "checkout", "-B", `${GENERIC_BRANCH}-remote-r1`, "HEAD"]);
     // paperclip:allow-git-push: test assertion — verifies delivery hook pushes reused local collision branch (PAPA-432)
     expect(calls).toContainEqual(["git", "push", "-u", "origin", `${GENERIC_BRANCH}-remote-r1`]);
   });
