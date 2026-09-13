@@ -349,24 +349,32 @@ async function main() {
   if (allFlags.length > 0) {
     console.error(`[security] ${allFlags.length} flag(s) detected — creating draft advisory and pending check run`);
     // Sequential rather than Promise.all so a partial failure is easier to reason about.
+    let advisoryFiled = true;
     try {
       await syncDraftAdvisory(ghFetch, GH_TOKEN, GH_REPO, prNumber, pr.title, allFlags);
     } catch (advisoryErr) {
       if (advisoryErr.statusCode === 403) {
-        // Token lacks permission to file a security advisory. With flags present this
-        // is a hard failure: the durable signal cannot be written. Exit 1 so the
-        // workflow fails visibly and a maintainer can take action.
-        console.error('::error::[security] Flags detected but token lacks permission to create security advisory (HTTP 403). Manual review required.');
-        process.exit(1);
+        // Token lacks permission to file a security advisory. Emit a durable
+        // warning annotation carrying the full flag list so a maintainer can act,
+        // and post a neutral check-run instead of a failure. Advisory-only signals
+        // must never silently block PRs (see the "Exit: always 0" contract below).
+        advisoryFiled = false;
+        console.log('::warning::[security] Flags detected but token lacks security_events:write. Listed inline as annotations; no draft advisory filed. Grant "Repository security advisories: Read and write" on the GitHub App to restore advisory filing.');
+        for (const f of allFlags) {
+          const loc = f.file ? `${f.file}${f.line ? `#L${f.line}` : ''}` : 'n/a';
+          console.log(`::warning file=${f.file ?? ''},line=${f.line ?? 1}::[security:${f.check}] ${f.description ?? f.detail ?? loc}`);
+        }
+      } else {
+        throw advisoryErr;
       }
-      throw advisoryErr;
     }
     try {
-      await postSecurityCheckRun(ghFetch, GH_TOKEN, GH_REPO, pr.head.sha, true);
+      // Pass advisoryFiled so downstream check-run reflects reality (neutral if advisory absent).
+      await postSecurityCheckRun(ghFetch, GH_TOKEN, GH_REPO, pr.head.sha, advisoryFiled);
     } catch (checkRunErr) {
       // check-run creation failure is non-fatal when the advisory was already filed.
       if (checkRunErr.statusCode !== 403) throw checkRunErr;
-      console.log('::warning::[security] Could not post check run (HTTP 403) — advisory was filed. Continuing.');
+      console.log('::warning::[security] Could not post check run (HTTP 403) — advisory-only signals are non-blocking.');
     }
   } else {
     console.log('[security] all clear');
