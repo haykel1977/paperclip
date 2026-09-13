@@ -8,7 +8,12 @@ const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 const prUrl = "https://github.com/Beyn-SOLIDUS/quantum/pull/3372";
 
-function fixture(options: { wrapper?: boolean; stdout?: string; exitCode?: number; clean?: boolean; existing?: boolean; issuePrUrl?: string; qualityFailure?: boolean; signature?: string } = {}) {
+function fixture(options: {
+  wrapper?: boolean; stdout?: string; exitCode?: number; clean?: boolean;
+  existing?: boolean; existingBranch?: string; issuePrUrl?: string;
+  qualityFailure?: boolean; signature?: string; diff?: string; diffExitCode?: number;
+  wrapperAfterCheckout?: boolean; statusAfterCheckout?: string;
+} = {}) {
   const cwd = mkdtempSync(path.join(os.tmpdir(), "quantum-wrapper-contract-"));
   roots.push(cwd);
   writeFileSync(path.join(cwd, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
@@ -22,8 +27,19 @@ function fixture(options: { wrapper?: boolean; stdout?: string; exitCode?: numbe
     chmodSync(wrapper, 0o755);
   }
   const calls: string[][] = [];
+  let checkedOut = false;
   const runProc: DeliveryHookRunProcess = vi.fn(async (cmd, args) => {
     calls.push([cmd, ...args]);
+    if (cmd === "git" && args[0] === "checkout") {
+      checkedOut = true;
+      if (options.wrapperAfterCheckout === true) {
+        mkdirSync(path.dirname(wrapper), { recursive: true });
+        writeFileSync(wrapper, "#!/bin/sh\n");
+        chmodSync(wrapper, 0o755);
+      } else if (options.wrapperAfterCheckout === false) {
+        rmSync(wrapper, { force: true });
+      }
+    }
     if (cmd === wrapper) return {
       exitCode: options.exitCode ?? 0,
       stdout: options.stdout ?? `result=created pr_url=${prUrl}\n`,
@@ -32,10 +48,15 @@ function fixture(options: { wrapper?: boolean; stdout?: string; exitCode?: numbe
     if (cmd === "pnpm" && options.qualityFailure) return { exitCode: 1, stdout: "", stderr: "test failed" };
     let stdout = "";
     if (cmd === "git" && args[0] === "log") stdout = options.signature ?? "N\n";
-    if (cmd === "git" && args[0] === "status") stdout = options.clean ? "" : " M src/fix.ts\n";
-    if (cmd === "git" && args[0] === "diff") stdout = "src/fix.ts\n";
+    if (cmd === "git" && args[0] === "status") stdout = checkedOut && options.statusAfterCheckout !== undefined
+      ? options.statusAfterCheckout : options.clean ? "" : " M src/fix.ts\n";
+    if (cmd === "git" && args[0] === "diff") return {
+      exitCode: options.diffExitCode ?? 0, stdout: options.diff ?? "src/fix.ts\n", stderr: "",
+    };
     if (cmd === "gh" && args[0] === "pr" && args[1] === "list") {
-      stdout = args.includes("--head") ? (options.existing ? prUrl : "") : (options.issuePrUrl ? JSON.stringify([{ url: options.issuePrUrl, state: "OPEN", title: "fix: QUA-99" }]) : "[]");
+      stdout = args.includes("--head")
+        ? (options.existing && (!options.existingBranch || args[args.indexOf("--head") + 1] === options.existingBranch) ? prUrl : "")
+        : (options.issuePrUrl ? JSON.stringify([{ url: options.issuePrUrl, state: "OPEN", title: "fix: QUA-99" }]) : "[]");
     }
     if (cmd === "gh" && args[0] === "label") stdout = "[]";
     if (cmd === "gh" && args[0] === "pr" && args[1] === "create") stdout = prUrl;
@@ -99,6 +120,62 @@ describe("Quantum wrapper owns remote delivery", () => {
     const f = fixture({ clean: true });
     expect(await executeDeliveryHook(f.input)).toMatchObject({ delivered: true, prUrl });
     expect(f.calls.filter(([cmd]) => cmd === f.wrapper)).toHaveLength(1);
+    expectNoExternalDelivery(f.calls);
+  });
+
+  it("returns no_diff for a clean branch with no committed change and no PR", async () => {
+    const f = fixture({ clean: true, diff: "" });
+    expect(await executeDeliveryHook(f.input)).toMatchObject({ delivered: false, prUrl: null, reason: "no_diff" });
+    expect(f.calls.some(([cmd]) => cmd === f.wrapper)).toBe(false);
+    expectNoExternalDelivery(f.calls);
+  });
+
+  it("refreshes an existing PR even when the branch has no pending diff", async () => {
+    const f = fixture({ clean: true, diff: "", existing: true, issuePrUrl: prUrl, stdout: `result=updated pr_url=${prUrl}\n` });
+    expect(await executeDeliveryHook(f.input)).toMatchObject({ delivered: true, prUrl });
+    expect(f.calls.filter(([cmd]) => cmd === f.wrapper)).toHaveLength(1);
+    expectNoExternalDelivery(f.calls);
+  });
+
+  it("refuses delivery when the branch diff cannot be read", async () => {
+    const f = fixture({ clean: true, diff: "", diffExitCode: 128 });
+    expect(await executeDeliveryHook(f.input)).toMatchObject({ delivered: false, reason: "delivery_blocked: quantum_branch_diff_unreadable" });
+    expect(f.calls.some(([cmd]) => cmd === f.wrapper)).toBe(false);
+    expectNoExternalDelivery(f.calls);
+  });
+
+  it("looks up the selected canonical branch before accepting an issue PR", async () => {
+    const oldBranch = "codex/QUA-99-work";
+    const f = fixture({ existing: true, existingBranch: oldBranch, issuePrUrl: prUrl });
+    expect(await executeDeliveryHook({ ...f.input, branch: oldBranch })).toMatchObject({
+      delivered: false, reason: "delivery_blocked: quantum_issue_pr_on_other_branch",
+    });
+    const lookup = f.calls.find(([cmd, sub, action, ...args]) => cmd === "gh" && sub === "pr" && action === "list" && args.includes("--head"));
+    expect(lookup).toContain("feat/agent-quantum-cto-ticket-qua-99-delivery");
+    expect(f.calls.some(([cmd]) => cmd === f.wrapper)).toBe(false);
+    expectNoExternalDelivery(f.calls);
+  });
+
+  it("finds a wrapper introduced by the canonical branch checkout", async () => {
+    const f = fixture({ wrapper: false, wrapperAfterCheckout: true });
+    expect(await executeDeliveryHook({ ...f.input, branch: "codex/QUA-99-work" })).toMatchObject({ delivered: true, prUrl });
+    expect(f.calls.filter(([cmd]) => cmd === f.wrapper)).toHaveLength(1);
+    expectNoExternalDelivery(f.calls);
+  });
+
+  it("refuses a wrapper removed by the canonical branch checkout", async () => {
+    const f = fixture({ wrapperAfterCheckout: false });
+    expect(await executeDeliveryHook({ ...f.input, branch: "codex/QUA-99-work" })).toMatchObject({
+      delivered: false, reason: "delivery_blocked: quantum_pr_wrapper_missing",
+    });
+    expect(f.calls.some(([cmd]) => cmd === f.wrapper)).toBe(false);
+    expectNoExternalDelivery(f.calls);
+  });
+
+  it("checks the working tree selected by canonical branch checkout", async () => {
+    const f = fixture({ clean: true, statusAfterCheckout: "UU src/fix.ts\n" });
+    expect(await executeDeliveryHook({ ...f.input, branch: "codex/QUA-99-work" })).toMatchObject({ delivered: false, reason: "conflict" });
+    expect(f.calls.some(([cmd]) => cmd === f.wrapper)).toBe(false);
     expectNoExternalDelivery(f.calls);
   });
 
