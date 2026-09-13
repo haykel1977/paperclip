@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
 import path from "node:path";
 
 export type DeliveryHookRunProcess = (
@@ -443,7 +444,7 @@ async function resolveQuantumPrWrapper(input: Pick<ExecuteDeliveryHookInput, "ba
     : path.join(input.worktreeCwd, QUANTUM_PR_WRAPPER_REL);
   if (!input.executionTargetIsRemote) {
     try {
-      await fs.access(candidate);
+      await fs.access(candidate, fsConstants.X_OK);
     } catch {
       return null;
     }
