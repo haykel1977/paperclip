@@ -1216,7 +1216,6 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
   let branch = input.branch;
   const log = createDeliveryLogRedactor(env, input.log);
   const quantumDelivery = isQuantumDeliveryTarget(input.repo, env);
-  const quantumWrapper = quantumDelivery ? await resolveQuantumPrWrapper(worktreeCwd) : null;
 
   const ts = () => new Date().toISOString();
 
@@ -1229,6 +1228,34 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     : isDevTestLane
       ? ["factory-proof", "agent-pr", "automated", "truth-first"]
       : ["factory-proof", "agent-pr", "truth-first", "human-gate-required", "prod-gate-required"];
+
+  // Quantum's status, PR lookup and wrapper must all refer to the branch
+  // that the wrapper will publish, including when a local branch is reused.
+  const quantumCanonicalBranch = quantumDelivery
+    ? buildQuantumAgentBranch({
+      agentId: input.agentId,
+      issueIdentifier: input.issueIdentifier,
+      issueId: input.issueId,
+      shortSlug: "delivery",
+    })
+    : null;
+  if (quantumDelivery) {
+    const requiredBranch = autonomousDelivery || !isAdrGov007CompliantBranch(branch)
+      ? quantumCanonicalBranch : null;
+    if (requiredBranch && branch !== requiredBranch) {
+      const checkout = await checkoutNewOrExistingBranch({ branch: requiredBranch, worktreeCwd, env, runProc });
+      if (!checkout.ok) {
+        await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="canonical_issue_branch_checkout_failed" detail="${firstNonEmptyLine(checkout.stderr) || firstNonEmptyLine(checkout.stdout) || "checkout failed"}"\n`);
+        return { delivered: false, prUrl: null, reason: "delivery_blocked: canonical issue branch checkout failed" };
+      }
+      branch = requiredBranch;
+      await log("stdout", `[delivery ${ts()}] quantum_delivery_branch=${branch}${checkout.reused ? " reused_local=true" : ""}\n`);
+    }
+    if (!isAdrGov007CompliantBranch(branch)) {
+      await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="quantum_branch_not_adr_gov_007" branch=${branch}\n`);
+      return { delivered: false, prUrl: null, reason: "delivery_blocked: quantum_branch_not_adr_gov_007" };
+    }
+  }
 
   // ── 1. git status ───────────────────────────────────────────────────────────
   const status = await runProc("git", ["status", "--porcelain"], worktreeCwd, env);
@@ -1348,22 +1375,12 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     return { delivered: false, prUrl: issuePrLookup.pr.url, reason: "issue_already_merged" };
   }
 
-  const quantumCanonicalBranch = quantumDelivery
-    ? buildQuantumAgentBranch({
-      agentId: input.agentId,
-      issueIdentifier: input.issueIdentifier,
-      issueId: input.issueId,
-      shortSlug: "delivery",
-    })
-    : null;
   const canonicalIssueBranch = autonomousDelivery
     ? (quantumCanonicalBranch ?? buildCanonicalIssueDeliveryBranch(input.issueId!))
     : null;
-  const requiredDeliveryBranch = canonicalIssueBranch
-    ?? (quantumDelivery && !isAdrGov007CompliantBranch(branch) ? quantumCanonicalBranch : null);
-  if (requiredDeliveryBranch && branch !== requiredDeliveryBranch) {
+  if (!quantumDelivery && canonicalIssueBranch && branch !== canonicalIssueBranch) {
     const canonicalCheckout = await checkoutNewOrExistingBranch({
-      branch: requiredDeliveryBranch,
+      branch: canonicalIssueBranch,
       worktreeCwd,
       env,
       runProc,
@@ -1372,12 +1389,8 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
       await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="canonical_issue_branch_checkout_failed" detail="${firstNonEmptyLine(canonicalCheckout.stderr) || firstNonEmptyLine(canonicalCheckout.stdout) || "checkout failed"}"\n`);
       return { delivered: false, prUrl: null, reason: "delivery_blocked: canonical issue branch checkout failed" };
     }
-    branch = requiredDeliveryBranch;
-    await log("stdout", `[delivery ${ts()}] ${quantumDelivery ? "quantum_delivery_branch" : "canonical_issue_branch"}=${branch}${canonicalCheckout.reused ? " reused_local=true" : ""}\n`);
-  }
-  if (quantumDelivery && !isAdrGov007CompliantBranch(branch)) {
-    await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="quantum_branch_not_adr_gov_007" branch=${branch}\n`);
-    return { delivered: false, prUrl: null, reason: "delivery_blocked: quantum_branch_not_adr_gov_007" };
+    branch = canonicalIssueBranch;
+    await log("stdout", `[delivery ${ts()}] canonical_issue_branch=${branch}${canonicalCheckout.reused ? " reused_local=true" : ""}\n`);
   }
 
   if (!quantumDelivery && await remoteBranchExists({ branch, worktreeCwd, env: deliveryCommandEnv, runProc })) {
@@ -1410,6 +1423,24 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     branch = collisionBranch;
   }
 
+  let quantumChangedPaths: string[] | null = null;
+  if (quantumDelivery) {
+    const baseRef = input.baseBranch.startsWith("origin/") ? input.baseBranch : `origin/${input.baseBranch}`;
+    const branchDiff = await runProc("git", ["diff", "--name-only", `${baseRef}...HEAD`], worktreeCwd, env);
+    if (branchDiff.exitCode !== 0) {
+      await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="quantum_branch_diff_unreadable"\n`);
+      return { delivered: false, prUrl: null, reason: "delivery_blocked: quantum_branch_diff_unreadable" };
+    }
+    quantumChangedPaths = uniqueDeliveryPaths([
+      ...parseChangedPathsFromPorcelain(status.stdout),
+      ...parseDiffNameOnly(branchDiff.stdout),
+    ]);
+    if (!status.stdout.trim() && quantumChangedPaths.length === 0 && !existingPrUrl) {
+      await log("stdout", `[delivery ${ts()}] result=no_diff reason="nothing to deliver"\n`);
+      return { delivered: false, prUrl: null, reason: "no_diff" };
+    }
+  }
+
   const signingPlan = await resolveDeliveryCommitSigningPlan({
     autonomousDelivery,
     worktreeCwd,
@@ -1422,7 +1453,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     return { delivered: false, prUrl: null, reason: "delivery_blocked: signed commits not configured" };
   }
 
-  const changedPaths = await collectDeliveryChangedPaths({
+  const changedPaths = quantumChangedPaths ?? await collectDeliveryChangedPaths({
     statusStdout: status.stdout,
     baseBranch: input.baseBranch,
     worktreeCwd,
@@ -1462,6 +1493,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     }
   }
 
+  const quantumWrapper = quantumDelivery ? await resolveQuantumPrWrapper(worktreeCwd) : null;
   if (quantumDelivery && !quantumWrapper) {
     await log("stderr", `[delivery] result=delivery_blocked reason=quantum_pr_wrapper_missing wrapper=${QUANTUM_PR_WRAPPER_REL}\n`);
     return { delivered: false, prUrl: null, reason: "delivery_blocked: quantum_pr_wrapper_missing" };
