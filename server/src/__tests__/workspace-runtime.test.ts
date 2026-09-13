@@ -589,6 +589,27 @@ describe("realizeExecutionWorkspace", () => {
     expect(realized.branchName).toMatch(/(?:^|[^a-z0-9])qua-1368(?:$|[^a-z0-9])/);
   });
 
+  it("rejects a required identifier whose sanitized form exceeds the branch length limit", async () => {
+    const repoRoot = await createTempRepo();
+
+    await expect(realizeExecutionWorkspace({
+      base: {
+        baseCwd: repoRoot,
+        source: "project_primary",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: null,
+        repoRef: "HEAD",
+      },
+      config: {
+        branchPolicy: { requireIssueIdentifier: true },
+        workspaceStrategy: { type: "git_worktree", branchTemplate: "feat/{{slug}}" },
+      },
+      issue: { id: "issue-1", identifier: `QUA-${"1".repeat(121)}`, title: "Daily summary" },
+      agent: { id: "agent-1", name: "Quantum-CTO", companyId: "company-1" },
+    })).rejects.toThrow("sanitized form exceeds 120 characters");
+  });
+
   it("warns when reusing a git worktree whose base ref has advanced", async () => {
     const repoRoot = await createTempRepo();
 

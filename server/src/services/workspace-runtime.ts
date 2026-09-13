@@ -412,6 +412,11 @@ function branchContainsIdentifier(branchName: string, identifierPart: string): b
 
 function truncateBranchPreservingIdentifier(branchName: string, identifierPart: string): string {
   const maxBranchLength = 120;
+  if (identifierPart.length > maxBranchLength) {
+    throw new Error(
+      `Issue identifier cannot be represented in a branch name: its sanitized form exceeds ${maxBranchLength} characters`,
+    );
+  }
   if (branchName.length <= maxBranchLength) return branchName;
 
   const truncated = sanitizeBranchName(branchName, maxBranchLength);
