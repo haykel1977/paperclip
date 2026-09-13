@@ -35,9 +35,8 @@ function mkRunProc(seq: Record<string, { exitCode: number; stdout?: string; stde
   });
 }
 
-const GENERIC_BRANCH = "codex/HAS-222-x";
-const AUTONOMOUS_BRANCH = "paperclip/uuid-delivery";
-const GENERIC_FALLBACK_BRANCH = "paperclip/HAS-222-r1";
+const QUANTUM_BRANCH = "feat/agent-agent-1-ticket-has-222-delivery";
+const QUANTUM_FALLBACK_BRANCH = "feat/agent-agent-1-ticket-has-222-r1";
 
 const base = {
   runId: "r1",
@@ -45,7 +44,7 @@ const base = {
   env: { PAPERCLIP_GITHUB_ISSUE_NUMBER: "222" },
   issueIdentifier: "HAS-222",
   issueId: "uuid",
-  repo: "example/project",
+  repo: "Beyn-SOLIDUS/quantum",
   baseBranch: "main",
   adapterType: "codex_local",
   agentId: "agent-1",
@@ -95,7 +94,7 @@ describe("executeDeliveryHook", () => {
     const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
     expect(result.reason).toBe("created");
     expect(runProc).toHaveBeenCalledWith("pnpm", ["run", "typecheck"], worktreeCwd, expect.objectContaining({ CI: "true" }));
-    expect(runProc).toHaveBeenCalledWith("git", ["push", "-u", "origin", GENERIC_BRANCH], worktreeCwd, expect.any(Object)); // paperclip:allow-git-push: assertion verifying delivery-hook push call (PAPA-432)
+    expect(runProc).toHaveBeenCalledWith("git", ["push", "-u", "origin", QUANTUM_BRANCH], worktreeCwd, expect.any(Object)); // paperclip:allow-git-push: assertion verifying delivery-hook push call (PAPA-432)
   });
 
   it("no diff -> silent skip, no commit", async () => {
@@ -205,7 +204,7 @@ describe("executeDeliveryHook", () => {
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
       if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
       if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "human-gate-required", "bot-merge-ready"]), stderr: "" };
-      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/example/project/pull/44\n", stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/44\n", stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     });
     await executeDeliveryHook({ ...base, worktreeCwd, runProc });
@@ -267,7 +266,7 @@ describe("executeDeliveryHook", () => {
     expect(calls.some((call) => call[0] === "gh")).toBe(false);
   });
 
-  it("flag ON + gate vert -> PR truth-first avec token bot et commit signé", async () => {
+  it("flag ON + gate vert -> PR Quantum truth-first avec token bot et commit signé", async () => {
     const worktreeCwd = mkWorktree();
     const calls: string[][] = [];
     const envCalls: Array<{ cmd: string; args: string[]; env: Record<string, string> }> = [];
@@ -286,7 +285,7 @@ describe("executeDeliveryHook", () => {
           stderr: "",
         };
       }
-      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/example/project/pull/45\n", stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/45\n", stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     });
     await executeDeliveryHook({
@@ -303,10 +302,10 @@ describe("executeDeliveryHook", () => {
     });
     const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
     expect(createCall).toBeDefined();
-    expect(createCall).toContain(AUTONOMOUS_BRANCH);
-    expect(calls).toContainEqual(["git", "checkout", "-b", AUTONOMOUS_BRANCH]);
+    expect(createCall).toContain(QUANTUM_BRANCH);
+    expect(calls).toContainEqual(["git", "checkout", "-b", QUANTUM_BRANCH]);
     // paperclip:allow-git-push: test assertion — verifies canonical autonomous delivery push (PAPA-432)
-    expect(calls).toContainEqual(["git", "push", "-u", "origin", AUTONOMOUS_BRANCH]);
+    expect(calls).toContainEqual(["git", "push", "-u", "origin", QUANTUM_BRANCH]);
     expect(createCall).toContain("agent-pr");
 
     expect(createCall).toContain("truth-first");
@@ -324,7 +323,7 @@ describe("executeDeliveryHook", () => {
     expect(body).toContain("### Steps to reproduce");
     expect(body).toContain("## What Changed");
     expect(body).toContain("## Description");
-    expect(body).toContain("- Repository: example/project");
+    expect(body).toContain("- Repository: Beyn-SOLIDUS/quantum");
     expect(body).toContain("ADR: ADR-GOV-007");
     expect(body).toContain("TRUTHFULNESS: BACKEND-WIRED");
     expect(body).toContain("## Truthfulness Boundary");
@@ -372,7 +371,7 @@ describe("executeDeliveryHook", () => {
         return {
           exitCode: 1,
           stdout: "",
-          stderr: `! [rejected] ${AUTONOMOUS_BRANCH} -> ${AUTONOMOUS_BRANCH} (non-fast-forward)\n`,
+          stderr: `! [rejected] ${QUANTUM_BRANCH} -> ${QUANTUM_BRANCH} (non-fast-forward)\n`,
         };
       }
       return { exitCode: 0, stdout: "", stderr: "" };
@@ -393,7 +392,7 @@ describe("executeDeliveryHook", () => {
 
     expect(result.reason).toBe("push_failed");
     expect(pushAttempts).toBe(1);
-    expect(calls.some((call) => call.includes(`${AUTONOMOUS_BRANCH}-remote-r1`))).toBe(false);
+    expect(calls.some((call) => call.includes(`${QUANTUM_BRANCH}-remote-r1`))).toBe(false);
     expect(calls.some((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create")).toBe(false);
   });
 
@@ -490,7 +489,7 @@ describe("executeDeliveryHook", () => {
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
       if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
       if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "agent-pr", "truth-first"]), stderr: "" };
-      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/example/project/pull/47\n", stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/47\n", stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     });
 
@@ -498,7 +497,7 @@ describe("executeDeliveryHook", () => {
       ...base,
       worktreeCwd,
       branch: null,
-      config: { deliveryRepo: base.repo },
+      config: {},
       context: { paperclipIssue: { identifier: "HAS-222", id: "issue-uuid" } },
       executionTargetIsRemote: false,
       exitCode: 0,
@@ -510,7 +509,7 @@ describe("executeDeliveryHook", () => {
     expect(log).toHaveBeenCalledWith("stdout", "[paperclip] delivery: recovered branch from git current_branch=codex/HAS-222-recovered\n");
     const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
     expect(createCall).toContain("--head");
-    expect(createCall).toContain("codex/HAS-222-recovered");
+    expect(createCall).toContain(QUANTUM_BRANCH);
   });
 
   it("configured delivery creates a PR branch when the current branch is the base branch", async () => {
@@ -525,7 +524,7 @@ describe("executeDeliveryHook", () => {
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
       if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
       if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "agent-pr", "truth-first"]), stderr: "" };
-      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/example/project/pull/48\n", stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/48\n", stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     });
 
@@ -533,7 +532,7 @@ describe("executeDeliveryHook", () => {
       ...base,
       worktreeCwd,
       branch: "main",
-      config: { deliveryRepo: base.repo },
+      config: {},
       context: { paperclipIssue: { identifier: "HAS-222", id: "issue-uuid" } },
       executionTargetIsRemote: false,
       exitCode: 0,
@@ -542,10 +541,10 @@ describe("executeDeliveryHook", () => {
     });
 
     expect(result?.reason).toBe("created");
-    expect(calls).toContainEqual(["git", "checkout", "-b", GENERIC_FALLBACK_BRANCH]);
-    expect(log).toHaveBeenCalledWith("stdout", `[paperclip] delivery: created branch for PR branch=${GENERIC_FALLBACK_BRANCH}\n`);
+    expect(calls).toContainEqual(["git", "checkout", "-b", QUANTUM_FALLBACK_BRANCH]);
+    expect(log).toHaveBeenCalledWith("stdout", `[paperclip] delivery: created branch for PR branch=${QUANTUM_FALLBACK_BRANCH}\n`);
     const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
-    expect(createCall).toContain(GENERIC_FALLBACK_BRANCH);
+    expect(createCall).toContain(QUANTUM_FALLBACK_BRANCH);
   });
 
   it("configured delivery reuses the fallback PR branch if it already exists locally", async () => {
@@ -556,12 +555,12 @@ describe("executeDeliveryHook", () => {
       calls.push([cmd, ...args]);
       const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
       if (key === "git rev-parse --abbrev-ref") return { exitCode: 0, stdout: "main\n", stderr: "" };
-      if (key === "git checkout -b") return { exitCode: 1, stdout: "", stderr: `fatal: a branch named '${GENERIC_FALLBACK_BRANCH}' already exists\n` };
-      if (key === `git checkout ${GENERIC_FALLBACK_BRANCH}`) return { exitCode: 0, stdout: "", stderr: "" };
+      if (key === "git checkout -b") return { exitCode: 1, stdout: "", stderr: `fatal: a branch named '${QUANTUM_FALLBACK_BRANCH}' already exists\n` };
+      if (key === `git checkout ${QUANTUM_FALLBACK_BRANCH}`) return { exitCode: 0, stdout: "", stderr: "" };
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
       if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
       if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "agent-pr", "truth-first"]), stderr: "" };
-      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/example/project/pull/49\n", stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/49\n", stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     });
 
@@ -569,7 +568,7 @@ describe("executeDeliveryHook", () => {
       ...base,
       worktreeCwd,
       branch: "main",
-      config: { deliveryRepo: base.repo },
+      config: {},
       context: { paperclipIssue: { identifier: "HAS-222", id: "issue-uuid" } },
       executionTargetIsRemote: false,
       exitCode: 0,
@@ -578,8 +577,8 @@ describe("executeDeliveryHook", () => {
     });
 
     expect(result?.reason).toBe("created");
-    expect(calls).toContainEqual(["git", "checkout", GENERIC_FALLBACK_BRANCH]);
-    expect(log).toHaveBeenCalledWith("stdout", `[paperclip] delivery: checked out existing PR branch=${GENERIC_FALLBACK_BRANCH}\n`);
+    expect(calls).toContainEqual(["git", "checkout", QUANTUM_FALLBACK_BRANCH]);
+    expect(log).toHaveBeenCalledWith("stdout", `[paperclip] delivery: checked out existing PR branch=${QUANTUM_FALLBACK_BRANCH}\n`);
   });
 
   it("configured delivery skips safely when base-branch checkout cannot create a PR branch", async () => {
@@ -596,7 +595,7 @@ describe("executeDeliveryHook", () => {
       ...base,
       worktreeCwd,
       branch: "main",
-      config: { deliveryRepo: base.repo },
+      config: {},
       context: {},
       executionTargetIsRemote: false,
       exitCode: 0,
@@ -617,7 +616,7 @@ describe("executeDeliveryHook", () => {
       ...base,
       worktreeCwd,
       branch: base.branch,
-      config: { deliveryRepo: base.repo },
+      config: {},
       context: {},
       executionTargetIsRemote: true,
       exitCode: 0,
@@ -639,7 +638,7 @@ describe("executeDeliveryHook", () => {
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
       if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
       if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "human-gate-required", "agent-pr", "automated", "truth-first"]), stderr: "" };
-      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/example/project/pull/46\n", stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/46\n", stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     });
     await executeDeliveryHook({ ...base, worktreeCwd, env: { ...base.env, PAPERCLIP_DELIVERY_LANE: "dev-test" }, runProc });
@@ -660,13 +659,13 @@ describe("executeDeliveryHook", () => {
       const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
       // PR already exists — return URL on first pr list call
-      if (key === "gh pr list") return { exitCode: 0, stdout: "https://github.com/example/project/pull/99\n", stderr: "" };
+      if (key === "gh pr list") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/99\n", stderr: "" };
       if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "human-gate-required"]), stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     });
     const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
     expect(result.reason).toBe("pr_exists");
-    expect(result.prUrl).toBe("https://github.com/example/project/pull/99");
+    expect(result.prUrl).toBe("https://github.com/Beyn-SOLIDUS/quantum/pull/99");
     expect(result.delivered).toBe(true);
     // Must NOT have committed or pushed
     expect(calls.some((call) => call[0] === "git" && call[1] === "commit")).toBe(false);
@@ -682,8 +681,8 @@ describe("executeDeliveryHook", () => {
     const existingBody = [
       "## Delivery Metadata",
       "- Paperclip issue: HAS-222 (uuid)",
-      "- Repository: example/project",
-      "- Idempotency key: example/project:uuid",
+      "- Repository: Beyn-SOLIDUS/quantum",
+      "- Idempotency key: beyn-solidus/quantum:uuid",
     ].join("\n");
     const runProc = vi.fn(async (cmd: string, args: string[]) => {
       calls.push([cmd, ...args]);
@@ -697,7 +696,7 @@ describe("executeDeliveryHook", () => {
           : {
               exitCode: 0,
               stdout: JSON.stringify([{
-                url: "https://github.com/example/project/pull/105",
+                url: "https://github.com/Beyn-SOLIDUS/quantum/pull/105",
                 state: "OPEN",
                 mergedAt: null,
                 mergeCommit: null,
@@ -715,7 +714,7 @@ describe("executeDeliveryHook", () => {
 
     expect(result).toEqual({
       delivered: true,
-      prUrl: "https://github.com/example/project/pull/105",
+      prUrl: "https://github.com/Beyn-SOLIDUS/quantum/pull/105",
       reason: "pr_exists",
     });
     expect(calls.some((call) => call[0] === "git" && call[1] === "push")).toBe(true);
@@ -729,8 +728,8 @@ describe("executeDeliveryHook", () => {
     const existingBody = [
       "## Delivery Metadata",
       "- Paperclip issue: HAS-222 (uuid)",
-      "- Repository: example/project",
-      "- Idempotency key: example/project:uuid",
+      "- Repository: Beyn-SOLIDUS/quantum",
+      "- Idempotency key: beyn-solidus/quantum:uuid",
     ].join("\n");
     const runProc = vi.fn(async (cmd: string, args: string[]) => {
       calls.push([cmd, ...args]);
@@ -744,7 +743,7 @@ describe("executeDeliveryHook", () => {
           : {
               exitCode: 0,
               stdout: JSON.stringify([{
-                url: "https://github.com/example/project/pull/105",
+                url: "https://github.com/Beyn-SOLIDUS/quantum/pull/105",
                 state: "MERGED",
                 mergedAt: "2026-07-23T10:00:00Z",
                 mergeCommit: { oid: "merge-105" },
@@ -764,14 +763,14 @@ describe("executeDeliveryHook", () => {
 
     expect(result).toEqual({
       delivered: false,
-      prUrl: "https://github.com/example/project/pull/105",
+      prUrl: "https://github.com/Beyn-SOLIDUS/quantum/pull/105",
       reason: "delivery_blocked: merged issue result not on base",
     });
     expect(issueLookupCount).toBe(2);
     expect(calls).toContainEqual([
       "gh",
       "api",
-      "repos/example/project/compare/merge-105...main",
+      "repos/Beyn-SOLIDUS/quantum/compare/merge-105...main",
       "--jq",
       ".status",
     ]);
@@ -788,25 +787,25 @@ describe("executeDeliveryHook", () => {
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
       if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
       if (cmd === "git" && args[0] === "ls-remote") {
-        return args[4] === GENERIC_BRANCH
-          ? { exitCode: 0, stdout: `abc123\trefs/heads/${GENERIC_BRANCH}\n`, stderr: "" }
+        return args[4] === QUANTUM_BRANCH
+          ? { exitCode: 0, stdout: `abc123\trefs/heads/${QUANTUM_BRANCH}\n`, stderr: "" }
           : { exitCode: 2, stdout: "", stderr: "" };
       }
 
       if (key === "git checkout -b") return { exitCode: 0, stdout: "", stderr: "" };
       if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "agent-pr", "truth-first"]), stderr: "" };
-      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/example/project/pull/100\n", stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/100\n", stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     });
 
     const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
 
     expect(result.reason).toBe("created");
-    expect(calls).toContainEqual(["git", "checkout", "-b", `${GENERIC_BRANCH}-remote-r1`]);
+    expect(calls).toContainEqual(["git", "checkout", "-b", `${QUANTUM_BRANCH}-remote-r1`]);
     // paperclip:allow-git-push: test assertion — verifies delivery hook invokes git push for remote branch (PAPA-432)
-    expect(calls).toContainEqual(["git", "push", "-u", "origin", `${GENERIC_BRANCH}-remote-r1`]);
+    expect(calls).toContainEqual(["git", "push", "-u", "origin", `${QUANTUM_BRANCH}-remote-r1`]);
     const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
-    expect(createCall).toContain(`${GENERIC_BRANCH}-remote-r1`);
+    expect(createCall).toContain(`${QUANTUM_BRANCH}-remote-r1`);
   });
 
   it("tries another remote-collision branch when the first candidate already exists remotely", async () => {
@@ -818,22 +817,22 @@ describe("executeDeliveryHook", () => {
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
       if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
       if (cmd === "git" && args[0] === "ls-remote") {
-        return args[4] === GENERIC_BRANCH || args[4] === `${GENERIC_BRANCH}-remote-r1`
+        return args[4] === QUANTUM_BRANCH || args[4] === `${QUANTUM_BRANCH}-remote-r1`
           ? { exitCode: 0, stdout: `abc123\trefs/heads/${args[4]}\n`, stderr: "" }
           : { exitCode: 2, stdout: "", stderr: "" };
       }
       if (key === "git checkout -b") return { exitCode: 0, stdout: "", stderr: "" };
       if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "agent-pr", "truth-first"]), stderr: "" };
-      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/example/project/pull/101\n", stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/101\n", stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     });
 
     const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
 
     expect(result.reason).toBe("created");
-    expect(calls).toContainEqual(["git", "checkout", "-b", `${GENERIC_BRANCH}-remote-r1-2`]);
+    expect(calls).toContainEqual(["git", "checkout", "-b", `${QUANTUM_BRANCH}-remote-r1-2`]);
     // paperclip:allow-git-push: test assertion — verifies delivery hook invokes git push for collision-resolved branch (PAPA-432)
-    expect(calls).toContainEqual(["git", "push", "-u", "origin", `${GENERIC_BRANCH}-remote-r1-2`]);
+    expect(calls).toContainEqual(["git", "push", "-u", "origin", `${QUANTUM_BRANCH}-remote-r1-2`]);
   });
 
   it("reuses an existing local remote-collision branch when it is available", async () => {
@@ -845,23 +844,23 @@ describe("executeDeliveryHook", () => {
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
       if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
       if (cmd === "git" && args[0] === "ls-remote") {
-        return args[4] === GENERIC_BRANCH
-          ? { exitCode: 0, stdout: `abc123\trefs/heads/${GENERIC_BRANCH}\n`, stderr: "" }
+        return args[4] === QUANTUM_BRANCH
+          ? { exitCode: 0, stdout: `abc123\trefs/heads/${QUANTUM_BRANCH}\n`, stderr: "" }
           : { exitCode: 2, stdout: "", stderr: "" };
       }
-      if (key === "git checkout -b") return { exitCode: 1, stdout: "", stderr: `fatal: a branch named '${GENERIC_BRANCH}-remote-r1' already exists\n` };
-      if (key === `git checkout ${GENERIC_BRANCH}-remote-r1`) return { exitCode: 0, stdout: "", stderr: "" };
+      if (key === "git checkout -b") return { exitCode: 1, stdout: "", stderr: `fatal: a branch named '${QUANTUM_BRANCH}-remote-r1' already exists\n` };
+      if (key === `git checkout ${QUANTUM_BRANCH}-remote-r1`) return { exitCode: 0, stdout: "", stderr: "" };
       if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "agent-pr", "truth-first"]), stderr: "" };
-      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/example/project/pull/102\n", stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/102\n", stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     });
 
     const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
 
     expect(result.reason).toBe("created");
-    expect(calls).toContainEqual(["git", "checkout", `${GENERIC_BRANCH}-remote-r1`]);
+    expect(calls).toContainEqual(["git", "checkout", `${QUANTUM_BRANCH}-remote-r1`]);
     // paperclip:allow-git-push: test assertion — verifies delivery hook pushes reused local collision branch (PAPA-432)
-    expect(calls).toContainEqual(["git", "push", "-u", "origin", `${GENERIC_BRANCH}-remote-r1`]);
+    expect(calls).toContainEqual(["git", "push", "-u", "origin", `${QUANTUM_BRANCH}-remote-r1`]);
   });
 
   it("push retry: transient 429 -> retries once, succeeds on second attempt", async () => {
@@ -897,11 +896,11 @@ describe("executeDeliveryHook", () => {
       if (cmd === "git" && args[0] === "ls-remote") return { exitCode: 2, stdout: "", stderr: "" };
       if (key === "git checkout -b") return { exitCode: 0, stdout: "", stderr: "" };
       if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "agent-pr", "truth-first"]), stderr: "" };
-      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/example/project/pull/103\n", stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/103\n", stderr: "" };
       if (cmd === "git" && args[0] === "push") {
         pushAttempts++;
         if (pushAttempts === 1) {
-          return { exitCode: 1, stdout: "", stderr: `! [rejected] ${GENERIC_BRANCH} -> ${GENERIC_BRANCH} (non-fast-forward)\nerror: failed to push some refs\n` };
+          return { exitCode: 1, stdout: "", stderr: `! [rejected] ${QUANTUM_BRANCH} -> ${QUANTUM_BRANCH} (non-fast-forward)\nerror: failed to push some refs\n` };
         }
         return { exitCode: 0, stdout: "", stderr: "" };
       }
@@ -911,12 +910,12 @@ describe("executeDeliveryHook", () => {
     const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
 
     expect(result.reason).toBe("created");
-    expect(calls).toContainEqual(["git", "checkout", "-b", `${GENERIC_BRANCH}-remote-r1`]);
+    expect(calls).toContainEqual(["git", "checkout", "-b", `${QUANTUM_BRANCH}-remote-r1`]);
     // paperclip:allow-git-push: test assertion — verifies delivery hook retries git push after non-fast-forward race (PAPA-432)
-    expect(calls).toContainEqual(["git", "push", "-u", "origin", `${GENERIC_BRANCH}-remote-r1`]);
+    expect(calls).toContainEqual(["git", "push", "-u", "origin", `${QUANTUM_BRANCH}-remote-r1`]);
 
     const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
-    expect(createCall).toContain(`${GENERIC_BRANCH}-remote-r1`);
+    expect(createCall).toContain(`${QUANTUM_BRANCH}-remote-r1`);
     expect(pushAttempts).toBe(2);
   });
 
@@ -933,7 +932,7 @@ describe("executeDeliveryHook", () => {
           branchLookupCount++;
           return branchLookupCount === 1
             ? { exitCode: 0, stdout: "", stderr: "" }
-            : { exitCode: 0, stdout: "https://github.com/example/project/pull/104\n", stderr: "" };
+            : { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/104\n", stderr: "" };
         }
         return { exitCode: 0, stdout: "[]", stderr: "" };
       }
@@ -946,7 +945,7 @@ describe("executeDeliveryHook", () => {
 
     expect(result).toEqual({
       delivered: true,
-      prUrl: "https://github.com/example/project/pull/104",
+      prUrl: "https://github.com/Beyn-SOLIDUS/quantum/pull/104",
       reason: "pr_exists",
     });
     expect(branchLookupCount).toBe(2);
