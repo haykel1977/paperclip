@@ -359,6 +359,108 @@ describe("realizeExecutionWorkspace", () => {
     expect(await readGit(workspace.cwd, ["rev-parse", "HEAD"])).toBe(expectedRemoteHead);
   });
 
+  it.each(["master", "feature/foo"])("starts and reuses a worktree from the refreshed upstream of local branch %s", async (localBranch) => {
+    const sourceRepo = await createTempRepo(localBranch);
+    const remoteDir = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-worktree-remote-"));
+    const remotePath = path.join(remoteDir, "paperclip.git");
+    await execFileAsync("git", ["clone", "--bare", sourceRepo, remotePath]);
+
+    const cloneRoot = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-worktree-clone-"));
+    const repoRoot = path.join(cloneRoot, "paperclip");
+    await execFileAsync("git", ["clone", remotePath, repoRoot]);
+    await runGit(repoRoot, ["config", "user.email", "paperclip@example.com"]);
+    await runGit(repoRoot, ["config", "user.name", "Paperclip Test"]);
+    // Park the clone on another branch so the stale local `master` is not checked out.
+    await runGit(repoRoot, ["checkout", "-b", "parked"]);
+    const staleLocalHead = await readGit(repoRoot, ["rev-parse", localBranch]);
+
+    await fs.writeFile(path.join(sourceRepo, "auth-fix.txt"), "cookie fix\n", "utf8");
+    await runGit(sourceRepo, ["add", "auth-fix.txt"]);
+    await runGit(sourceRepo, ["commit", "-m", "Add auth fix"]);
+    await runGit(sourceRepo, ["push", remotePath, localBranch]);
+    const expectedRemoteHead = await readGit(sourceRepo, ["rev-parse", localBranch]);
+    expect(staleLocalHead).not.toBe(expectedRemoteHead);
+
+    const input = {
+      base: {
+        baseCwd: repoRoot,
+        source: "project_primary" as const,
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: null,
+        repoRef: null,
+      },
+      config: {
+        workspaceStrategy: {
+          type: "git_worktree",
+          baseRef: localBranch,
+          branchTemplate: "{{issue.identifier}}-{{slug}}",
+        },
+      },
+      issue: {
+        id: "issue-2",
+        identifier: "PAP-448",
+        title: "Start From Upstream",
+      },
+      agent: {
+        id: "agent-1",
+        name: "Codex Coder",
+        companyId: "company-1",
+      },
+    };
+    const workspace = await realizeExecutionWorkspace(input);
+
+    // The worktree forks from the refreshed remote tip, not from the stale local branch.
+    expect(workspace.baseRefSha).toBe(expectedRemoteHead);
+    expect(await readGit(workspace.cwd, ["rev-parse", "HEAD"])).toBe(expectedRemoteHead);
+    expect(await readGit(repoRoot, ["rev-parse", `origin/${localBranch}`])).toBe(expectedRemoteHead);
+    expect(workspace.warnings.some((w) => w.includes(`upstream origin/${localBranch}`))).toBe(true);
+    expect(workspace.repoRef).toBe(`origin/${localBranch}`);
+    const reused = await realizeExecutionWorkspace(input);
+    expect(reused.repoRef).toBe(`origin/${localBranch}`);
+    expect(reused.created).toBe(false);
+    // The stale local branch itself is left untouched (never rewritten behind the operator's back).
+    expect(await readGit(repoRoot, ["rev-parse", localBranch])).toBe(staleLocalHead);
+  });
+
+  it.each(["reuse", "reattach", "recreate"])("resolves a persisted local base to its refreshed upstream during %s", async (mode) => {
+    const sourceRepo = await createTempRepo();
+    const remotePath = path.join(await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-upstream-")), "remote.git");
+    await execFileAsync("git", ["clone", "--bare", sourceRepo, remotePath]);
+    const repoRoot = path.join(await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-upstream-clone-")), "repo");
+    await execFileAsync("git", ["clone", remotePath, repoRoot]);
+    const staleHead = await readGit(repoRoot, ["rev-parse", "main"]);
+    const branchName = "PAP-448-persisted-upstream";
+    const worktreePath = path.join(repoRoot, "worktrees", branchName);
+    await runGit(repoRoot, ["worktree", "add", "-b", branchName, worktreePath, "main"]);
+    if (mode !== "reuse") {
+      await fs.rm(worktreePath, { recursive: true, force: true });
+      await runGit(repoRoot, ["worktree", "prune"]);
+      if (mode === "recreate") await runGit(repoRoot, ["branch", "-D", branchName]);
+    }
+    await fs.writeFile(path.join(sourceRepo, "fix.txt"), "new upstream fix\n", "utf8");
+    await runGit(sourceRepo, ["add", "fix.txt"]);
+    await runGit(sourceRepo, ["commit", "-m", "Advance upstream"]);
+    await runGit(sourceRepo, ["push", remotePath, "main"]);
+    const remoteHead = await readGit(sourceRepo, ["rev-parse", "HEAD"]);
+    const restored = await ensurePersistedExecutionWorkspaceAvailable({
+      base: { baseCwd: repoRoot, source: "project_primary", projectId: "project-1", workspaceId: "workspace-1", repoUrl: null, repoRef: "main" },
+      workspace: {
+        mode: "isolated", strategyType: "git_worktree", cwd: worktreePath, providerRef: worktreePath,
+        projectId: "project-1", projectWorkspaceId: "workspace-1", repoUrl: null,
+        baseRef: "main", branchName, metadata: { baseRefSnapshot: { resolvedSha: staleHead } },
+      },
+      issue: { id: "issue-2", identifier: "PAP-448", title: "Persisted upstream" },
+      agent: { id: "agent-1", name: "Coder", companyId: "company-1" },
+    });
+    expect(restored?.repoRef).toBe("origin/main");
+    expect(restored?.baseRefSha).toBe(mode === "recreate" ? remoteHead : staleHead);
+    expect(await readGit(repoRoot, ["rev-parse", "origin/main"])).toBe(remoteHead);
+    expect(await readGit(worktreePath, ["rev-parse", "HEAD"])).toBe(mode === "recreate" ? remoteHead : staleHead);
+    expect(await readGit(repoRoot, ["rev-parse", "main"])).toBe(staleHead);
+    if (mode !== "recreate") expect(restored?.warnings.some((w) => w.includes("behind origin/main"))).toBe(true);
+  });
+
   it("creates and reuses a git worktree for an issue-scoped branch", async () => {
     const repoRoot = await createTempRepo();
 

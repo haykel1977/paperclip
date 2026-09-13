@@ -41,6 +41,21 @@ function cloneRecord(value: unknown): Record<string, unknown> | null {
   return { ...value };
 }
 
+export function mergeExecutionWorkspaceBaseRefSnapshot(input: {
+  existingMetadata: Record<string, unknown> | null | undefined;
+  created: boolean;
+  baseRef: string | null | undefined;
+  baseRefSha: string | null | undefined;
+}): Record<string, unknown> {
+  const metadata = { ...(input.existingMetadata ?? {}) };
+  const snapshot = cloneRecord(metadata.baseRefSnapshot);
+  // A recreated branch has a new base. Reused work keeps its original snapshot.
+  if (input.baseRefSha && (input.created || typeof snapshot?.resolvedSha !== "string")) {
+    metadata.baseRefSnapshot = { baseRef: input.baseRef ?? null, resolvedSha: input.baseRefSha };
+  }
+  return metadata;
+}
+
 function readDesiredState(value: unknown): WorkspaceRuntimeDesiredState | null {
   return value === "running" || value === "stopped" || value === "manual" ? value : null;
 }
