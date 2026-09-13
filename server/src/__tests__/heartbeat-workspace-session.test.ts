@@ -647,6 +647,25 @@ describe("applyPersistedExecutionWorkspaceConfig", () => {
 });
 
 describe("mergeExecutionWorkspaceMetadataForPersistence", () => {
+  it.each([true, false])("keeps the correct base snapshot when persisted recovery created=%s", (created) => {
+    const oldSnapshot = { baseRef: "main", resolvedSha: "old-base" };
+    const existingMetadata = { baseRefSnapshot: oldSnapshot, custom: "keep" };
+    const result = mergeExecutionWorkspaceMetadataForPersistence({
+      existingMetadata,
+      source: "task_session",
+      createdByRuntime: created,
+      configSnapshot: null,
+      shouldReuseExisting: true,
+      baseRef: "origin/main",
+      baseRefSha: "fresh-base",
+    });
+    expect(result.baseRefSnapshot).toEqual(created
+      ? { baseRef: "origin/main", resolvedSha: "fresh-base" }
+      : oldSnapshot);
+    expect(result.custom).toBe("keep");
+    expect(existingMetadata.baseRefSnapshot).toEqual(oldSnapshot);
+  });
+
   it("merges config snapshot for newly realized workspaces", () => {
     expect(mergeExecutionWorkspaceMetadataForPersistence({
       existingMetadata: null,
