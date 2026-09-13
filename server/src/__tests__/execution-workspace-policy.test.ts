@@ -103,6 +103,22 @@ describe("execution workspace policy helpers", () => {
     expect(result.branchPolicy).toEqual({ requireIssueIdentifier: true, branchPrefix: "feat/agent-" });
   });
 
+  it("preserves the adapter branch policy when the project does not override it", () => {
+    const result = buildExecutionWorkspaceAdapterConfig({
+      agentConfig: { branchPolicy: { requireIssueIdentifier: true } },
+      projectPolicy: {
+        enabled: true,
+        defaultMode: "isolated_workspace",
+        workspaceStrategy: { type: "git_worktree" },
+      },
+      issueSettings: null,
+      mode: "isolated_workspace",
+      legacyUseProjectWorkspace: null,
+    });
+
+    expect(result.branchPolicy).toEqual({ requireIssueIdentifier: true });
+  });
+
   it("drops a stale branch policy when the issue opts out of isolation", () => {
     const result = buildExecutionWorkspaceAdapterConfig({
       agentConfig: { branchPolicy: { requireIssueIdentifier: true } },

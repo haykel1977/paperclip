@@ -326,8 +326,6 @@ export function buildExecutionWorkspaceAdapterConfig(input: {
       const branchPolicy = cloneRecord(input.projectPolicy?.branchPolicy);
       if (branchPolicy) {
         nextConfig.branchPolicy = branchPolicy;
-      } else {
-        delete nextConfig.branchPolicy;
       }
     } else {
       delete nextConfig.workspaceStrategy;

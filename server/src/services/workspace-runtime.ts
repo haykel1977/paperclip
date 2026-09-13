@@ -396,13 +396,36 @@ function renderWorkspaceTemplate(template: string, input: {
   });
 }
 
-function sanitizeBranchName(value: string): string {
+function sanitizeBranchName(value: string, maxLength = 120): string {
   return value
     .trim()
     .replace(/[^A-Za-z0-9._/-]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^[-/.]+|[-/.]+$/g, "")
-    .slice(0, 120) || "paperclip-work";
+    .slice(0, maxLength) || "paperclip-work";
+}
+
+function branchContainsIdentifier(branchName: string, identifierPart: string): boolean {
+  const escapedIdentifier = identifierPart.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^a-z0-9])${escapedIdentifier}($|[^a-z0-9])`, "i").test(branchName);
+}
+
+function truncateBranchPreservingIdentifier(branchName: string, identifierPart: string): string {
+  const maxBranchLength = 120;
+  if (identifierPart.length > maxBranchLength) {
+    throw new Error(
+      `Issue identifier cannot be represented in a branch name: its sanitized form exceeds ${maxBranchLength} characters`,
+    );
+  }
+  if (branchName.length <= maxBranchLength) return branchName;
+
+  const truncated = sanitizeBranchName(branchName, maxBranchLength);
+  if (branchContainsIdentifier(truncated, identifierPart)) return truncated;
+
+  // The identifier may occur after the truncation boundary. Keep as much of the branch prefix as
+  // possible, but always retain the complete identifier so the branch remains issue-scoped.
+  const prefixLength = Math.max(0, maxBranchLength - identifierPart.length - 1);
+  return sanitizeBranchName(`${branchName.slice(0, prefixLength)}-${identifierPart}`, maxBranchLength);
 }
 
 /**
@@ -431,18 +454,22 @@ function enforceIssueIdentifierInBranch(input: {
         `"${branchName}" is derived from the title alone and issues sharing a title will share a worktree.`,
     };
   }
-  if (branchName.toLowerCase().includes(identifierPart)) {
-    return { branchName, warning: null };
+  const untruncatedBranchName = sanitizeBranchName(input.renderedBranch, Number.POSITIVE_INFINITY);
+  if (branchContainsIdentifier(untruncatedBranchName, identifierPart)) {
+    return {
+      branchName: truncateBranchPreservingIdentifier(untruncatedBranchName, identifierPart),
+      warning: null,
+    };
   }
   // Insert next to the LAST occurrence of the slug: an earlier segment (agent name, prefix) may
   // contain the same characters, and `{{slug}}` conventionally ends the template.
   const slug = sanitizeSlugPart(input.issueTitle, "");
-  const slugAt = slug ? input.renderedBranch.lastIndexOf(slug) : -1;
+  const slugAt = slug ? untruncatedBranchName.lastIndexOf(slug) : -1;
   const withIdentifier = slugAt >= 0
-    ? `${input.renderedBranch.slice(0, slugAt)}${identifierPart}-${input.renderedBranch.slice(slugAt)}`
-    : `${input.renderedBranch}-${identifierPart}`;
+    ? `${untruncatedBranchName.slice(0, slugAt)}${identifierPart}-${untruncatedBranchName.slice(slugAt)}`
+    : `${untruncatedBranchName}-${identifierPart}`;
   return {
-    branchName: sanitizeBranchName(withIdentifier),
+    branchName: truncateBranchPreservingIdentifier(withIdentifier, identifierPart),
     warning:
       `Branch template omitted the issue identifier; "${identifierPart}" was inserted ` +
       "so that issues sharing a title do not share a worktree (branchPolicy.requireIssueIdentifier).",
