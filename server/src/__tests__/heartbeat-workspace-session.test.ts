@@ -647,6 +647,15 @@ describe("applyPersistedExecutionWorkspaceConfig", () => {
 });
 
 describe("mergeExecutionWorkspaceMetadataForPersistence", () => {
+  it("preserves the snapshot when a new worktree attaches an existing branch", () => {
+    const snapshot = { baseRef: "main", resolvedSha: "original-base" };
+    expect(mergeExecutionWorkspaceMetadataForPersistence({
+      existingMetadata: { baseRefSnapshot: snapshot }, source: "task_session",
+      createdByRuntime: true, branchCreated: false, configSnapshot: null, shouldReuseExisting: true,
+      baseRef: "origin/main", baseRefSha: "new-upstream",
+    }).baseRefSnapshot).toEqual(snapshot);
+  });
+
   it.each([true, false])("keeps the correct base snapshot when persisted recovery created=%s", (created) => {
     const oldSnapshot = { baseRef: "main", resolvedSha: "old-base" };
     const existingMetadata = { baseRefSnapshot: oldSnapshot, custom: "keep" };

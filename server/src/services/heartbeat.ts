@@ -723,6 +723,7 @@ export function mergeExecutionWorkspaceMetadataForPersistence(input: {
   existingMetadata: Record<string, unknown> | null | undefined;
   source: string;
   createdByRuntime: boolean;
+  branchCreated?: boolean;
   configSnapshot: Record<string, unknown> | null;
   shouldReuseExisting: boolean;
   baseRef: string | null | undefined;
@@ -731,7 +732,7 @@ export function mergeExecutionWorkspaceMetadataForPersistence(input: {
   const base = {
     ...mergeExecutionWorkspaceBaseRefSnapshot({
       existingMetadata: input.existingMetadata,
-      created: input.createdByRuntime,
+      created: input.branchCreated ?? input.createdByRuntime,
       baseRef: input.baseRef,
       baseRefSha: input.baseRefSha,
     }),
@@ -8395,6 +8396,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       existingMetadata: existingExecutionWorkspace?.metadata ?? null,
       source: executionWorkspace.source,
       createdByRuntime: executionWorkspace.created,
+      branchCreated: executionWorkspace.branchCreated,
       configSnapshot,
       shouldReuseExisting,
       baseRef: executionWorkspace.repoRef,
