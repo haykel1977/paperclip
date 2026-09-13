@@ -20,7 +20,7 @@ const base = {
   env: { PAPERCLIP_GITHUB_ISSUE_NUMBER: "222" },
   issueIdentifier: "HAS-222",
   issueId: "uuid",
-  repo: "Beyn-SOLIDUS/quantum",
+  repo: "example/project",
   baseBranch: "main",
   agentId: "agent-1",
   model: "qwen3-coder-30b-sovereign",
@@ -74,7 +74,7 @@ describe("claude-local delivery hook", () => {
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
       if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
       if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "human-gate-required", "bot-merge-ready"]), stderr: "" };
-      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/44\n", stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/example/project/pull/44\n", stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     });
     await executeDeliveryHook({ ...base, worktreeCwd, runProc });
@@ -110,7 +110,7 @@ describe("claude-local delivery hook", () => {
       if (key === "git log -1") return { exitCode: 0, stdout: "G\n", stderr: "" };
       if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
       if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "human-gate-required", "bot-merge-ready"]), stderr: "" };
-      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/45\n", stderr: "" };
+      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/example/project/pull/45\n", stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     });
     await executeDeliveryHook({
@@ -149,13 +149,13 @@ describe("claude-local delivery hook", () => {
       calls.push([cmd, ...args]);
       const key = `${cmd} ${args[0] ?? ""} ${args[1] ?? ""}`.trim();
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M f\n", stderr: "" };
-      if (key === "gh pr list") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/99\n", stderr: "" };
+      if (key === "gh pr list") return { exitCode: 0, stdout: "https://github.com/example/project/pull/99\n", stderr: "" };
       if (key === "gh label list") return { exitCode: 0, stdout: JSON.stringify(["factory-proof", "human-gate-required"]), stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     });
     const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
     expect(result.reason).toBe("pr_exists");
-    expect(result.prUrl).toBe("https://github.com/Beyn-SOLIDUS/quantum/pull/99");
+    expect(result.prUrl).toBe("https://github.com/example/project/pull/99");
     expect(result.delivered).toBe(true);
     expect(calls.some((call) => call[0] === "git" && call[1] === "commit")).toBe(false);
     expect(calls.some((call) => call[0] === "git" && call[1] === "push")).toBe(false);
