@@ -125,7 +125,7 @@ import {
   getIssueContinuationSummaryDocument,
   refreshIssueContinuationSummary,
 } from "./issue-continuation-summary.js";
-import { executionWorkspaceService, mergeExecutionWorkspaceConfig } from "./execution-workspaces.js";
+import { executionWorkspaceService, mergeExecutionWorkspaceBaseRefSnapshot, mergeExecutionWorkspaceConfig } from "./execution-workspaces.js";
 import { workspaceOperationService } from "./workspace-operations.js";
 import { isProcessGroupAlive, terminateLocalService } from "./local-service-supervisor.js";
 import {
@@ -729,21 +729,15 @@ export function mergeExecutionWorkspaceMetadataForPersistence(input: {
   baseRefSha: string | null | undefined;
 }) {
   const base = {
-    ...(input.existingMetadata ?? {}),
+    ...mergeExecutionWorkspaceBaseRefSnapshot({
+      existingMetadata: input.existingMetadata,
+      created: input.createdByRuntime,
+      baseRef: input.baseRef,
+      baseRefSha: input.baseRefSha,
+    }),
     source: input.source,
     createdByRuntime: input.createdByRuntime,
   } as Record<string, unknown>;
-
-  const existingSnapshot = parseObject(base.baseRefSnapshot);
-  if (
-    typeof existingSnapshot.resolvedSha !== "string"
-    && input.baseRefSha
-  ) {
-    base.baseRefSnapshot = {
-      baseRef: input.baseRef ?? null,
-      resolvedSha: input.baseRefSha,
-    };
-  }
 
   if (input.shouldReuseExisting || !input.configSnapshot) {
     return base;
