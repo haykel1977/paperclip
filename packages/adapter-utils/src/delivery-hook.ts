@@ -517,7 +517,14 @@ async function checkoutNewOrExistingBranch(input: {
     return { ok: false, stderr: createBranch.stderr, stdout: createBranch.stdout };
   }
 
-  const checkoutExisting = await input.runProc("git", ["checkout", input.branch], input.worktreeCwd, input.env);
+  // Reset the canonical branch to the current delivery commit before switching. A plain checkout
+  // would move HEAD to an older local tip and silently drop the commits this run must publish.
+  const checkoutExisting = await input.runProc(
+    "git",
+    ["checkout", "-B", input.branch, "HEAD"],
+    input.worktreeCwd,
+    input.env,
+  );
   if (checkoutExisting.exitCode === 0) return { ok: true, reused: true };
   return { ok: false, stderr: checkoutExisting.stderr, stdout: checkoutExisting.stdout };
 }
