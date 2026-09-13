@@ -30,6 +30,7 @@ export type ExecuteDeliveryHookInput = {
   adapterType?: string | null;
   agentId?: string | null;
   model?: string | null;
+  executionTargetIsRemote?: boolean;
   runProc: DeliveryHookRunProcess;
   log: DeliveryHookLog;
 };
@@ -1920,6 +1921,7 @@ export async function executeConfiguredDeliveryHook(
     adapterType: nonEmpty(input.adapterType) ?? nonEmpty(input.context.adapterType),
     agentId: nonEmpty(input.agentId) ?? nonEmpty(input.context.agentId),
     model: nonEmpty(input.model) ?? nonEmpty(input.context.model) ?? nonEmpty(input.config.model),
+    executionTargetIsRemote: input.executionTargetIsRemote,
     runProc: input.runProc,
     log: input.log,
   });
