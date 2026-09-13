@@ -1441,7 +1441,6 @@ export async function realizeExecutionWorkspace(input: {
     issue: input.issue,
     agent: input.agent,
     created: true,
-    branchCreated,
     recorder: input.recorder ?? null,
   });
 
@@ -1454,6 +1453,7 @@ export async function realizeExecutionWorkspace(input: {
     worktreePath,
     warnings: baseRefreshWarnings,
     created: true,
+    branchCreated,
     baseRefSha: currentBaseRefSha,
   };
 }
@@ -1625,7 +1625,6 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     issue: input.issue,
     agent: input.agent,
     created,
-    branchCreated: created,
     recorder: input.recorder ?? null,
   });
 
@@ -1635,6 +1634,7 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     worktreePath,
     warnings: [...restoreRefreshWarnings, ...baseDrift.warnings],
     created,
+    branchCreated: created,
     baseRefSha:
       (created ? restoreCurrentBaseRefSha : recordedBaseRefSha ?? baseDrift.branchBaseRefSha)
       ?? baseDrift.currentBaseRefSha,
