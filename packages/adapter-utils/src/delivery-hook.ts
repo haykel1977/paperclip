@@ -483,8 +483,10 @@ async function invokeQuantumPrWrapper(
     await log("stderr", `[delivery] result=delivery_blocked reason="quantum_pr_wrapper_failed" detail=${JSON.stringify(detail)}\n`);
     return { delivered: false, prUrl: null, reason: "delivery_blocked: quantum_pr_wrapper_failed" };
   }
-  const evidence = [...result.stdout.matchAll(/^result=(created|updated|exists) pr_url=(\S+)(?:[ \t]+[^\r\n]*)?\r?$/gm)];
-  const outcome = evidence.length === 1 ? evidence[0] : null;
+  const resultLines = result.stdout.split(/\r?\n/).filter((line) => /^[ \t]*result=/.test(line));
+  const outcome = resultLines.length === 1
+    ? resultLines[0]!.match(/^result=(created|updated|exists) pr_url=(\S+)(?:[ \t]+[^\r\n]*)?$/)
+    : null;
   const url = outcome?.[2] ?? "";
   // A bare URL, a different repository, or two result lines is not delivery proof.
   const match = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/([1-9][0-9]*)$/.exec(url);

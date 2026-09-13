@@ -123,6 +123,9 @@ describe("Quantum wrapper owns remote delivery", () => {
     "result=created pr_url=https://github.com/other/repo/pull/1",
     `result=created pr_url=${prUrl}?untrusted=1`,
     `result=created pr_url=${prUrl}\nresult=exists pr_url=${prUrl}`,
+    `result=created pr_url=${prUrl}\nresult=blocked reason=guard`,
+    `result=created pr_url=${prUrl}\nresult=created pr_url=null`,
+    `result=created pr_url=${prUrl}\n  result=blocked`,
   ])("refuses incomplete or ambiguous wrapper evidence: %s", async (stdout) => {
     const f = fixture({ stdout });
     const result = await executeDeliveryHook(f.input);
