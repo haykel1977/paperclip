@@ -269,7 +269,7 @@ export async function findExistingDraftAdvisory(fetchImpl, token, repo, prNumber
   }
 }
 
-export async function postSecurityCheckRun(fetchImpl, token, repo, headSha, hasFlags) {
+export async function postSecurityCheckRun(fetchImpl, token, repo, headSha, hasFlags, options = {}) {
   await fetchImpl(`/repos/${repo}/check-runs`, token, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -285,7 +285,7 @@ export async function postSecurityCheckRun(fetchImpl, token, repo, headSha, hasF
       conclusion: 'neutral',
       output: {
         title: 'Security Review Recommended',
-        summary: 'Draft advisory filed for maintainer review. Not a merge block — review the advisory at your leisure.',
+        summary: options.summary ?? 'Draft advisory filed for maintainer review. Not a merge block — review the advisory at your leisure.',
       },
     } : {
       name: 'security-review',
@@ -349,24 +349,56 @@ async function main() {
   if (allFlags.length > 0) {
     console.error(`[security] ${allFlags.length} flag(s) detected — creating draft advisory and pending check run`);
     // Sequential rather than Promise.all so a partial failure is easier to reason about.
+    let advisoryFiled = true;
     try {
       await syncDraftAdvisory(ghFetch, GH_TOKEN, GH_REPO, prNumber, pr.title, allFlags);
     } catch (advisoryErr) {
       if (advisoryErr.statusCode === 403) {
-        // Token lacks permission to file a security advisory. With flags present this
-        // is a hard failure: the durable signal cannot be written. Exit 1 so the
-        // workflow fails visibly and a maintainer can take action.
-        console.error('::error::[security] Flags detected but token lacks permission to create security advisory (HTTP 403). Manual review required.');
-        process.exit(1);
+        // Token lacks permission to file a security advisory. Emit a durable
+        // warning annotation carrying the full flag list so a maintainer can act,
+        // and post a neutral check-run instead of a failure. Advisory-only signals
+        // must never silently block PRs (see the "Exit: always 0" contract below).
+        advisoryFiled = false;
+        // f.line on secret-scan flags carries the matched source text (see scanSecrets),
+        // so it MUST NOT be echoed to workflow logs or annotations — that would leak
+        // the very secret we detected. We therefore emit only counts by check-type here
+        // and rely on the (also-fallback) neutral check-run + this warning to route
+        // maintainer attention to the workflow, not to inline the content.
+        const bucketed = allFlags.reduce((acc, f) => {
+          acc[f.check] = (acc[f.check] ?? 0) + 1;
+          return acc;
+        }, {});
+        const summary = Object.entries(bucketed)
+          .map(([check, n]) => `${check}=${n}`)
+          .join(', ');
+        console.log(`::warning::[security] ${allFlags.length} flag(s) detected (${summary}). Token lacks security_events:write, so no draft advisory was filed. Grant "Repository security advisories: Read and write" on the GitHub App to restore advisory filing; contents are intentionally not echoed here to avoid leaking secret-scan matches. Re-run the workflow after granting the permission for the full advisory.`);
+      } else {
+        throw advisoryErr;
       }
-      throw advisoryErr;
     }
     try {
-      await postSecurityCheckRun(ghFetch, GH_TOKEN, GH_REPO, pr.head.sha, true);
+      // Post the neutral check-run in both branches (advisory filed OR fallback annotations):
+      // hasFlags=true selects the 'neutral' conclusion, which is what we want whenever
+      // scanning surfaced flags. Passing false here would falsely report 'Security Review Passed'
+      // even though we detected findings. When the advisory could NOT be filed (403 fallback)
+      // we override the summary so the check-run does not falsely claim a draft was filed,
+      // and we surface the distinct set of touched files so a maintainer knows where to look
+      // without exposing per-line content (which for secret-scan flags is the matched secret).
+      let checkOptions;
+      if (!advisoryFiled) {
+        const uniqueFiles = [...new Set(allFlags.map(f => f.file).filter(Boolean))];
+        const fileList = uniqueFiles.length > 20
+          ? `${uniqueFiles.slice(0, 20).join(', ')} … (+${uniqueFiles.length - 20} more)`
+          : uniqueFiles.join(', ');
+        checkOptions = {
+          summary: `${allFlags.length} security flag(s) detected across ${uniqueFiles.length} file(s): ${fileList || '(unknown paths)'}. No draft advisory was filed because the GitHub App lacks the security_events:write permission (Agentic Apps constraint). Not a merge block. Grant "Repository security advisories: Read and write" on the App and re-run the workflow to file the durable advisory.`,
+        };
+      }
+      await postSecurityCheckRun(ghFetch, GH_TOKEN, GH_REPO, pr.head.sha, true, checkOptions);
     } catch (checkRunErr) {
       // check-run creation failure is non-fatal when the advisory was already filed.
       if (checkRunErr.statusCode !== 403) throw checkRunErr;
-      console.log('::warning::[security] Could not post check run (HTTP 403) — advisory was filed. Continuing.');
+      console.log('::warning::[security] Could not post check run (HTTP 403) — advisory-only signals are non-blocking.');
     }
   } else {
     console.log('[security] all clear');
