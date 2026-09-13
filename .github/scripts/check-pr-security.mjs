@@ -269,7 +269,7 @@ export async function findExistingDraftAdvisory(fetchImpl, token, repo, prNumber
   }
 }
 
-export async function postSecurityCheckRun(fetchImpl, token, repo, headSha, hasFlags) {
+export async function postSecurityCheckRun(fetchImpl, token, repo, headSha, hasFlags, options = {}) {
   await fetchImpl(`/repos/${repo}/check-runs`, token, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -285,7 +285,7 @@ export async function postSecurityCheckRun(fetchImpl, token, repo, headSha, hasF
       conclusion: 'neutral',
       output: {
         title: 'Security Review Recommended',
-        summary: 'Draft advisory filed for maintainer review. Not a merge block — review the advisory at your leisure.',
+        summary: options.summary ?? 'Draft advisory filed for maintainer review. Not a merge block — review the advisory at your leisure.',
       },
     } : {
       name: 'security-review',
@@ -380,8 +380,21 @@ async function main() {
       // Post the neutral check-run in both branches (advisory filed OR fallback annotations):
       // hasFlags=true selects the 'neutral' conclusion, which is what we want whenever
       // scanning surfaced flags. Passing false here would falsely report 'Security Review Passed'
-      // even though we detected findings.
-      await postSecurityCheckRun(ghFetch, GH_TOKEN, GH_REPO, pr.head.sha, true);
+      // even though we detected findings. When the advisory could NOT be filed (403 fallback)
+      // we override the summary so the check-run does not falsely claim a draft was filed,
+      // and we surface the distinct set of touched files so a maintainer knows where to look
+      // without exposing per-line content (which for secret-scan flags is the matched secret).
+      let checkOptions;
+      if (!advisoryFiled) {
+        const uniqueFiles = [...new Set(allFlags.map(f => f.file).filter(Boolean))];
+        const fileList = uniqueFiles.length > 20
+          ? `${uniqueFiles.slice(0, 20).join(', ')} … (+${uniqueFiles.length - 20} more)`
+          : uniqueFiles.join(', ');
+        checkOptions = {
+          summary: `${allFlags.length} security flag(s) detected across ${uniqueFiles.length} file(s): ${fileList || '(unknown paths)'}. No draft advisory was filed because the GitHub App lacks the security_events:write permission (Agentic Apps constraint). Not a merge block. Grant "Repository security advisories: Read and write" on the App and re-run the workflow to file the durable advisory.`,
+        };
+      }
+      await postSecurityCheckRun(ghFetch, GH_TOKEN, GH_REPO, pr.head.sha, true, checkOptions);
     } catch (checkRunErr) {
       // check-run creation failure is non-fatal when the advisory was already filed.
       if (checkRunErr.statusCode !== 403) throw checkRunErr;
