@@ -617,6 +617,31 @@ async function refreshRemoteTrackingBaseRef(repoRoot: string, baseRef: string): 
   }
 }
 
+// A base ref that names a LOCAL branch ("main") is never refreshed by refreshRemoteTrackingBaseRef, so
+// every execution workspace forks from whatever that branch last was in the shared repo — three days
+// behind on the Quantum fleet (2026-09-11: baseRef "main" while origin/main had moved 60+ commits).
+// Resolve it to its upstream (or origin/<branch>) so the worktree starts from a refreshable remote tip.
+async function resolveLocalBranchUpstream(repoRoot: string, baseRef: string): Promise<string | null> {
+  // Shorthand local branches can contain slashes too (for example feature/foo).
+  // Check refs/heads explicitly before interpreting a shorthand as a remote ref.
+  if (!baseRef || baseRef === "HEAD") return null;
+  if (!/^[A-Za-z0-9._\/-]+$/.test(baseRef) || baseRef.startsWith("refs/")) return null;
+  const isLocalBranch = await runGit(["rev-parse", "--verify", "--quiet", `refs/heads/${baseRef}`], repoRoot)
+    .then(() => true)
+    .catch(() => false);
+  if (!isLocalBranch) return null;
+  const upstream = await runGit(
+    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", `${baseRef}@{upstream}`],
+    repoRoot,
+  ).catch(() => null);
+  if (upstream && parseRemoteTrackingRef(upstream)) return upstream;
+  const candidate = `origin/${baseRef}`;
+  const candidateExists = await runGit(["rev-parse", "--verify", "--quiet", `refs/remotes/${candidate}`], repoRoot)
+    .then(() => true)
+    .catch(() => false);
+  return candidateExists ? candidate : null;
+}
+
 async function resolveBaseRefSha(repoRoot: string, baseRef: string): Promise<string | null> {
   return await runGit(["rev-parse", "--verify", `${baseRef}^{commit}`], repoRoot).catch(() => null);
 }
@@ -1215,10 +1240,17 @@ export async function realizeExecutionWorkspace(input: {
   const configuredBaseRef = typeof rawStrategy.baseRef === "string" && rawStrategy.baseRef.length > 0
     ? rawStrategy.baseRef
     : input.base.repoRef ?? null;
-  const baseRef = configuredBaseRef
+  const requestedBaseRef = configuredBaseRef
     ?? await detectDefaultBranch(repoRoot)
     ?? "HEAD";
+  const upstreamBaseRef = await resolveLocalBranchUpstream(repoRoot, requestedBaseRef);
+  const baseRef = upstreamBaseRef ?? requestedBaseRef;
   const baseRefreshWarnings = await refreshRemoteTrackingBaseRef(repoRoot, baseRef);
+  if (upstreamBaseRef) {
+    baseRefreshWarnings.unshift(
+      `Base ref ${requestedBaseRef} names a local branch; the execution workspace starts from its refreshed upstream ${upstreamBaseRef} instead.`,
+    );
+  }
   if (identifierWarning) baseRefreshWarnings.unshift(identifierWarning);
   const currentBaseRefSha = await resolveBaseRefSha(repoRoot, baseRef);
 
@@ -1267,6 +1299,7 @@ export async function realizeExecutionWorkspace(input: {
     });
     return {
       ...input.base,
+      repoRef: baseRef,
       strategy: "git_worktree" as const,
       cwd: reusablePath,
       branchName,
@@ -1373,6 +1406,7 @@ export async function realizeExecutionWorkspace(input: {
 
   return {
     ...input.base,
+    repoRef: baseRef,
     strategy: "git_worktree",
     cwd: worktreePath,
     branchName,
@@ -1433,16 +1467,26 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     resolveGitOwnerRepoRoot(persistedWorkspacePath),
   );
   const recordedBaseRefSha = readRecordedBaseRefSha(input.workspace.metadata);
+  const requestedBaseRef = input.workspace.baseRef ?? input.base.repoRef ?? await detectDefaultBranch(repoRoot) ?? "HEAD";
+  const upstreamBaseRef = await resolveLocalBranchUpstream(repoRoot, requestedBaseRef);
+  const restoreBaseRef = upstreamBaseRef ?? requestedBaseRef;
+  realized.repoRef = restoreBaseRef;
+  const restoreRefreshWarnings = await refreshRemoteTrackingBaseRef(repoRoot, restoreBaseRef);
+  if (upstreamBaseRef) {
+    restoreRefreshWarnings.unshift(`Base ref ${requestedBaseRef} names a local branch; the execution workspace uses its upstream ${upstreamBaseRef} instead.`);
+  }
+  const restoreCurrentBaseRefSha = await resolveBaseRefSha(repoRoot, restoreBaseRef);
   if (await directoryExists(cwd)) {
     const baseDrift = await inspectExecutionWorkspaceBaseDrift({
       repoRoot,
       worktreePath: persistedWorkspacePath,
       branchName: realized.branchName,
-      baseRef: input.workspace.baseRef ?? input.base.repoRef ?? null,
+      baseRef: restoreBaseRef,
       recordedBaseRefSha,
+      skipRefresh: true,
     });
 
-    realized.warnings = baseDrift.warnings;
+    realized.warnings = [...restoreRefreshWarnings, ...baseDrift.warnings];
     realized.baseRefSha = recordedBaseRefSha ?? baseDrift.branchBaseRefSha ?? baseDrift.currentBaseRefSha;
     if (provisionCommand) {
       await provisionExecutionWorktree({
@@ -1472,10 +1516,6 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
   await fs.mkdir(path.dirname(worktreePath), { recursive: true });
 
   await runGit(["worktree", "prune"], repoRoot).catch(() => {});
-  const restoreBaseRef = input.workspace.baseRef ?? input.base.repoRef ?? null;
-  const restoreRefreshWarnings = restoreBaseRef ? await refreshRemoteTrackingBaseRef(repoRoot, restoreBaseRef) : [];
-  const restoreCurrentBaseRefSha = restoreBaseRef ? await resolveBaseRefSha(repoRoot, restoreBaseRef) : null;
-
   let created = false;
   try {
     await recordGitOperation(input.recorder, {
@@ -1486,7 +1526,7 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
         repoRoot,
         worktreePath,
         branchName,
-        baseRef: input.workspace.baseRef ?? input.base.repoRef ?? null,
+        baseRef: restoreBaseRef,
         currentBaseRefSha: restoreCurrentBaseRefSha,
         created: false,
         restored: true,
@@ -1502,7 +1542,7 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     ) {
       throw error;
     }
-    const baseRef = input.workspace.baseRef ?? await detectDefaultBranch(repoRoot) ?? "HEAD";
+    const baseRef = restoreBaseRef;
     const recreatedBaseRefSha = await resolveBaseRefSha(repoRoot, baseRef);
     await recordGitOperation(input.recorder, {
       phase: "worktree_prepare",
@@ -1527,7 +1567,7 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     repoRoot,
     worktreePath,
     branchName,
-    baseRef: input.workspace.baseRef ?? input.base.repoRef ?? null,
+    baseRef: restoreBaseRef,
     recordedBaseRefSha,
     skipRefresh: true,
   });
@@ -1554,8 +1594,7 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     warnings: [...restoreRefreshWarnings, ...baseDrift.warnings],
     created,
     baseRefSha:
-      recordedBaseRefSha
-      ?? (created ? restoreCurrentBaseRefSha : baseDrift.branchBaseRefSha)
+      (created ? restoreCurrentBaseRefSha : recordedBaseRefSha ?? baseDrift.branchBaseRefSha)
       ?? baseDrift.currentBaseRefSha,
   };
 }
