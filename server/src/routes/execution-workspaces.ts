@@ -305,13 +305,19 @@ export function executionWorkspaceRoutes(db: Db) {
           if (availableWorkspace) {
             currentMetadata = mergeExecutionWorkspaceBaseRefSnapshot({
               existingMetadata: currentMetadata,
-              created: availableWorkspace.created,
+              created: availableWorkspace.branchCreated ?? availableWorkspace.created,
               baseRef: availableWorkspace.repoRef,
               baseRefSha: availableWorkspace.baseRefSha,
             });
             // Save recovery before executing a command, including jobs and
             // commands that subsequently fail. Runtime-state updates retain it.
-            await svc.update(existing.id, { baseRef: availableWorkspace.repoRef, metadata: currentMetadata });
+            const persisted = await svc.update(existing.id, {
+              baseRef: availableWorkspace.repoRef,
+              metadata: currentMetadata,
+            });
+            if (!persisted) {
+              throw new Error("Execution workspace disappeared while its recovery state was being saved");
+            }
           }
           return availableWorkspace;
         };

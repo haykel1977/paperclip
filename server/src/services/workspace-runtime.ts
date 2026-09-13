@@ -69,6 +69,8 @@ export interface RealizedExecutionWorkspace extends ExecutionWorkspaceInput {
   worktreePath: string | null;
   warnings: string[];
   created: boolean;
+  /** Whether this realization created the Git branch, rather than only its worktree. */
+  branchCreated?: boolean;
   baseRefSha?: string | null;
 }
 
@@ -625,17 +627,26 @@ async function resolveLocalBranchUpstream(repoRoot: string, baseRef: string): Pr
   // Shorthand local branches can contain slashes too (for example feature/foo).
   // Check refs/heads explicitly before interpreting a shorthand as a remote ref.
   if (!baseRef || baseRef === "HEAD") return null;
-  if (!/^[A-Za-z0-9._\/-]+$/.test(baseRef) || baseRef.startsWith("refs/")) return null;
-  const isLocalBranch = await runGit(["rev-parse", "--verify", "--quiet", `refs/heads/${baseRef}`], repoRoot)
+  const branchName = baseRef.startsWith("refs/heads/") ? baseRef.slice("refs/heads/".length) : baseRef;
+  const validBranch = await runGit(["check-ref-format", `refs/heads/${branchName}`], repoRoot)
+    .then(() => true)
+    .catch(() => false);
+  if (!validBranch) return null;
+  const isLocalBranch = await runGit(["rev-parse", "--verify", "--quiet", `refs/heads/${branchName}`], repoRoot)
     .then(() => true)
     .catch(() => false);
   if (!isLocalBranch) return null;
   const upstream = await runGit(
-    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", `${baseRef}@{upstream}`],
+    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", `${branchName}@{upstream}`],
     repoRoot,
   ).catch(() => null);
-  if (upstream && parseRemoteTrackingRef(upstream)) return upstream;
-  const candidate = `origin/${baseRef}`;
+  if (upstream && parseRemoteTrackingRef(upstream)) {
+    const remoteRefExists = await runGit(["rev-parse", "--verify", "--quiet", `refs/remotes/${upstream}`], repoRoot)
+      .then(() => true)
+      .catch(() => false);
+    if (remoteRefExists) return upstream;
+  }
+  const candidate = `origin/${branchName}`;
   const candidateExists = await runGit(["rev-parse", "--verify", "--quiet", `refs/remotes/${candidate}`], repoRoot)
     .then(() => true)
     .catch(() => false);
@@ -1248,7 +1259,7 @@ export async function realizeExecutionWorkspace(input: {
   const baseRefreshWarnings = await refreshRemoteTrackingBaseRef(repoRoot, baseRef);
   if (upstreamBaseRef) {
     baseRefreshWarnings.unshift(
-      `Base ref ${requestedBaseRef} names a local branch; the execution workspace starts from its refreshed upstream ${upstreamBaseRef} instead.`,
+      `Base ref ${requestedBaseRef} names a local branch; the execution workspace uses its remote-tracking upstream ${upstreamBaseRef} instead.`,
     );
   }
   if (identifierWarning) baseRefreshWarnings.unshift(identifierWarning);
@@ -1288,7 +1299,7 @@ export async function realizeExecutionWorkspace(input: {
     }
     await provisionExecutionWorktree({
       strategy: rawStrategy,
-      base: input.base,
+      base: { ...input.base, repoRef: baseRef },
       repoRoot,
       worktreePath: reusablePath,
       branchName,
@@ -1344,6 +1355,7 @@ export async function realizeExecutionWorkspace(input: {
     throw new Error(`Registered worktree for branch "${branchName}" at "${registeredBranchWorktree}" is not reusable${reason}.`);
   }
 
+  let branchCreated = true;
   try {
     await recordGitOperation(input.recorder, {
       phase: "worktree_prepare",
@@ -1364,6 +1376,7 @@ export async function realizeExecutionWorkspace(input: {
     if (!gitErrorIncludes(error, "already exists")) {
       throw error;
     }
+    branchCreated = false;
     try {
       await recordGitOperation(input.recorder, {
         phase: "worktree_prepare",
@@ -1394,13 +1407,14 @@ export async function realizeExecutionWorkspace(input: {
   }
   await provisionExecutionWorktree({
     strategy: rawStrategy,
-    base: input.base,
+    base: { ...input.base, repoRef: baseRef },
     repoRoot,
     worktreePath,
     branchName,
     issue: input.issue,
     agent: input.agent,
     created: true,
+    branchCreated,
     recorder: input.recorder ?? null,
   });
 
@@ -1494,7 +1508,7 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
           type: "git_worktree",
           provisionCommand,
         },
-        base: input.base,
+        base: { ...input.base, repoRef: restoreBaseRef },
         repoRoot,
         worktreePath: realized.worktreePath ?? cwd,
         branchName: realized.branchName ?? "",
@@ -1577,13 +1591,14 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
       type: "git_worktree",
       ...(provisionCommand ? { provisionCommand } : {}),
     },
-    base: input.base,
+    base: { ...input.base, repoRef: restoreBaseRef },
     repoRoot,
     worktreePath,
     branchName,
     issue: input.issue,
     agent: input.agent,
     created,
+    branchCreated: created,
     recorder: input.recorder ?? null,
   });
 
