@@ -450,7 +450,8 @@ async function resolveQuantumPrWrapper(input: Pick<ExecuteDeliveryHookInput, "ba
   }
   const tracked = await input.runProc("git", ["ls-files", "--error-unmatch", QUANTUM_PR_WRAPPER_REL], input.worktreeCwd, env);
   if (tracked.exitCode !== 0) return null;
-  const unchanged = await input.runProc("git", ["diff", "--quiet", input.baseBranch, "--", QUANTUM_PR_WRAPPER_REL], input.worktreeCwd, env);
+  const baseRef = input.baseBranch.startsWith("origin/") ? input.baseBranch : `origin/${input.baseBranch}`;
+  const unchanged = await input.runProc("git", ["diff", "--quiet", baseRef, "--", QUANTUM_PR_WRAPPER_REL], input.worktreeCwd, env);
   if (unchanged.exitCode !== 0) return null;
   if (input.executionTargetIsRemote) {
     const executable = await input.runProc("test", ["-x", QUANTUM_PR_WRAPPER_REL], input.worktreeCwd, env);
@@ -724,6 +725,7 @@ async function findExistingPrForIssue(input: {
   worktreeCwd: string;
   env: Record<string, string>;
   runProc: DeliveryHookRunProcess;
+  preferredPrUrl?: string | null;
 }): Promise<ExistingIssuePrLookup> {
   const searchTerm = input.issueIdentifier ?? input.issueId;
   if (!searchTerm) return { ok: true, pr: null };
@@ -795,7 +797,8 @@ async function findExistingPrForIssue(input: {
 
   return {
     ok: true,
-    pr: matches.find((candidate) => candidate.state === "OPEN")
+    pr: matches.find((candidate) => candidate.state === "OPEN" && candidate.url === input.preferredPrUrl)
+      ?? matches.find((candidate) => candidate.state === "OPEN")
       ?? matches.find((candidate) => candidate.state === "MERGED")
       ?? null,
   };
@@ -1352,6 +1355,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     worktreeCwd,
     env: deliveryCommandEnv,
     runProc,
+    preferredPrUrl: existingPrUrl,
   });
   if (!issuePrLookup.ok) {
     await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="issue_pr_lookup_failed" detail="${issuePrLookup.reason}"\n`);
@@ -1359,7 +1363,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
   }
   if (issuePrLookup.pr?.state === "OPEN") {
     if (quantumDelivery) {
-      if (!existingPrUrl && issuePrLookup.pr.url !== existingPrUrl) {
+      if (issuePrLookup.pr.url !== existingPrUrl) {
         await log("stderr", "[delivery] result=delivery_blocked reason=quantum_issue_pr_on_other_branch\n");
         return { delivered: false, prUrl: null, reason: "delivery_blocked: quantum_issue_pr_on_other_branch" };
       }
