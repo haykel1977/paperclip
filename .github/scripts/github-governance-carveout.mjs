@@ -81,7 +81,7 @@ export const REQUIRED_BOOTSTRAP_SETTINGS = Object.freeze([
 export const FORBIDDEN_JUDGE_APP_IDS = Object.freeze(new Set([
   15368,   // github-actions — the ambient runner identity, not an external judge
   4384863, // solidus-paperclip-delivery — authors the witness PRs it would judge
-  3718661, // commitperclip — runs the workflow that consults the carve-out
+  4372695, // solidus-paperclip-checker — runs the workflow that consults the carve-out
 ]));
 
 export const MAX_CARVEOUT_CHANGED_FILES = 5;

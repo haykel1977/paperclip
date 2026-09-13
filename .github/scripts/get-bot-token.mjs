@@ -11,7 +11,7 @@
 import { createSign } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-const APP_ID = '3718661';
+const APP_ID = '4372695'; // solidus-paperclip-checker (owned by @haykel1977)
 const OWNER_PATTERN = /^[a-zA-Z0-9_.-]+$/;
 const REPO_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
 
