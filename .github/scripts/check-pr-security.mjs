@@ -359,18 +359,29 @@ async function main() {
         // and post a neutral check-run instead of a failure. Advisory-only signals
         // must never silently block PRs (see the "Exit: always 0" contract below).
         advisoryFiled = false;
-        console.log('::warning::[security] Flags detected but token lacks security_events:write. Listed inline as annotations; no draft advisory filed. Grant "Repository security advisories: Read and write" on the GitHub App to restore advisory filing.');
-        for (const f of allFlags) {
-          const loc = f.file ? `${f.file}${f.line ? `#L${f.line}` : ''}` : 'n/a';
-          console.log(`::warning file=${f.file ?? ''},line=${f.line ?? 1}::[security:${f.check}] ${f.description ?? f.detail ?? loc}`);
-        }
+        // f.line on secret-scan flags carries the matched source text (see scanSecrets),
+        // so it MUST NOT be echoed to workflow logs or annotations — that would leak
+        // the very secret we detected. We therefore emit only counts by check-type here
+        // and rely on the (also-fallback) neutral check-run + this warning to route
+        // maintainer attention to the workflow, not to inline the content.
+        const bucketed = allFlags.reduce((acc, f) => {
+          acc[f.check] = (acc[f.check] ?? 0) + 1;
+          return acc;
+        }, {});
+        const summary = Object.entries(bucketed)
+          .map(([check, n]) => `${check}=${n}`)
+          .join(', ');
+        console.log(`::warning::[security] ${allFlags.length} flag(s) detected (${summary}). Token lacks security_events:write, so no draft advisory was filed. Grant "Repository security advisories: Read and write" on the GitHub App to restore advisory filing; contents are intentionally not echoed here to avoid leaking secret-scan matches. Re-run the workflow after granting the permission for the full advisory.`);
       } else {
         throw advisoryErr;
       }
     }
     try {
-      // Pass advisoryFiled so downstream check-run reflects reality (neutral if advisory absent).
-      await postSecurityCheckRun(ghFetch, GH_TOKEN, GH_REPO, pr.head.sha, advisoryFiled);
+      // Post the neutral check-run in both branches (advisory filed OR fallback annotations):
+      // hasFlags=true selects the 'neutral' conclusion, which is what we want whenever
+      // scanning surfaced flags. Passing false here would falsely report 'Security Review Passed'
+      // even though we detected findings.
+      await postSecurityCheckRun(ghFetch, GH_TOKEN, GH_REPO, pr.head.sha, true);
     } catch (checkRunErr) {
       // check-run creation failure is non-fatal when the advisory was already filed.
       if (checkRunErr.statusCode !== 403) throw checkRunErr;
