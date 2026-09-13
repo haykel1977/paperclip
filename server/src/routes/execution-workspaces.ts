@@ -11,7 +11,7 @@ import {
 import type { WorkspaceRuntimeDesiredState, WorkspaceRuntimeServiceStateMap } from "@paperclipai/shared";
 import { validate } from "../middleware/validate.js";
 import { accessService, executionWorkspaceService, logActivity, workspaceOperationService } from "../services/index.js";
-import { mergeExecutionWorkspaceConfig, readExecutionWorkspaceConfig } from "../services/execution-workspaces.js";
+import { mergeExecutionWorkspaceBaseRefSnapshot, mergeExecutionWorkspaceConfig, readExecutionWorkspaceConfig } from "../services/execution-workspaces.js";
 import { parseProjectExecutionWorkspacePolicy } from "../services/execution-workspace-policy.js";
 import { readProjectWorkspaceRuntimeConfig } from "../services/project-workspace-runtime-config.js";
 import {
@@ -258,8 +258,9 @@ export function executionWorkspaceRoutes(db: Db) {
         serviceIndex: selectedServiceIndex,
       },
       run: async () => {
-        const ensureWorkspaceAvailable = async () =>
-          await ensurePersistedExecutionWorkspaceAvailable({
+        let currentMetadata = existing.metadata as Record<string, unknown> | null;
+        const ensureWorkspaceAvailable = async () => {
+          const availableWorkspace = await ensurePersistedExecutionWorkspaceAvailable({
             base: {
               baseCwd: projectWorkspace?.cwd ?? workspaceCwd,
               source: existing.mode === "shared_workspace" ? "project_primary" : "task_session",
@@ -301,6 +302,19 @@ export function executionWorkspaceRoutes(db: Db) {
             },
             recorder,
           });
+          if (availableWorkspace) {
+            currentMetadata = mergeExecutionWorkspaceBaseRefSnapshot({
+              existingMetadata: currentMetadata,
+              created: availableWorkspace.created,
+              baseRef: availableWorkspace.repoRef,
+              baseRefSha: availableWorkspace.baseRefSha,
+            });
+            // Save recovery before executing a command, including jobs and
+            // commands that subsequently fail. Runtime-state updates retain it.
+            await svc.update(existing.id, { baseRef: availableWorkspace.repoRef, metadata: currentMetadata });
+          }
+          return availableWorkspace;
+        };
 
         if (action === "run") {
           if (!workspaceCommand || workspaceCommand.kind !== "job") {
@@ -407,7 +421,7 @@ export function executionWorkspaceRoutes(db: Db) {
               action,
               serviceIndex: selectedServiceIndex,
             });
-        const metadata = mergeExecutionWorkspaceConfig(existing.metadata as Record<string, unknown> | null, {
+        const metadata = mergeExecutionWorkspaceConfig(currentMetadata, {
           desiredState: nextRuntimeState.desiredState,
           serviceStates: nextRuntimeState.serviceStates,
         });
