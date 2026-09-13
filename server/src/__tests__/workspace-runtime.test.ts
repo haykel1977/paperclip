@@ -538,6 +538,57 @@ describe("realizeExecutionWorkspace", () => {
     expect(realized.warnings.some((warning) => warning.includes("issue identifier"))).toBe(false);
   });
 
+  it("does not mistake a longer issue identifier for the required identifier", async () => {
+    const repoRoot = await createTempRepo();
+    const realized = await realizeExecutionWorkspace({
+      base: {
+        baseCwd: repoRoot,
+        source: "project_primary",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: null,
+        repoRef: "HEAD",
+      },
+      config: {
+        branchPolicy: { requireIssueIdentifier: true },
+        workspaceStrategy: {
+          type: "git_worktree",
+          branchTemplate: "feat/qua-1368-{{slug}}",
+        },
+      },
+      issue: { id: "issue-1", identifier: "QUA-136", title: "Daily summary" },
+      agent: { id: "agent-1", name: "Quantum-CTO", companyId: "company-1" },
+    });
+
+    expect(realized.branchName).toBe("feat/qua-1368-qua-136-daily-summary");
+  });
+
+  it("retains the complete required identifier when the branch exceeds the length limit", async () => {
+    const repoRoot = await createTempRepo();
+    const realized = await realizeExecutionWorkspace({
+      base: {
+        baseCwd: repoRoot,
+        source: "project_primary",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        repoUrl: null,
+        repoRef: "HEAD",
+      },
+      config: {
+        branchPolicy: { requireIssueIdentifier: true },
+        workspaceStrategy: {
+          type: "git_worktree",
+          branchTemplate: `feat/${"long-prefix-".repeat(12)}{{slug}}`,
+        },
+      },
+      issue: { id: "issue-1", identifier: "QUA-1368", title: "Daily summary" },
+      agent: { id: "agent-1", name: "Quantum-CTO", companyId: "company-1" },
+    });
+
+    expect(realized.branchName).toHaveLength(120);
+    expect(realized.branchName).toMatch(/(?:^|[^a-z0-9])qua-1368(?:$|[^a-z0-9])/);
+  });
+
   it("warns when reusing a git worktree whose base ref has advanced", async () => {
     const repoRoot = await createTempRepo();
 
