@@ -43,6 +43,8 @@ function mkWorktree(extraFiles: Record<string, string> = {}) {
     const full = path.join(dir, relative);
     writeFileSync(full, contents, { mode: relative.endsWith(".sh") ? 0o755 : 0o644 });
   }
+  mkdirSync(path.join(dir, "scripts"), { recursive: true });
+  writeFileSync(path.join(dir, "scripts", "agent-pr-create.sh"), "#!/bin/sh\n", { mode: 0o755 });
   return dir;
 }
 
@@ -294,25 +296,24 @@ describe("executeDeliveryHook Quantum fail-closed contract", () => {
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M src/hook.ts\n", stderr: "" };
       if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
       if (key === "gh label list") return { exitCode: 0, stdout: "[]", stderr: "" };
-      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/1\n", stderr: "" };
+      if (cmd.endsWith("/scripts/agent-pr-create.sh")) return { exitCode: 0, stdout: "result=created pr_url=https://github.com/Beyn-SOLIDUS/quantum/pull/1\n", stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     });
 
     const result = await executeDeliveryHook({ ...quantumBase, worktreeCwd, runProc });
     expect(result.reason).toBe("created");
     expect(calls).toContainEqual(["git", "checkout", "-b", "feat/agent-agent-1-ticket-qua-99-delivery"]);
-    // paperclip:allow-git-push: assertion on the delivery hook's own push, in a vi.fn() recorder — this test invokes no git
-    expect(calls).toContainEqual(["git", "push", "-u", "origin", "feat/agent-agent-1-ticket-qua-99-delivery"]);
-    const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
-    expect(createCall).toContain("feat/agent-agent-1-ticket-qua-99-delivery");
+    expect(calls.some(([cmd, sub]) => cmd === "git" && sub === "push")).toBe(false);
+    const createCall = calls.find((call) => call[0].endsWith("/scripts/agent-pr-create.sh"));
+    expect(createCall).toContain("--title");
     expect(createCall).not.toContain("codex/QUA-99-x");
     const title = createCall?.[createCall.indexOf("--title") + 1] ?? "";
-    const body = createCall?.[createCall.indexOf("--body") + 1] ?? "";
+    const body = createCall?.[createCall.indexOf("--summary") + 1] ?? "";
     expect(title).toMatch(QUANTUM_MAKER_CI_RE);
     expect(title).not.toMatch(/^docs:/);
     expect(body).toMatch(/^Closes #3135$/m);
     expect(body).toContain("Maker model: Qwen3-30B");
-    expect(body).toContain("- `src/hook.ts`");
+    expect(body).toContain("- src/hook.ts");
   });
 
   it("blocks more than 3 non-doc files before commit", async () => {
@@ -386,7 +387,7 @@ describe("executeDeliveryHook Quantum fail-closed contract", () => {
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M src/hook.ts\n", stderr: "" };
       if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
       if (key === "gh label list") return { exitCode: 0, stdout: "[]", stderr: "" };
-      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/2\n", stderr: "" };
+      if (cmd.endsWith("/scripts/agent-pr-create.sh")) return { exitCode: 0, stdout: "result=created pr_url=https://github.com/Beyn-SOLIDUS/quantum/pull/2\n", stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     });
 
@@ -397,8 +398,8 @@ describe("executeDeliveryHook Quantum fail-closed contract", () => {
       runProc,
     });
     expect(result.reason).toBe("created");
-    const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
-    const body = createCall?.[createCall.indexOf("--body") + 1] ?? "";
+    const createCall = calls.find((call) => call[0].endsWith("/scripts/agent-pr-create.sh"));
+    const body = createCall?.[createCall.indexOf("--summary") + 1] ?? "";
     expect(body).toMatch(/^Closes #1894$/m);
     expect(body).not.toMatch(/Closes #21\b/);
   });
@@ -414,7 +415,7 @@ describe("executeDeliveryHook Quantum fail-closed contract", () => {
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M src/hook.ts\n", stderr: "" };
       if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
       if (key === "gh label list") return { exitCode: 0, stdout: "[]", stderr: "" };
-      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/3\n", stderr: "" };
+      if (cmd.endsWith("/scripts/agent-pr-create.sh")) return { exitCode: 0, stdout: "result=created pr_url=https://github.com/Beyn-SOLIDUS/quantum/pull/3\n", stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     });
 
@@ -460,8 +461,8 @@ describe("executeDeliveryHook Quantum fail-closed contract", () => {
       runProc,
     });
     expect(recovered?.reason).toBe("created");
-    const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
-    const body = createCall?.[createCall.indexOf("--body") + 1] ?? "";
+    const createCall = calls.find((call) => call[0].endsWith("/scripts/agent-pr-create.sh"));
+    const body = createCall?.[createCall.indexOf("--summary") + 1] ?? "";
     expect(body).toMatch(/^Closes #1894$/m);
     expect(body).not.toMatch(/Closes #9999\b/);
   });
@@ -477,7 +478,7 @@ describe("executeDeliveryHook Quantum fail-closed contract", () => {
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M src/hook.ts\n", stderr: "" };
       if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
       if (key === "gh label list") return { exitCode: 0, stdout: "[]", stderr: "" };
-      if (key === "gh pr create") return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/4\n", stderr: "" };
+      if (cmd.endsWith("/scripts/agent-pr-create.sh")) return { exitCode: 0, stdout: "result=created pr_url=https://github.com/Beyn-SOLIDUS/quantum/pull/4\n", stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     });
 
@@ -523,8 +524,8 @@ describe("executeDeliveryHook Quantum fail-closed contract", () => {
       runProc,
     });
     expect(recovered?.reason).toBe("created");
-    const createCall = calls.find((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create");
-    const body = createCall?.[createCall.indexOf("--body") + 1] ?? "";
+    const createCall = calls.find((call) => call[0].endsWith("/scripts/agent-pr-create.sh"));
+    const body = createCall?.[createCall.indexOf("--summary") + 1] ?? "";
     expect(body).toMatch(/^Closes #1894$/m);
     expect(body).not.toMatch(/Closes #9999\b/);
   });
@@ -552,7 +553,7 @@ describe("executeDeliveryHook Quantum fail-closed contract", () => {
       if (key === "git status --porcelain") return { exitCode: 0, stdout: " M src/hook.ts\n", stderr: "" };
       if (key === "gh pr list") return { exitCode: 0, stdout: "", stderr: "" };
       if (key === "gh label list") return { exitCode: 0, stdout: "[]", stderr: "" };
-      if (cmd === wrapper) return { exitCode: 0, stdout: "https://github.com/Beyn-SOLIDUS/quantum/pull/9\n", stderr: "" };
+      if (cmd === wrapper) return { exitCode: 0, stdout: "result=created pr_url=https://github.com/Beyn-SOLIDUS/quantum/pull/9\n", stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     });
 

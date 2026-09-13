@@ -444,6 +444,42 @@ async function resolveQuantumPrWrapper(worktreeCwd: string): Promise<string | nu
   }
 }
 
+async function invokeQuantumPrWrapper(
+  input: ExecuteDeliveryHookInput,
+  wrapperPath: string,
+  env: Record<string, string>,
+  log: DeliveryHookLog,
+  changedPaths: string[],
+  githubIssueNumber: number | null,
+): Promise<DeliveryHookResult> {
+  const makerToken = deriveQuantumMakerToken(input.model, env);
+  const title = deriveQuantumDeliveryTitle({ issueIdentifier: input.issueIdentifier, changedPaths, makerToken });
+  const summary = [title, "", "Changed paths:", ...changedPaths.map((file) => `- ${file}`),
+    makerToken ? `Maker model: ${makerToken}` : null,
+    githubIssueNumber != null ? `Closes #${githubIssueNumber}` : null,
+  ].filter((line): line is string => line != null).join("\n");
+  const args = ["--title", title, "--summary", summary];
+  if (githubIssueNumber != null) args.push("--issue", String(githubIssueNumber));
+  const result = await input.runProc(wrapperPath, args, input.worktreeCwd, env);
+  if (result.exitCode !== 0) {
+    const detail = result.stderr.split(/\r?\n/).find((line) => line.startsWith("ERROR (CF-"))
+      ?? (firstNonEmptyLine(result.stderr) || `exit ${result.exitCode}`);
+    await log("stderr", `[delivery] result=delivery_blocked reason="quantum_pr_wrapper_failed" detail=${JSON.stringify(detail)}\n`);
+    return { delivered: false, prUrl: null, reason: "delivery_blocked: quantum_pr_wrapper_failed" };
+  }
+  const evidence = [...result.stdout.matchAll(/^result=(created|updated|exists) pr_url=(\S+)(?:[ \t]+[^\r\n]*)?\r?$/gm)];
+  const outcome = evidence.length === 1 ? evidence[0] : null;
+  const url = outcome?.[2] ?? "";
+  // A bare URL, a different repository, or two result lines is not delivery proof.
+  const prefix = `https://github.com/${input.repo}/pull/`;
+  if (!url.startsWith(prefix) || !/^[1-9][0-9]*$/.test(url.slice(prefix.length))) {
+    await log("stderr", "[delivery] result=delivery_blocked reason=quantum_pr_wrapper_invalid_result\n");
+    return { delivered: false, prUrl: null, reason: "delivery_blocked: quantum_pr_wrapper_invalid_result" };
+  }
+  await log("stdout", `[delivery] result=${outcome![1]} pr_url=${url} wrapper=${QUANTUM_PR_WRAPPER_REL}\n`);
+  return { delivered: true, prUrl: url, reason: outcome![1] === "exists" ? "pr_exists" : outcome![1] };
+}
+
 function isGitBranchAlreadyExistsError(stderr: string): boolean {
 
   const normalized = stderr.toLowerCase();
@@ -1179,6 +1215,8 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
   const { worktreeCwd, env, runProc } = input;
   let branch = input.branch;
   const log = createDeliveryLogRedactor(env, input.log);
+  const quantumDelivery = isQuantumDeliveryTarget(input.repo, env);
+  const quantumWrapper = quantumDelivery ? await resolveQuantumPrWrapper(worktreeCwd) : null;
 
   const ts = () => new Date().toISOString();
 
@@ -1198,7 +1236,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     await log("stderr", `[delivery ${ts()}] git_status_failed: ${status.stderr}\n`);
     return { delivered: false, prUrl: null, reason: "git_status_failed" };
   }
-  if (!status.stdout.trim()) {
+  if (!status.stdout.trim() && !quantumDelivery) {
     await log("stdout", `[delivery ${ts()}] result=no_diff reason="nothing to deliver"\n`);
     return { delivered: false, prUrl: null, reason: "no_diff" };
   }
@@ -1247,7 +1285,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
   // ── 3. idempotency: check for existing PR BEFORE committing ──────────────
   const existingPrUrl = await findExistingPr({ repo: input.repo, branch, worktreeCwd, env: deliveryCommandEnv, runProc });
 
-  if (existingPrUrl) {
+  if (existingPrUrl && !quantumDelivery) {
     // Reconcile labels on the already-open PR (non-fatal)
     const existingLabels = await fetchRepoLabels({ repo: input.repo, worktreeCwd, env: deliveryCommandEnv, log, ts, runProc });
     const labelsToReconcile = deliveryLabels.filter((label) => existingLabels.includes(label));
@@ -1278,8 +1316,16 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     return { delivered: false, prUrl: null, reason: "delivery_blocked: issue PR lookup failed" };
   }
   if (issuePrLookup.pr?.state === "OPEN") {
-    await log("stdout", `[delivery ${ts()}] result=pr_exists issue_key=${buildIssueDeliveryKey(input.repo, input.issueIdentifier, input.issueId)} pr_url=${issuePrLookup.pr.url}\n`);
-    return { delivered: true, prUrl: issuePrLookup.pr.url, reason: "pr_exists" };
+    if (quantumDelivery) {
+      if (issuePrLookup.pr.url !== existingPrUrl) {
+        await log("stderr", "[delivery] result=delivery_blocked reason=quantum_issue_pr_on_other_branch\n");
+        return { delivered: false, prUrl: null, reason: "delivery_blocked: quantum_issue_pr_on_other_branch" };
+      }
+      // A matching PR still needs the wrapper to validate and publish this run's work.
+    } else {
+      await log("stdout", `[delivery ${ts()}] result=pr_exists issue_key=${buildIssueDeliveryKey(input.repo, input.issueIdentifier, input.issueId)} pr_url=${issuePrLookup.pr.url}\n`);
+      return { delivered: true, prUrl: issuePrLookup.pr.url, reason: "pr_exists" };
+    }
   }
   if (issuePrLookup.pr?.state === "MERGED") {
     const mergeIsOnBase = await verifyMergedPrOnBase({
@@ -1302,7 +1348,6 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     return { delivered: false, prUrl: issuePrLookup.pr.url, reason: "issue_already_merged" };
   }
 
-  const quantumDelivery = isQuantumDeliveryTarget(input.repo, env);
   const quantumCanonicalBranch = quantumDelivery
     ? buildQuantumAgentBranch({
       agentId: input.agentId,
@@ -1335,7 +1380,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     return { delivered: false, prUrl: null, reason: "delivery_blocked: quantum_branch_not_adr_gov_007" };
   }
 
-  if (await remoteBranchExists({ branch, worktreeCwd, env: deliveryCommandEnv, runProc })) {
+  if (!quantumDelivery && await remoteBranchExists({ branch, worktreeCwd, env: deliveryCommandEnv, runProc })) {
     if (canonicalIssueBranch && branch === canonicalIssueBranch) {
       await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="canonical_issue_branch_exists_without_pr" branch=${branch}\n`);
       return { delivered: false, prUrl: null, reason: "delivery_blocked: canonical issue branch exists without PR" };
@@ -1417,11 +1462,24 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     }
   }
 
+  if (quantumDelivery && !quantumWrapper) {
+    await log("stderr", `[delivery] result=delivery_blocked reason=quantum_pr_wrapper_missing wrapper=${QUANTUM_PR_WRAPPER_REL}\n`);
+    return { delivered: false, prUrl: null, reason: "delivery_blocked: quantum_pr_wrapper_missing" };
+  }
+
   // ── 4. quality gate ───────────────────────────────────────────────────────
   const qualityGate = await runDeliveryQualityGate({ worktreeCwd, env, runProc, log, ts });
   if (!qualityGate.ok) {
     await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="quality_gate_failed" detail="${qualityGate.reason}"\n`);
     return { delivered: false, prUrl: null, reason: "delivery_blocked" };
+  }
+
+  if (quantumWrapper && !status.stdout.trim()) {
+    if (signingPlan.required && !await verifyLatestCommitIsSigned({ worktreeCwd, env, runProc })) {
+      await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="latest commit is unsigned"\n`);
+      return { delivered: false, prUrl: null, reason: "delivery_blocked: unsigned commit" };
+    }
+    return invokeQuantumPrWrapper(input, quantumWrapper, deliveryCommandEnv, log, changedPaths, githubIssueNumber);
   }
 
   // ── 5. PR body ────────────────────────────────────────────────────────────
@@ -1485,6 +1543,11 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
       await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="latest commit is unsigned"\n`);
       return { delivered: false, prUrl: null, reason: "delivery_blocked: unsigned commit" };
     }
+  }
+
+  // Quantum's wrapper owns pre-push guards, pushing, PR creation and body refresh.
+  if (quantumWrapper) {
+    return invokeQuantumPrWrapper(input, quantumWrapper, deliveryCommandEnv, log, changedPaths, githubIssueNumber);
   }
 
   // ── 7. push (with retry on transient errors) ──────────────────────────────
@@ -1604,31 +1667,6 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
   if (quantumDelivery && !isAdrGov007CompliantBranch(branch)) {
     await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="quantum_branch_not_adr_gov_007" branch=${branch}\n`);
     return { delivered: false, prUrl: null, reason: "delivery_blocked: quantum_branch_not_adr_gov_007" };
-  }
-
-  const quantumWrapper = quantumDelivery ? await resolveQuantumPrWrapper(worktreeCwd) : null;
-  if (quantumWrapper) {
-    const wrapperPaths = postCommitDiff.exitCode === 0 && postCommitDiff.stdout.trim()
-      ? parseDiffNameOnly(postCommitDiff.stdout)
-      : changedPaths;
-    const summary = [
-      title,
-      "",
-      "Changed paths:",
-      ...wrapperPaths.map((file) => `- ${file}`),
-      makerToken ? `Maker model: ${makerToken}` : null,
-      githubIssueNumber != null ? `Closes #${githubIssueNumber}` : null,
-    ].filter((line): line is string => line != null).join("\n");
-    const wrapperArgs = ["--title", title, "--summary", summary];
-    if (githubIssueNumber != null) wrapperArgs.push("--issue", String(githubIssueNumber));
-    const wrapper = await runProc(quantumWrapper, wrapperArgs, worktreeCwd, deliveryCommandEnv);
-    if (wrapper.exitCode !== 0) {
-      await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="quantum_pr_wrapper_failed" detail="${firstNonEmptyLine(wrapper.stderr) || firstNonEmptyLine(wrapper.stdout) || `exit ${wrapper.exitCode}`}"\n`);
-      return { delivered: false, prUrl: null, reason: "delivery_blocked: quantum_pr_wrapper_failed" };
-    }
-    const wrapperUrl = (wrapper.stdout.match(/https:\/\/github\.com\/\S+\/pull\/\d+/) || [null])[0];
-    await log("stdout", `[delivery ${ts()}] result=created pr_url=${wrapperUrl} wrapper=${QUANTUM_PR_WRAPPER_REL}\n`);
-    return { delivered: true, prUrl: wrapperUrl, reason: "created" };
   }
 
   const prArgs = [
