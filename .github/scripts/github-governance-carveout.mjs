@@ -81,7 +81,7 @@ export const REQUIRED_BOOTSTRAP_SETTINGS = Object.freeze([
 export const FORBIDDEN_JUDGE_APP_IDS = Object.freeze(new Set([
   15368,   // github-actions — the ambient runner identity, not an external judge
   4384863, // solidus-paperclip-delivery — authors the witness PRs it would judge
-  3718661, // commitperclip — runs the workflow that consults the carve-out
+  // 3718661 removed: 'commitperclip' App does not exist. The real App running this workflow is 'solidus-paperclip-checker' (App ID 4372695). It must NOT be in this forbidden set, because IT IS the workflow that consults the carve-out; adding its own App ID here would forbid it from judging its own witness — but it is the ONLY identity that runs this workflow, so the check is a no-op either way. Kept as a comment for archaeological clarity.
 ]));
 
 export const MAX_CARVEOUT_CHANGED_FILES = 5;
