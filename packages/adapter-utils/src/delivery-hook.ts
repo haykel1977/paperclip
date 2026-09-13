@@ -1,4 +1,3 @@
-import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -434,14 +433,29 @@ async function collectDeliveryChangedPaths(input: {
   ]);
 }
 
-async function resolveQuantumPrWrapper(worktreeCwd: string): Promise<string | null> {
-  const candidate = path.join(worktreeCwd, QUANTUM_PR_WRAPPER_REL);
-  try {
-    await fs.access(candidate, fsConstants.X_OK);
-    return candidate;
-  } catch {
-    return null;
+async function resolveQuantumPrWrapper(input: Pick<ExecuteDeliveryHookInput, "baseBranch" | "executionTargetIsRemote" | "runProc" | "worktreeCwd">, env: Record<string, string>): Promise<string | null> {
+  // Resolve through the target-aware runner and only trust the repository wrapper when it is
+  // tracked and byte-identical to the base branch. Agent work must not be able to fabricate
+  // publication evidence by replacing the wrapper in its worktree.
+  const candidate = input.executionTargetIsRemote
+    ? `./${QUANTUM_PR_WRAPPER_REL}`
+    : path.join(input.worktreeCwd, QUANTUM_PR_WRAPPER_REL);
+  if (!input.executionTargetIsRemote) {
+    try {
+      await fs.access(candidate);
+    } catch {
+      return null;
+    }
   }
+  const tracked = await input.runProc("git", ["ls-files", "--error-unmatch", QUANTUM_PR_WRAPPER_REL], input.worktreeCwd, env);
+  if (tracked.exitCode !== 0) return null;
+  const unchanged = await input.runProc("git", ["diff", "--quiet", input.baseBranch, "--", QUANTUM_PR_WRAPPER_REL], input.worktreeCwd, env);
+  if (unchanged.exitCode !== 0) return null;
+  if (input.executionTargetIsRemote) {
+    const executable = await input.runProc("test", ["-x", QUANTUM_PR_WRAPPER_REL], input.worktreeCwd, env);
+    if (executable.exitCode !== 0) return null;
+  }
+  return candidate;
 }
 
 async function invokeQuantumPrWrapper(
@@ -471,8 +485,8 @@ async function invokeQuantumPrWrapper(
   const outcome = evidence.length === 1 ? evidence[0] : null;
   const url = outcome?.[2] ?? "";
   // A bare URL, a different repository, or two result lines is not delivery proof.
-  const prefix = `https://github.com/${input.repo}/pull/`;
-  if (!url.startsWith(prefix) || !/^[1-9][0-9]*$/.test(url.slice(prefix.length))) {
+  const match = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/([1-9][0-9]*)$/.exec(url);
+  if (!match || match[1].toLowerCase() !== input.repo.toLowerCase()) {
     await log("stderr", "[delivery] result=delivery_blocked reason=quantum_pr_wrapper_invalid_result\n");
     return { delivered: false, prUrl: null, reason: "delivery_blocked: quantum_pr_wrapper_invalid_result" };
   }
@@ -1344,7 +1358,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
   }
   if (issuePrLookup.pr?.state === "OPEN") {
     if (quantumDelivery) {
-      if (issuePrLookup.pr.url !== existingPrUrl) {
+      if (!existingPrUrl && issuePrLookup.pr.url !== existingPrUrl) {
         await log("stderr", "[delivery] result=delivery_blocked reason=quantum_issue_pr_on_other_branch\n");
         return { delivered: false, prUrl: null, reason: "delivery_blocked: quantum_issue_pr_on_other_branch" };
       }
@@ -1493,7 +1507,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     }
   }
 
-  const quantumWrapper = quantumDelivery ? await resolveQuantumPrWrapper(worktreeCwd) : null;
+  const quantumWrapper = quantumDelivery ? await resolveQuantumPrWrapper(input, deliveryCommandEnv) : null;
   if (quantumDelivery && !quantumWrapper) {
     await log("stderr", `[delivery] result=delivery_blocked reason=quantum_pr_wrapper_missing wrapper=${QUANTUM_PR_WRAPPER_REL}\n`);
     return { delivered: false, prUrl: null, reason: "delivery_blocked: quantum_pr_wrapper_missing" };
@@ -1579,7 +1593,22 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
 
   // Quantum's wrapper owns pre-push guards, pushing, PR creation and body refresh.
   if (quantumWrapper) {
-    return invokeQuantumPrWrapper(input, quantumWrapper, deliveryCommandEnv, log, changedPaths, githubIssueNumber);
+    const committedStatus = await runProc("git", ["status", "--porcelain"], worktreeCwd, deliveryCommandEnv);
+    const committedPaths = await collectDeliveryChangedPaths({
+      statusStdout: committedStatus.exitCode === 0 ? committedStatus.stdout : "",
+      worktreeCwd,
+      baseBranch: input.baseBranch,
+      env: deliveryCommandEnv,
+      runProc,
+    });
+    return invokeQuantumPrWrapper(
+      input,
+      quantumWrapper,
+      deliveryCommandEnv,
+      log,
+      committedPaths.length > 0 ? committedPaths : changedPaths,
+      githubIssueNumber,
+    );
   }
 
   // ── 7. push (with retry on transient errors) ──────────────────────────────
