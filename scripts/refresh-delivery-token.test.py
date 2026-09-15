@@ -52,6 +52,68 @@ class RefreshTests(unittest.TestCase):
                 refresh.refresh(self.args)
         self.assertEqual((self.output.read_bytes(), self.git.read_bytes()), before)
 
+    def test_rejects_non_installation_or_mixed_stores_before_minting(self):
+        refresh.publish(self.record, self.output, os.getgid())
+        before = self.output.read_bytes()
+        incompatible = [
+            "https://operator:operator-pat@github.com\n",
+            f"https://x-access-token:{TOKEN}@github.com\nhttps://operator:operator-pat@github.com\n",
+            f"https://x-access-token:{TOKEN}@another.example\n",
+            f"https://x-access-token:{TOKEN}@github.com/example/repo\n",
+            "", "\xff", "x" * (16 * 1024 + 1),
+        ]
+        for store in incompatible:
+            with self.subTest(store_length=len(store)), patch.object(refresh, "mint_token") as mint:
+                self.git.write_bytes(store.encode("latin-1"))
+                with self.assertRaises(refresh.RefreshError) as error:
+                    refresh.refresh(self.args)
+                mint.assert_not_called()
+                self.assertNotIn(TOKEN, str(error.exception))
+                self.assertNotIn("operator-pat", str(error.exception))
+                self.assertEqual(self.git.read_bytes(), store.encode("latin-1"))
+                self.assertEqual(self.output.read_bytes(), before)
+
+    def test_accepts_the_legacy_single_installation_entry(self):
+        self.git.write_text(f"https://x-oauth-basic:{TOKEN}@github.com\n")
+        refresh.publish(self.record, self.output, os.getgid(), self.git)
+        self.assertEqual(self.git.read_text(), f"https://x-access-token:{TOKEN}@github.com\n")
+
+    def test_preserves_a_store_changed_to_a_pat_while_minting(self):
+        refresh.publish(self.record, self.output, os.getgid(), self.git)
+        before = self.output.read_bytes()
+        changed = "https://operator:operator-pat@github.com\n"
+        def mint(*_args):
+            self.git.write_text(changed)
+            return self.record
+        with patch.object(refresh, "mint_token", side_effect=mint):
+            with self.assertRaisesRegex(refresh.RefreshError, "git_credentials_not_single_installation_entry"):
+                refresh.refresh(self.args)
+        self.assertEqual(self.git.read_text(), changed)
+        self.assertEqual(self.output.read_bytes(), before)
+
+    def test_rechecks_the_store_after_staging_and_removes_temporaries_on_refusal(self):
+        refresh.publish(self.record, self.output, os.getgid(), self.git)
+        before = self.output.read_bytes()
+        changed = "https://operator:operator-pat@github.com\n"
+        stage = refresh.stage_file
+        def change_store(destination, data, group):
+            temporary = stage(destination, data, group)
+            if destination == self.output:
+                self.git.write_text(changed)
+            return temporary
+        with patch.object(refresh, "stage_file", side_effect=change_store):
+            with self.assertRaisesRegex(refresh.RefreshError, "git_credentials_not_single_installation_entry"):
+                refresh.publish(self.record, self.output, os.getgid(), self.git)
+        self.assertEqual(self.git.read_text(), changed)
+        self.assertEqual(self.output.read_bytes(), before)
+        self.assertEqual(list(self.directory.glob(".*")), [])
+
+    def test_rejects_two_paths_resolving_to_the_same_output(self):
+        alias = self.directory / "child" / ".." / self.output.name
+        with self.assertRaisesRegex(refresh.RefreshError, "outputs_must_differ"):
+            refresh.publish(self.record, self.output, os.getgid(), alias)
+        self.assertFalse(self.output.exists())
+
     def test_staging_failure_preserves_published_files_and_removes_temporaries(self):
         refresh.publish(self.record, self.output, os.getgid(), self.git)
         before = self.git.read_bytes()

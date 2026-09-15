@@ -51,10 +51,18 @@ Paperclip.
 An optional `--git-credentials` preserves the existing installation-only Git
 store workflow. It replaces the whole file, using `x-access-token` as the HTTPS
 username, and sets owner to the refresh process with mode `0640` and the selected
-reader group. Use it only after confirming the path contains this installation's
-credential alone and its helpers actually select it. Local repository helpers,
+reader group. Before minting and again before publication, it rejects existing
+stores containing a PAT, multiple entries, another host or a repository-specific
+URL. It accepts one `ghs_` entry for `github.com`, using `x-oauth-basic` (legacy)
+or `x-access-token`, and may create an explicitly requested missing store. This
+is a format check, not proof of the old token's installation identity. Confirm
+the store belongs to this installation and its helpers actually select it.
+Local repository helpers,
 embedded remote credentials and other stored credentials can still take
 precedence. A refreshed file alone does not prove which identity Git uses.
+The publisher's lock coordinates its own refresh processes. Stop the old
+publisher before migration and give this store a single credential writer;
+other programs do not automatically participate in that lock.
 
 Both outputs are staged before either is published. Each rename is atomic; the
 pair is not a filesystem transaction. If publication fails between renames, the
@@ -76,11 +84,17 @@ image to read a file. Record the current image, unit/drop-ins and file metadata
 in a root-only backup; do not paste secrets or full unit/env-file contents into
 logs or tickets.
 
+The `Docker` workflow publishes to GHCR on a push to `main`; the PR's `Build`
+check alone does not publish that deployment image. After an authorized merge,
+wait for that merge commit's Docker workflow, record its image tag and digest,
+and verify the image revision matches the merged source before changing the unit.
+
 1. Confirm the running `node` user's numeric group and the Git helper selection.
    Keep the valid operator `GH_TOKEN` / `GITHUB_TOKEN` separate from this App
    delivery migration. The supplied root-shell and container PAT checks already
    succeed; they are not evidence of App-token freshness.
-2. Pause the refresh timer during the short publisher replacement. Install the
+2. Pause the refresh timer and let any current oneshot refresh finish before
+   replacing the publisher. Install the
    reviewed script and create a dedicated directory with root ownership and the
    actual reader group. These commands run on the server from a reviewed checkout:
 
@@ -129,11 +143,29 @@ logs or tickets.
    recreation, then resume scheduling. Do not restore the old periodic
    `ExecStartPost=... restart paperclip-quantum-dev.service` workaround.
 
-The obsolete `paperclip-token-sync.sh` is not part of this migration: its source
-file/service is absent and it writes plaintext values into `adapter_config`.
-Do not re-enable it. Inventory remaining consumers of `delivery-bot.env` before
-retiring that obsolete output. Migrate other long-lived environment readers
-separately; a new filename does not give them hot-reload support.
+This is one planned recreation for this migration. Subsequent application
+upgrades may still require a recreation; token renewal itself no longer does.
+
+## Retiring old credentials and scripts
+
+- The new refresh command stops writing `delivery-bot.env`, rewriting the
+  container unit and logging token prefixes to `paperclip-token-refresh.log`.
+  Confirm no timer, cron job or other unit still invokes the old script. After
+  acceptance, archive the old script and unused env file in a root-only backup
+  outside their active paths. Keep historical logs under the host's restricted
+  access and retention policy.
+- `paperclip-token-sync.sh` expects a missing token file and a missing trigger
+  service; its own script and unit still exist. Check reverse dependencies and
+  other references, then retire both from their active paths after acceptance.
+  Do not reactivate its plaintext `adapter_config` updates. Reload systemd after
+  removing a retired unit.
+- The container's operator PAT, `quantum.service.d/github-pat.conf` and the PAT
+  in `quantum-runners.service` are separate consumers. This hook change does not
+  give those clients or agent sessions a rotating credential source. Keep their
+  removal as a separate migration: identify each consumer, provide and test its
+  replacement over an expiry boundary, then remove the static setting and
+  revoke that PAT only when no consumer still depends on it. Preserve distinct
+  operator and agent identities throughout.
 
 ## Acceptance checks on the server
 

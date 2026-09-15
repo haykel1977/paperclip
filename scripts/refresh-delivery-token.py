@@ -109,6 +109,33 @@ def check_destination(destination):
         raise RefreshError("output_must_be_regular_file")
 
 
+def check_git_store(destination):
+    """Refuse to replace PATs, other hosts or multi-account credential stores."""
+    check_destination(destination)
+    try:
+        fd = os.open(destination, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return  # Explicitly requested creation; there is no existing store to replace.
+    except OSError:
+        raise RefreshError("git_credentials_unreadable") from None
+    with os.fdopen(fd, "rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise RefreshError("git_credentials_must_be_regular_file")
+        raw = stream.read(16 * 1024 + 1)
+    if len(raw) > 16 * 1024:
+        raise RefreshError("git_credentials_too_large")
+    try:
+        lines = raw.decode("ascii").splitlines()
+    except UnicodeError:
+        raise RefreshError("git_credentials_not_single_installation_entry") from None
+    # Accept the old publisher's username as well as the new one. No arbitrary
+    # URLs, whitespace, PATs, repository-specific paths or additional entries.
+    if len(lines) != 1 or not re.fullmatch(
+        r"https://(?:x-access-token|x-oauth-basic):ghs_[A-Za-z0-9_.-]+@github\.com/?", lines[0]
+    ):
+        raise RefreshError("git_credentials_not_single_installation_entry")
+
+
 def stage_file(destination, data, reader_gid):
     check_destination(destination)
     fd, temporary = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent)
@@ -128,8 +155,9 @@ def stage_file(destination, data, reader_gid):
 def publish(record, output, reader_gid, git_credentials=None):
     outputs = [(output, (json.dumps(record, separators=(",", ":")) + "\n").encode())]
     if git_credentials is not None:
-        if git_credentials == output:
+        if git_credentials.resolve() == output.resolve():
             raise RefreshError("outputs_must_differ")
+        check_git_store(git_credentials)
         # Compatibility for an existing installation-only Git store. Its helper
         # and repository routing must be checked before opting into replacement.
         outputs.insert(0, (git_credentials, f"https://x-access-token:{record['token']}@github.com\n".encode()))
@@ -139,6 +167,10 @@ def publish(record, output, reader_gid, git_credentials=None):
         # renewal/preparation leaves existing credentials untouched.
         for destination, data in outputs:
             staged.append((stage_file(destination, data, reader_gid), destination))
+        # Recheck after minting/staging in case another credential writer has
+        # changed the store. Never turn that change into a silent PAT overwrite.
+        if git_credentials is not None:
+            check_git_store(git_credentials)
         for temporary, destination in staged:
             os.replace(temporary, destination)
             directory_fd = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY)
@@ -163,7 +195,7 @@ def refresh(args):
     if not parent.st_mode & 0o010:
         raise RefreshError("token_directory_not_traversable_by_reader")
     if args.git_credentials is not None:
-        check_destination(args.git_credentials)
+        check_git_store(args.git_credentials)
     lock_path = args.output.with_name(f".{args.output.name}.lock")
     lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     with os.fdopen(lock_fd, "wb") as lock:
