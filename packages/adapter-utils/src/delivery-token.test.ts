@@ -39,7 +39,7 @@ describe("delivery token file", () => {
     await expect(readDeliveryTokenFile(file, repo)).rejects.toThrow("bot_token_file_expired_or_expiring");
   });
 
-  it.each([{ token: "github_pat_test_fixture" }, { expires_at: "invalid" }, { token: `${token}\n` }])(
+  it.each([{ token: "operator-pat" }, { expires_at: "invalid" }, { token: `${token}\n` }])(
     "rejects malformed credentials without disclosing their contents", async (overrides) => {
       const { file } = fixture(overrides);
       await expect(readDeliveryTokenFile(file, repo)).rejects.toThrow(/^bot_token_file_invalid$/);
