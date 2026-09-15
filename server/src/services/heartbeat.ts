@@ -4,6 +4,24 @@ import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, getTableColumns, gt, inArray, isNull, lt, lte, notInArray, or, sql } from "drizzle-orm";
+
+/**
+ * Statuses a scheduled (timer) heartbeat may act on. A timer wake spawns a
+ * full agent session, so it is only worth it when the agent holds an issue it
+ * can execute right now. This is the same "active" set the run-liveness
+ * continuation uses (services/recovery/run-liveness-continuations.ts,
+ * CONTINUATION_ACTIVE_ISSUE_STATUSES): `blocked`, `in_review`, `backlog` and
+ * `done` are woken by their own first-class events (blockers resolved,
+ * comment, assignment), never by the timer. Keep the two in step.
+ */
+const TIMER_ACTIONABLE_ISSUE_STATUS_FILTER = "todo,in_progress";
+/** Audit reasons written to agent_wakeup_requests (status "skipped") by the timer gate. */
+const TIMER_SKIP_NO_ACTIONABLE_WORK = "timer.no_actionable_work";
+const TIMER_SKIP_LOOKUP_FAILED = "timer.actionable_work_lookup_failed";
+// Timer gate baseline, in memory: when an agent's actionable-work check ran
+// and why it was skipped. Bounded by the number of gated agents, rebuilt after
+// a restart from lastHeartbeatAt (one extra check per agent, nothing else).
+const timerGateStates = new Map<string, { checkedAt: number; reason: string }>();
 import type { Db } from "@paperclipai/db";
 import {
   AGENT_DEFAULT_MAX_CONCURRENT_RUNS,
@@ -6769,6 +6787,11 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       intervalSec: Math.max(0, asNumber(heartbeat.intervalSec, 0)),
       wakeOnDemand: asBoolean(heartbeat.wakeOnDemand ?? heartbeat.wakeOnAssignment ?? heartbeat.wakeOnOnDemand ?? heartbeat.wakeOnAutomation, true),
       maxConcurrentRuns: normalizeMaxConcurrentRuns(heartbeat.maxConcurrentRuns),
+      // Explicit policy (#2985): the timer wakes this agent only when it holds a
+      // todo/in_progress issue. Off by default so agents whose periodic work is
+      // issue-independent (a CEO reviewing metrics, a monitor) keep the timer
+      // semantics documented in doc/PRODUCT.md and doc/SPEC-implementation.md.
+      requireActionableWork: asBoolean(heartbeat.requireActionableWork, false),
     };
   }
 
@@ -11368,6 +11391,26 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       let enqueued = 0;
       let skipped = 0;
 
+      // The skip is recorded where enqueueWakeup records its own refusals
+      // (agent_wakeup_requests, status "skipped"): no heartbeat run is created,
+      // so no adapter can be invoked on this path.
+      const writeTimerSkip = async (agent: { id: string; companyId: string }, reason: string, error?: string) => {
+        await db.insert(agentWakeupRequests).values({
+          companyId: agent.companyId,
+          agentId: agent.id,
+          source: "timer",
+          triggerDetail: "system",
+          reason,
+          status: "skipped",
+          requestedByActorType: "system",
+          requestedByActorId: "heartbeat_scheduler",
+          requestedAt: now,
+          finishedAt: now,
+          error: error ?? null,
+        });
+      };
+
+      const gatedAgentIds = new Set<string>();
       for (const agent of allAgents) {
         const invokability = evaluateAgentInvokability(toAgentOrgRow(agent), agentsByCompany.get(agent.companyId) ?? []);
         if (!invokability.invokable) continue;
@@ -11375,9 +11418,46 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         if (!policy.enabled || policy.intervalSec <= 0) continue;
 
         checked += 1;
-        const baseline = new Date(agent.lastHeartbeatAt ?? agent.createdAt).getTime();
+        const lastRunAt = new Date(agent.lastHeartbeatAt ?? agent.createdAt).getTime();
+        const gateState = policy.requireActionableWork ? timerGateStates.get(agent.id) : undefined;
+        if (policy.requireActionableWork) gatedAgentIds.add(agent.id);
+        // A skipped agent is re-evaluated only once its interval has elapsed
+        // again: one bounded lookup per interval, no query per tick.
+        const baseline = Math.max(lastRunAt, gateState?.checkedAt ?? 0);
         const elapsedMs = now.getTime() - baseline;
         if (elapsedMs < policy.intervalSec * 1000) continue;
+
+        if (policy.requireActionableWork) {
+          // Timer gate (#2985): no session is spawned to discover that there is
+          // nothing to do. The lookup is the inbox's own query (issuesSvc.list),
+          // bounded to one row; a failed lookup is fail-closed for this agent and
+          // kept distinct from "no work" in the audit trail.
+          let skipReason: string | null = null;
+          let skipError: string | undefined;
+          try {
+            const actionable = await issuesSvc.list(agent.companyId, {
+              assigneeAgentId: agent.id,
+              status: TIMER_ACTIONABLE_ISSUE_STATUS_FILTER,
+              limit: 1,
+            });
+            if (actionable.length === 0) skipReason = TIMER_SKIP_NO_ACTIONABLE_WORK;
+          } catch (err) {
+            logger.error({ err, agentId: agent.id, companyId: agent.companyId }, TIMER_SKIP_LOOKUP_FAILED);
+            skipReason = TIMER_SKIP_LOOKUP_FAILED;
+            skipError = err instanceof Error ? err.message : String(err);
+          }
+          if (skipReason) {
+            // One audit row per idle period (entering the skipped state, or a new
+            // reason), not one per interval: the table does not grow with uptime.
+            if (gateState?.reason !== skipReason) {
+              await writeTimerSkip(agent, skipReason, skipError);
+            }
+            timerGateStates.set(agent.id, { checkedAt: now.getTime(), reason: skipReason });
+            skipped += 1;
+            continue;
+          }
+          timerGateStates.delete(agent.id);
+        }
 
         const run = await enqueueWakeup(agent.id, {
           source: "timer",
@@ -11393,6 +11473,10 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         });
         if (run) enqueued += 1;
         else skipped += 1;
+      }
+
+      for (const agentId of timerGateStates.keys()) {
+        if (!gatedAgentIds.has(agentId)) timerGateStates.delete(agentId);
       }
 
       const issueMonitors = await tickDueIssueMonitors(now);
