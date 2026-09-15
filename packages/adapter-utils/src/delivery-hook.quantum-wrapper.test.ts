@@ -1,8 +1,8 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { executeDeliveryHook, type DeliveryHookRunProcess } from "./delivery-hook.js";
+import { createDeliveryLogRedactor, executeDeliveryHook, type DeliveryHookRunProcess } from "./delivery-hook.js";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -14,6 +14,7 @@ function fixture(options: {
   qualityFailure?: boolean; signature?: string; diff?: string; diffExitCode?: number;
   wrapperAfterCheckout?: boolean; statusAfterCheckout?: string;
   mutateWrapperDuringQuality?: boolean;
+  beforeCommand?: (cmd: string, env: Record<string, string>) => void | Promise<void>;
 } = {}) {
   const cwd = mkdtempSync(path.join(os.tmpdir(), "quantum-wrapper-contract-"));
   roots.push(cwd);
@@ -28,10 +29,13 @@ function fixture(options: {
     chmodSync(wrapper, 0o755);
   }
   const calls: string[][] = [];
+  const commandEnvs: { cmd: string; env: Record<string, string> }[] = [];
   let checkedOut = false;
   let wrapperModified = false;
-  const runProc: DeliveryHookRunProcess = vi.fn(async (cmd, args) => {
+  const runProc: DeliveryHookRunProcess = vi.fn(async (cmd, args, _cwd, env) => {
+    await options.beforeCommand?.(cmd, env);
     calls.push([cmd, ...args]);
+    commandEnvs.push({ cmd, env });
     if (cmd === "git" && args[0] === "checkout") {
       checkedOut = true;
       if (options.wrapperAfterCheckout === true) {
@@ -70,7 +74,7 @@ function fixture(options: {
     return { exitCode: 0, stdout, stderr: "" };
   });
   return {
-    wrapper, calls,
+    wrapper, calls, commandEnvs,
     input: {
       runId: "run-1", worktreeCwd: cwd, branch: "feat/agent-Quantum-CTO-ticket-qua-99-delivery",
       env: { PAPERCLIP_GITHUB_ISSUE_NUMBER: "3135" }, issueIdentifier: "QUA-99", issueId: "issue-1",
@@ -84,6 +88,87 @@ function expectNoExternalDelivery(calls: string[][]) {
   expect(calls.some(([cmd, sub]) => cmd === "git" && sub === "push")).toBe(false);
   expect(calls.some(([cmd, sub, action]) => cmd === "gh" && sub === "pr" && ["create", "merge", "edit"].includes(action))).toBe(false);
 }
+
+describe("rotating autonomous delivery credentials", () => {
+  const tokenA = `ghs_${"fixture_A".repeat(4)}`;
+  const tokenB = `ghs_${"fixture_B".repeat(4)}`;
+  function publish(file: string, token: string, remaining = 3600_000) {
+    writeFileSync(`${file}.next`, JSON.stringify({ token, repository: "Beyn-SOLIDUS/quantum",
+      expires_at: new Date(Date.now() + remaining).toISOString() }), { mode: 0o640 });
+    renameSync(`${file}.next`, file);
+  }
+  function deliveryEnv(file: string) {
+    return { PAPERCLIP_AUTONOMOUS_DELIVERY: "1", PAPERCLIP_DELIVERY_SIGN_COMMITS: "1", PAPERCLIP_DELIVERY_BOT_TOKEN_FILE: file,
+      PAPERCLIP_DELIVERY_BOT_TOKEN: "stale-startup-token", GH_TOKEN: "operator-pat", GITHUB_TOKEN: "operator-pat" };
+  }
+
+  it("uses the new token after quality gates, including the mandatory wrapper", async () => {
+    let file: string;
+    const f = fixture({ signature: "G\n", beforeCommand: (cmd) => { if (cmd === "pnpm") publish(file, tokenB); } });
+    file = path.join(f.input.worktreeCwd, "delivery-token.json");
+    publish(file, tokenA);
+    const env = { ...f.input.env, ...deliveryEnv(file) };
+    const result = await executeDeliveryHook({ ...f.input, env });
+    expect(result).toMatchObject({ delivered: true, prUrl });
+    expect(f.commandEnvs.find(({ cmd }) => cmd === "gh")?.env.GH_TOKEN).toBe(tokenA);
+    expect(f.commandEnvs.find(({ cmd }) => cmd === f.wrapper)?.env).toMatchObject({
+      GH_TOKEN: tokenB, GITHUB_TOKEN: tokenB, PAPERCLIP_DELIVERY_BOT_TOKEN: tokenB,
+    });
+    for (const { env: gateEnv } of f.commandEnvs.filter(({ cmd }) => cmd === "pnpm")) {
+      expect(Object.keys(gateEnv).filter((key) => /TOKEN/.test(key))).toEqual([]);
+    }
+    expect(env.GH_TOKEN).toBe("operator-pat");
+    expect(env.PAPERCLIP_DELIVERY_BOT_TOKEN).toBe("stale-startup-token");
+    expectNoExternalDelivery(f.calls);
+  });
+
+  it("blocks on a configured missing file without falling back to a valid PAT", async () => {
+    const f = fixture();
+    const file = path.join(f.input.worktreeCwd, "missing-token.json");
+    expect(await executeDeliveryHook({ ...f.input, env: { ...f.input.env, ...deliveryEnv(file) } }))
+      .toMatchObject({ delivered: false, reason: "delivery_blocked: bot_token_file_unreadable" });
+    expect(f.calls.some(([cmd]) => cmd === "gh" || cmd === f.wrapper)).toBe(false);
+    expectNoExternalDelivery(f.calls);
+  });
+
+  it("stops before the wrapper when renewal fails during quality gates", async () => {
+    let file: string;
+    const f = fixture({ signature: "G\n", beforeCommand: (cmd) => { if (cmd === "pnpm") publish(file, tokenA, -1000); } });
+    file = path.join(f.input.worktreeCwd, "delivery-token.json");
+    publish(file, tokenA);
+    expect(await executeDeliveryHook({ ...f.input, env: { ...f.input.env, ...deliveryEnv(file) } }))
+      .toMatchObject({ delivered: false });
+    expect(f.calls.some(([cmd]) => cmd === f.wrapper)).toBe(false);
+    expectNoExternalDelivery(f.calls);
+  });
+
+  it("leaves manual delivery credentials alone even with an unavailable file", async () => {
+    const f = fixture();
+    const env = { ...f.input.env, ...deliveryEnv("/unavailable/token.json"), PAPERCLIP_AUTONOMOUS_DELIVERY: "0" };
+    expect(await executeDeliveryHook({ ...f.input, env })).toMatchObject({ delivered: true });
+    expect(f.commandEnvs.find(({ cmd }) => cmd === f.wrapper)?.env.GH_TOKEN).toBe("operator-pat");
+  });
+
+  it("redacts a newly loaded token in adapter streams and returned hook diagnostics", async () => {
+    const f = fixture({ exitCode: 1, signature: "G\n" });
+    const file = path.join(f.input.worktreeCwd, "delivery-token.json");
+    publish(file, tokenB);
+    const env = { ...f.input.env, ...deliveryEnv(file) };
+    const chunks: string[] = [];
+    const log = createDeliveryLogRedactor(env, async (_stream, chunk) => { chunks.push(chunk); });
+    const runProc: DeliveryHookRunProcess = async (cmd, args, cwd, commandEnv) => {
+      const result = await f.input.runProc(cmd, args, cwd, commandEnv);
+      if (cmd !== f.wrapper) return result;
+      // Same per-command redactor used by the local adapters.
+      await createDeliveryLogRedactor(commandEnv, log)("stderr", `streamed ${commandEnv.GH_TOKEN}\n`);
+      return { ...result, stderr: `ERROR (CF-000 fixture): ${commandEnv.GH_TOKEN}` };
+    };
+    expect(await executeDeliveryHook({ ...f.input, env, runProc, log })).toMatchObject({ delivered: false });
+    expect(chunks.join("")).toContain("[REDACTED]");
+    expect(chunks.join("")).not.toContain(tokenB);
+    expect(chunks.join("")).toContain("CF-000");
+  });
+});
 
 describe("Quantum wrapper owns remote delivery", () => {
   it("refuses a missing wrapper before commit, push or raw PR creation", async () => {

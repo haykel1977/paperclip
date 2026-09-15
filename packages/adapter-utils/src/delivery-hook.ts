@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import path from "node:path";
+import { DeliveryTokenError, readDeliveryTokenFile } from "./delivery-token.js";
 
 export type DeliveryHookRunProcess = (
   cmd: string,
@@ -1240,7 +1241,34 @@ export function buildQuantumPrBody(input: {
  * - fix: `executeConfiguredDeliveryHook` no longer creates a second redactor
  */
 export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Promise<DeliveryHookResult> {
-  const { worktreeCwd, env, runProc } = input;
+  try {
+    return await executeDeliveryHookWithToken(input);
+  } catch (error) {
+    if (!(error instanceof DeliveryTokenError)) throw error;
+    await input.log("stderr", `[delivery] result=delivery_blocked reason=${error.message}\n`);
+    return { delivered: false, prUrl: null, reason: `delivery_blocked: ${error.message}` };
+  }
+}
+
+async function executeDeliveryHookWithToken(input: ExecuteDeliveryHookInput): Promise<DeliveryHookResult> {
+  const { worktreeCwd, env } = input;
+  const tokenFile = isAutonomousDeliveryEnabled(env)
+    ? nonEmpty(env.PAPERCLIP_DELIVERY_BOT_TOKEN_FILE ?? process.env.PAPERCLIP_DELIVERY_BOT_TOKEN_FILE)
+    : null;
+  let deliveryCommandEnv: Record<string, string> | undefined;
+  const originalRunProc = input.runProc;
+  const runProc: DeliveryHookRunProcess = async (cmd, args, cwd, commandEnv) => {
+    if (!tokenFile || commandEnv !== deliveryCommandEnv) return originalRunProc(cmd, args, cwd, commandEnv);
+    const token = await readDeliveryTokenFile(tokenFile, input.repo);
+    const freshEnv = { ...commandEnv, GH_TOKEN: token, GITHUB_TOKEN: token, PAPERCLIP_DELIVERY_BOT_TOKEN: token };
+    const result = await originalRunProc(cmd, args, cwd, freshEnv);
+    // Adapters redact streaming output using freshEnv as well. Sanitize the
+    // returned buffers before the hook's older logger can see the new token.
+    const secrets = collectSecretValues(freshEnv);
+    return { ...result, stdout: redactSecretValues(result.stdout, secrets), stderr: redactSecretValues(result.stderr, secrets) };
+  };
+  // Wrapper helpers use input.runProc, so they must share this boundary too.
+  input = { ...input, runProc };
   let branch = input.branch;
   const log = createDeliveryLogRedactor(env, input.log);
   const quantumDelivery = isQuantumDeliveryTarget(input.repo, env);
@@ -1325,7 +1353,9 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
   }
 
   // ── 2. bot token check (autonomous lane only) ────────────────────────────
-  const deliveryBotToken = autonomousDelivery ? readDeliveryBotToken(env) : null;
+  const deliveryBotToken = autonomousDelivery
+    ? tokenFile ? await readDeliveryTokenFile(tokenFile, input.repo) : readDeliveryBotToken(env)
+    : null;
   if (autonomousDelivery && !deliveryBotToken) {
     await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="missing bot token"\n`);
     return { delivered: false, prUrl: null, reason: "delivery_blocked: missing bot token" };
@@ -1335,7 +1365,7 @@ export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Prom
     return { delivered: false, prUrl: null, reason: "delivery_blocked: missing immutable issue id" };
   }
 
-  const deliveryCommandEnv = deliveryBotToken ? { ...env, GH_TOKEN: deliveryBotToken } : env;
+  deliveryCommandEnv = deliveryBotToken ? { ...env, GH_TOKEN: deliveryBotToken } : env;
 
   // ── 3. idempotency: check for existing PR BEFORE committing ──────────────
   const existingPrUrl = await findExistingPr({ repo: input.repo, branch, worktreeCwd, env: deliveryCommandEnv, runProc });

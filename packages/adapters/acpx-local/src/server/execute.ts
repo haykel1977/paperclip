@@ -1735,7 +1735,7 @@ export function createAcpxLocalExecutor(deps: ExecuteDeps = {}) {
               env,
               timeoutSec: 120,
               graceSec: 10,
-              onLog: deliveryLog,
+              onLog: createDeliveryLogRedactor(env, deliveryLog),
             });
             return { exitCode: proc.exitCode ?? 1, stdout: proc.stdout ?? "", stderr: proc.stderr ?? "" };
           },

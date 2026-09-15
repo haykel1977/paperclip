@@ -603,7 +603,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
             env: e,
             timeoutSec: 120,
             graceSec: 10,
-            onLog: deliveryLog,
+            onLog: createDeliveryLogRedactor(e, deliveryLog),
           });
           return { exitCode: p.exitCode ?? 1, stdout: p.stdout ?? "", stderr: p.stderr ?? "" };
         },
