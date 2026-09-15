@@ -152,7 +152,8 @@ describeEmbeddedPostgres("heartbeat timer gate (#2985)", () => {
     return companyId;
   }
 
-  async function seedAgent(companyId: string, name: string) {
+  // The gate is an explicit per-agent policy; `{}` seeds an agent without it.
+  async function seedAgent(companyId: string, name: string, heartbeatPolicy: { requireActionableWork?: boolean } = { requireActionableWork: true }) {
     const agentId = randomUUID();
     await db.insert(agents).values({
       id: agentId,
@@ -162,7 +163,7 @@ describeEmbeddedPostgres("heartbeat timer gate (#2985)", () => {
       status: "idle",
       adapterType: "process",
       adapterConfig: { command: process.execPath, args: ["-e", ""], cwd: process.cwd() },
-      runtimeConfig: { heartbeat: { enabled: true, intervalSec: 60, wakeOnDemand: true } },
+      runtimeConfig: { heartbeat: { enabled: true, intervalSec: 60, wakeOnDemand: true, ...heartbeatPolicy } },
       permissions: {},
       lastHeartbeatAt: TEN_MINUTES_BEFORE_TICK,
     });
@@ -225,7 +226,7 @@ describeEmbeddedPostgres("heartbeat timer gate (#2985)", () => {
     expect((await runsFor(agentId)).length).toBe(1);
   });
 
-  it("timer skips an agent with no issue: no run, no adapter, one skipped request per interval", async () => {
+  it("timer skips an agent with no issue: no run, no adapter, one lookup per interval, one audit row per idle period", async () => {
     const companyId = await seedCompany();
     const agentId = await seedAgent(companyId, "Idle Bot");
     const heartbeat = heartbeatService(db);
@@ -237,15 +238,53 @@ describeEmbeddedPostgres("heartbeat timer gate (#2985)", () => {
       { source: "timer", status: "skipped", reason: "timer.no_actionable_work", error: null },
     ]);
 
-    // One second later the interval has not elapsed again: nothing new is written.
+    // One second later the interval has not elapsed again: no lookup, nothing written.
     const second = await heartbeat.tickTimers(new Date(TICK_AT.getTime() + 1_000));
     expect(second).toMatchObject({ checked: 1, enqueued: 0, skipped: 0 });
     expect((await wakeupRequestsFor(agentId)).length).toBe(1);
 
-    // After a full interval the agent is evaluated again.
+    // After a full interval the agent is evaluated again, still idle: skipped
+    // again, but the same idle period writes no second audit row.
     const third = await heartbeat.tickTimers(new Date(TICK_AT.getTime() + 61_000));
     expect(third).toMatchObject({ checked: 1, enqueued: 0, skipped: 1 });
-    expect((await wakeupRequestsFor(agentId)).length).toBe(2);
+    expect((await wakeupRequestsFor(agentId)).length).toBe(1);
+    expect(await runsFor(agentId)).toEqual([]);
+
+    // Work arrives: the next due tick wakes the agent (idle period over).
+    await seedIssue(companyId, agentId, "todo");
+    const fourth = await heartbeat.tickTimers(new Date(TICK_AT.getTime() + 122_000));
+    expect(fourth).toMatchObject({ checked: 1, enqueued: 1, skipped: 0 });
+    expect((await runsFor(agentId)).length).toBe(1);
+  });
+
+  it("without the requireActionableWork policy the timer keeps its documented semantics", async () => {
+    const companyId = await seedCompany();
+    const ceoAgentId = await seedAgent(companyId, "CEO Bot", {});
+
+    const result = await heartbeatService(db).tickTimers(TICK_AT);
+
+    expect(result).toMatchObject({ checked: 1, enqueued: 1, skipped: 0 });
+    expect((await runsFor(ceoAgentId)).length).toBe(1);
+    expect((await wakeupRequestsFor(ceoAgentId)).filter((row) => row.status === "skipped")).toEqual([]);
+  });
+
+  it("a lookup failure is recorded once per failure period, then replaced by no_actionable_work", async () => {
+    const companyId = await seedCompany();
+    const agentId = await seedAgent(companyId, "Flaky Lookup Bot");
+    const heartbeat = heartbeatService(db);
+    failingLookupAgentIds.add(agentId);
+
+    await heartbeat.tickTimers(TICK_AT);
+    await heartbeat.tickTimers(new Date(TICK_AT.getTime() + 61_000));
+    expect((await wakeupRequestsFor(agentId)).map((row) => row.reason)).toEqual(["timer.actionable_work_lookup_failed"]);
+
+    failingLookupAgentIds.delete(agentId);
+    const recovered = await heartbeat.tickTimers(new Date(TICK_AT.getTime() + 122_000));
+    expect(recovered).toMatchObject({ enqueued: 0, skipped: 1 });
+    expect((await wakeupRequestsFor(agentId)).map((row) => row.reason)).toEqual([
+      "timer.actionable_work_lookup_failed",
+      "timer.no_actionable_work",
+    ]);
     expect(await runsFor(agentId)).toEqual([]);
   });
 
