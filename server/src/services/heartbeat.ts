@@ -11427,6 +11427,10 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         const elapsedMs = now.getTime() - baseline;
         if (elapsedMs < policy.intervalSec * 1000) continue;
 
+        // The card the gate found is handed to the run: adapters export it as
+        // PAPERCLIP_TASK_ID, and a launcher that refuses task-less runs would
+        // otherwise skip the very work that justified waking the agent.
+        let timerIssueId: string | null = null;
         if (policy.requireActionableWork) {
           // Timer gate (#2985): no session is spawned to discover that there is
           // nothing to do. The lookup is the inbox's own query (issuesSvc.list),
@@ -11441,6 +11445,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
               limit: 1,
             });
             if (actionable.length === 0) skipReason = TIMER_SKIP_NO_ACTIONABLE_WORK;
+            else timerIssueId = actionable[0]?.id ?? null;
           } catch (err) {
             logger.error({ err, agentId: agent.id, companyId: agent.companyId }, TIMER_SKIP_LOOKUP_FAILED);
             skipReason = TIMER_SKIP_LOOKUP_FAILED;
@@ -11469,6 +11474,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
             source: "scheduler",
             reason: "interval_elapsed",
             now: now.toISOString(),
+            ...(timerIssueId ? { issueId: timerIssueId, taskId: timerIssueId } : {}),
           },
         });
         if (run) enqueued += 1;

@@ -191,6 +191,14 @@ describeEmbeddedPostgres("heartbeat timer gate (#2985)", () => {
     return db.select({ id: heartbeatRuns.id, status: heartbeatRuns.status }).from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId));
   }
 
+  async function runContextsFor(agentId: string) {
+    const rows = await db
+      .select({ contextSnapshot: heartbeatRuns.contextSnapshot })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, agentId));
+    return rows.map((row) => (row.contextSnapshot ?? {}) as Record<string, unknown>);
+  }
+
   async function wakeupRequestsFor(agentId: string) {
     return db
       .select({
@@ -206,13 +214,16 @@ describeEmbeddedPostgres("heartbeat timer gate (#2985)", () => {
   it("timer wakes an agent holding a todo issue", async () => {
     const companyId = await seedCompany();
     const agentId = await seedAgent(companyId, "Todo Bot");
-    await seedIssue(companyId, agentId, "todo");
+    const issueId = await seedIssue(companyId, agentId, "todo");
 
     const result = await heartbeatService(db).tickTimers(TICK_AT);
 
     expect(result).toMatchObject({ enqueued: 1, skipped: 0 });
     expect((await runsFor(agentId)).length).toBe(1);
     expect((await wakeupRequestsFor(agentId)).filter((row) => row.status === "skipped")).toEqual([]);
+    // The card the gate found travels with the run, so adapters can export it
+    // as PAPERCLIP_TASK_ID and a task-requiring launcher does not skip it.
+    expect(await runContextsFor(agentId)).toEqual([expect.objectContaining({ issueId, taskId: issueId })]);
   });
 
   it("timer wakes an agent holding an in_progress issue", async () => {
@@ -265,6 +276,9 @@ describeEmbeddedPostgres("heartbeat timer gate (#2985)", () => {
 
     expect(result).toMatchObject({ checked: 1, enqueued: 1, skipped: 0 });
     expect((await runsFor(ceoAgentId)).length).toBe(1);
+    const [ceoContext] = await runContextsFor(ceoAgentId);
+    expect(ceoContext?.issueId).toBeUndefined();
+    expect(ceoContext?.taskId).toBeUndefined();
     expect((await wakeupRequestsFor(ceoAgentId)).filter((row) => row.status === "skipped")).toEqual([]);
   });
 
