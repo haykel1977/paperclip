@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import path from "node:path";
+import { noteConfiguredDeliveryInvocation } from "./delivery-guard.js";
 import { DeliveryTokenError, readDeliveryTokenFile } from "./delivery-token.js";
 
 export type DeliveryHookRunProcess = (
@@ -1863,11 +1864,27 @@ async function executeDeliveryHookWithToken(input: ExecuteDeliveryHookInput): Pr
   return { delivered: true, prUrl: url, reason: "created" };
 }
 
+function noteDeliverySkip(input: ExecuteConfiguredDeliveryHookInput, reason: string) {
+  noteConfiguredDeliveryInvocation(input, { type: "skipped", reason });
+}
+
 export async function executeConfiguredDeliveryHook(
+  input: ExecuteConfiguredDeliveryHookInput,
+): Promise<DeliveryHookResult | null> {
+  try {
+    return await executeConfiguredDeliveryHookBody(input);
+  } catch (error) {
+    noteConfiguredDeliveryInvocation(input, { type: "error", reason: "delivery_hook_error" });
+    throw error;
+  }
+}
+
+async function executeConfiguredDeliveryHookBody(
   input: ExecuteConfiguredDeliveryHookInput,
 ): Promise<DeliveryHookResult | null> {
   if (input.config.deliveryHookEnabled === false) {
     await input.log("stdout", "[paperclip] delivery: skipped reason=delivery_hook_disabled\n");
+    noteDeliverySkip(input, "delivery_hook_disabled");
     return null;
   }
   const remoteDeliveryEnabled =
@@ -1876,10 +1893,12 @@ export async function executeConfiguredDeliveryHook(
     readBooleanEnv(input.env, "PAPERCLIP_DELIVERY_REMOTE_ENABLED");
   if (input.executionTargetIsRemote && !remoteDeliveryEnabled) {
     await input.log("stdout", "[paperclip] delivery: skipped reason=remote_delivery_not_enabled\n");
+    noteDeliverySkip(input, "remote_delivery_not_enabled");
     return null;
   }
   if ((input.exitCode ?? 1) !== 0) {
     await input.log("stdout", "[paperclip] delivery: skipped reason=adapter_exit_nonzero\n");
+    noteDeliverySkip(input, "adapter_exit_nonzero");
     return null;
   }
   const baseBranch = asString(input.config.deliveryBaseBranch, "main");
@@ -1920,10 +1939,12 @@ export async function executeConfiguredDeliveryHook(
           await input.log("stdout", `[paperclip] delivery: checked out existing PR branch=${branch}\n`);
         } else {
           await input.log("stderr", `[paperclip] delivery: skipped reason=branch_checkout_failed detail=${checkoutExisting.stderr.trim()}\n`);
+          noteDeliverySkip(input, "branch_checkout_failed");
           return null;
         }
       } else {
         await input.log("stderr", `[paperclip] delivery: skipped reason=branch_checkout_failed detail=${createBranch.stderr.trim()}\n`);
+        noteDeliverySkip(input, "branch_checkout_failed");
         return null;
       }
     } else {
@@ -1933,10 +1954,12 @@ export async function executeConfiguredDeliveryHook(
   }
   if (!branch) {
     await input.log("stdout", "[paperclip] delivery: skipped reason=missing_branch\n");
+    noteDeliverySkip(input, "missing_branch");
     return null;
   }
   if (branch === baseBranch) {
     await input.log("stdout", "[paperclip] delivery: skipped reason=base_branch\n");
+    noteDeliverySkip(input, "base_branch");
     return null;
   }
 
@@ -1983,5 +2006,6 @@ export async function executeConfiguredDeliveryHook(
     "stdout",
     `[paperclip] delivery: ${delivery.reason}${delivery.prUrl ? " -> " + delivery.prUrl : ""}\n`,
   );
+  noteConfiguredDeliveryInvocation(input, { type: "result", result: delivery });
   return delivery;
 }
