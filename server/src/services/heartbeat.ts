@@ -4,6 +4,24 @@ import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, getTableColumns, gt, inArray, isNull, lt, lte, notInArray, or, sql } from "drizzle-orm";
+
+/**
+ * Statuses a scheduled (timer) heartbeat may act on. A timer wake spawns a
+ * full agent session, so it is only worth it when the agent holds an issue it
+ * can execute right now. This is the same "active" set the run-liveness
+ * continuation uses (services/recovery/run-liveness-continuations.ts,
+ * CONTINUATION_ACTIVE_ISSUE_STATUSES): `blocked`, `in_review`, `backlog` and
+ * `done` are woken by their own first-class events (blockers resolved,
+ * comment, assignment), never by the timer. Keep the two in step.
+ */
+const TIMER_ACTIONABLE_ISSUE_STATUS_FILTER = "todo,in_progress";
+/** Audit reasons written to agent_wakeup_requests (status "skipped") by the timer gate. */
+const TIMER_SKIP_NO_ACTIONABLE_WORK = "timer.no_actionable_work";
+const TIMER_SKIP_LOOKUP_FAILED = "timer.actionable_work_lookup_failed";
+// Timer gate baseline, in memory: when an agent's actionable-work check ran
+// and why it was skipped. Bounded by the number of gated agents, rebuilt after
+// a restart from lastHeartbeatAt (one extra check per agent, nothing else).
+const timerGateStates = new Map<string, { checkedAt: number; reason: string }>();
 import type { Db } from "@paperclipai/db";
 import {
   AGENT_DEFAULT_MAX_CONCURRENT_RUNS,
@@ -11,9 +29,14 @@ import {
   MODEL_PROFILE_KEYS,
   envBindingSchema,
   isEnvironmentDriverSupportedForAdapter,
+  isSovereignAgentModel,
+  isCloudModelsAllowed,
+  isSovereignAgentModelValue,
   type BillingType,
   type EnvironmentLeaseStatus,
+
   type ExecutionWorkspace,
+
   type ExecutionWorkspaceConfig,
   type IssueExecutionMonitorClearReason,
   type IssueExecutionMonitorPolicy,
@@ -56,10 +79,11 @@ import { conflict, HttpError, notFound } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { publishLiveEvent } from "./live-events.js";
 import { getRunLogStore, type RunLogHandle } from "./run-log-store.js";
-import { getServerAdapter, listAdapterModelProfiles, runningProcesses } from "../adapters/index.js";
+import { getServerAdapter, listAdapterModelProfiles, listAdapterModels, runningProcesses } from "../adapters/index.js";
 import type {
   AdapterExecutionResult,
   AdapterInvocationMeta,
+
   AdapterModelProfileDefinition,
   AdapterSessionCodec,
   UsageSummary,
@@ -119,7 +143,7 @@ import {
   getIssueContinuationSummaryDocument,
   refreshIssueContinuationSummary,
 } from "./issue-continuation-summary.js";
-import { executionWorkspaceService, mergeExecutionWorkspaceConfig } from "./execution-workspaces.js";
+import { executionWorkspaceService, mergeExecutionWorkspaceBaseRefSnapshot, mergeExecutionWorkspaceConfig } from "./execution-workspaces.js";
 import { workspaceOperationService } from "./workspace-operations.js";
 import { isProcessGroupAlive, terminateLocalService } from "./local-service-supervisor.js";
 import {
@@ -230,11 +254,53 @@ const EXECUTION_PATH_HEARTBEAT_RUN_STATUSES = ["queued", "running", "scheduled_r
 const CANCELLABLE_HEARTBEAT_RUN_STATUSES = ["queued", "running", "scheduled_retry"] as const;
 const HEARTBEAT_RUN_TERMINAL_STATUSES = ["succeeded", "failed", "cancelled", "timed_out"] as const;
 const UNSUCCESSFUL_HEARTBEAT_RUN_TERMINAL_STATUSES = ["failed", "cancelled", "timed_out"] as const;
+export const ISSUE_AUTOMATION_WAKE_COOLDOWN_MS = 60 * 60 * 1000;
+const ISSUE_AUTOMATION_WAKE_COOLDOWN_EXEMPT_REASONS = new Set([
+  "issue_assigned",
+  "issue_assignment_recovery",
+  "issue_blockers_resolved",
+  "issue_comment_mentioned",
+  "issue_continuation_needed",
+  "execution_review_requested",
+  "execution_approval_requested",
+  "execution_changes_requested",
+  "transient_failure_retry",
+  "max_turns_continuation_retry",
+  "run_liveness_continuation",
+  "process_lost_retry",
+  FINISH_SUCCESSFUL_RUN_HANDOFF_REASON,
+]);
+
+export function shouldEnforceIssueAutomationWakeCooldown(input: {
+  source: string;
+  contextSnapshot: Record<string, unknown> | null | undefined;
+  wakeCommentId: string | null;
+  requestedByActorType?: string | null;
+}) {
+  if (input.source !== "automation" && input.source !== "timer") return false;
+  if (input.requestedByActorType === "user" || input.wakeCommentId) return false;
+
+  const wakeReason = readNonEmptyString(input.contextSnapshot?.wakeReason);
+  if (!wakeReason) return true;
+  if (wakeReason.startsWith("recovery_") || wakeReason.startsWith("source_scoped_recovery")) return false;
+  return !ISSUE_AUTOMATION_WAKE_COOLDOWN_EXEMPT_REASONS.has(wakeReason);
+}
+
+function isWithinIssueAutomationWakeCooldown(
+  terminalAt: Date | string | null | undefined,
+  now = new Date(),
+) {
+  if (!terminalAt) return false;
+  const terminalTime = terminalAt instanceof Date ? terminalAt.getTime() : new Date(terminalAt).getTime();
+  return Number.isFinite(terminalTime) && now.getTime() - terminalTime < ISSUE_AUTOMATION_WAKE_COOLDOWN_MS;
+}
+
 export {
   ACTIVE_RUN_OUTPUT_CONTINUE_REARM_MS,
   ACTIVE_RUN_OUTPUT_CRITICAL_THRESHOLD_MS,
   ACTIVE_RUN_OUTPUT_SUSPICION_THRESHOLD_MS,
 } from "./recovery/service.js";
+
 export const ACTIVE_RUN_OUTPUT_PROGRESS_FLUSH_INTERVAL_MS = 60 * 1000;
 export const BOUNDED_TRANSIENT_HEARTBEAT_RETRY_DELAYS_MS = [
   2 * 60 * 1000,
@@ -675,27 +741,22 @@ export function mergeExecutionWorkspaceMetadataForPersistence(input: {
   existingMetadata: Record<string, unknown> | null | undefined;
   source: string;
   createdByRuntime: boolean;
+  branchCreated?: boolean;
   configSnapshot: Record<string, unknown> | null;
   shouldReuseExisting: boolean;
   baseRef: string | null | undefined;
   baseRefSha: string | null | undefined;
 }) {
   const base = {
-    ...(input.existingMetadata ?? {}),
+    ...mergeExecutionWorkspaceBaseRefSnapshot({
+      existingMetadata: input.existingMetadata,
+      created: input.branchCreated ?? input.createdByRuntime,
+      baseRef: input.baseRef,
+      baseRefSha: input.baseRefSha,
+    }),
     source: input.source,
     createdByRuntime: input.createdByRuntime,
   } as Record<string, unknown>;
-
-  const existingSnapshot = parseObject(base.baseRefSnapshot);
-  if (
-    typeof existingSnapshot.resolvedSha !== "string"
-    && input.baseRefSha
-  ) {
-    base.baseRefSnapshot = {
-      baseRef: input.baseRef ?? null,
-      resolvedSha: input.baseRefSha,
-    };
-  }
 
   if (input.shouldReuseExisting || !input.configSnapshot) {
     return base;
@@ -708,6 +769,27 @@ export function stripWorkspaceRuntimeFromExecutionRunConfig(config: Record<strin
   const nextConfig = { ...config };
   delete nextConfig.workspaceRuntime;
   return nextConfig;
+}
+
+export function shouldReuseRequestedExecutionWorkspace(input: {
+  existingWorkspace: Pick<ExecutionWorkspace, "id" | "status" | "strategyType"> | null;
+  issueExecutionWorkspaceId?: string | null;
+  issueExecutionWorkspacePreference?: string | null;
+  contextExecutionWorkspaceId?: string | null;
+}) {
+  if (!input.existingWorkspace || input.existingWorkspace.status === "archived") {
+    return false;
+  }
+  if (input.issueExecutionWorkspacePreference === "reuse_existing") {
+    return true;
+  }
+  if (readNonEmptyString(input.contextExecutionWorkspaceId)) {
+    return true;
+  }
+  return (
+    input.existingWorkspace.strategyType === "git_worktree" &&
+    readNonEmptyString(input.issueExecutionWorkspaceId) === input.existingWorkspace.id
+  );
 }
 
 export function buildRealizedExecutionWorkspaceFromPersisted(input: {
@@ -1236,6 +1318,7 @@ const heartbeatRunSqlAsciiSafeColumns = {
 const heartbeatRunLogAccessColumns = {
   id: heartbeatRuns.id,
   companyId: heartbeatRuns.companyId,
+  contextSnapshot: heartbeatRuns.contextSnapshot,
   logStore: heartbeatRuns.logStore,
   logRef: heartbeatRuns.logRef,
 } as const;
@@ -1442,6 +1525,46 @@ function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
+const SOVEREIGN_MODEL_REQUIRED_ADAPTER_TYPES = new Set([
+  "acpx_local",
+  "claude_local",
+  "codex_local",
+  "cursor",
+  "cursor_cloud",
+  "gemini_local",
+  "grok_local",
+  "opencode_local",
+  "pi_local",
+]);
+
+async function assertSovereignRuntimeModel(
+  adapterType: string,
+  config: Record<string, unknown>,
+): Promise<void> {
+  if (!SOVEREIGN_MODEL_REQUIRED_ADAPTER_TYPES.has(adapterType)) return;
+
+  // The presence check runs even when PAPERCLIP_ALLOW_CLOUD_MODELS is on:
+  // an adapter that requires an explicit model must never boot with a blank
+  // one. See docs/agents/cloud-models.md.
+  const model = readNonEmptyString(config.model);
+  if (!model) {
+    throw new Error(
+      `Agent adapter ${adapterType} requires an explicit model before execution.`,
+    );
+  }
+
+  // Only the sovereign-only content check is lifted by the opt-in flag.
+  if (isCloudModelsAllowed()) return;
+  if (isSovereignAgentModelValue(model)) return;
+
+  const knownModel = (await listAdapterModels(adapterType)).find((entry) => entry.id === model);
+  if (knownModel && isSovereignAgentModel(knownModel)) return;
+
+  throw new Error(
+    `Agent adapter ${adapterType} cannot execute non-sovereign model "${model}".`,
+  );
+}
+
 function readModelProfileKey(value: unknown): ModelProfileKey | null {
   return MODEL_PROFILE_KEYS.includes(value as ModelProfileKey)
     ? (value as ModelProfileKey)
@@ -1533,16 +1656,29 @@ export function resolveModelProfileApplication(input: {
     };
   }
 
+  const adapterConfig = {
+    ...parseObject(adapterProfile.adapterConfig),
+    ...runtimeProfile.adapterConfig,
+  };
+  const model = readNonEmptyString(adapterConfig.model);
+  if (model && !isSovereignAgentModelValue(model) && !isCloudModelsAllowed()) {
+    return {
+      requested,
+      requestedBy,
+      applied: null,
+      configSource: null,
+      fallbackReason: "non_sovereign_model_profile",
+      adapterConfig: null,
+    };
+  }
+
   return {
     requested,
     requestedBy,
     applied: requested,
     configSource: runtimeProfile.configured ? "agent_runtime" : "adapter_default",
     fallbackReason: null,
-    adapterConfig: {
-      ...parseObject(adapterProfile.adapterConfig),
-      ...runtimeProfile.adapterConfig,
-    },
+    adapterConfig,
   };
 }
 
@@ -1551,16 +1687,31 @@ export function mergeModelProfileAdapterConfig(input: {
   modelProfile: ModelProfileApplication;
   issueAdapterConfig: Record<string, unknown> | null | undefined;
 }): Record<string, unknown> {
+  const issueAdapterConfig = { ...(input.issueAdapterConfig ?? {}) };
+  if ("model" in issueAdapterConfig) {
+    const overrideModel = issueAdapterConfig.model;
+    // Always drop empty / non-string overrides - they must never blank out the
+    // agent's saved model at merge time. Sovereign guard runs on non-empty
+    // strings only, and is skipped when PAPERCLIP_ALLOW_CLOUD_MODELS=1.
+    const isNonEmptyString = typeof overrideModel === "string" && overrideModel.trim().length > 0;
+    if (!isNonEmptyString) {
+      delete issueAdapterConfig.model;
+    } else if (!isSovereignAgentModelValue(overrideModel) && !isCloudModelsAllowed()) {
+      delete issueAdapterConfig.model;
+    }
+  }
+
   return {
     ...input.baseConfig,
     ...(input.modelProfile.adapterConfig ?? {}),
-    ...(input.issueAdapterConfig ?? {}),
+    ...issueAdapterConfig,
   };
 }
 
 function modelProfileRunMetadata(
   modelProfile: ModelProfileApplication,
 ): Record<string, unknown> | null {
+
   if (!modelProfile.requested) return null;
   return {
     requested: modelProfile.requested,
@@ -6636,6 +6787,11 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       intervalSec: Math.max(0, asNumber(heartbeat.intervalSec, 0)),
       wakeOnDemand: asBoolean(heartbeat.wakeOnDemand ?? heartbeat.wakeOnAssignment ?? heartbeat.wakeOnOnDemand ?? heartbeat.wakeOnAutomation, true),
       maxConcurrentRuns: normalizeMaxConcurrentRuns(heartbeat.maxConcurrentRuns),
+      // Explicit policy (#2985): the timer wakes this agent only when it holds a
+      // todo/in_progress issue. Off by default so agents whose periodic work is
+      // issue-independent (a CEO reviewing metrics, a monitor) keep the timer
+      // semantics documented in doc/PRODUCT.md and doc/SPEC-implementation.md.
+      requireActionableWork: asBoolean(heartbeat.requireActionableWork, false),
     };
   }
 
@@ -7724,8 +7880,16 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     const context = parseObject(run.contextSnapshot);
     const taskKey = deriveTaskKeyWithHeartbeatFallback(context, null);
     const sessionCodec = getAdapterSessionCodec(agent.adapterType);
-    const issueId = readNonEmptyString(context.issueId);
-    let issueContext = issueId ? await getIssueExecutionContext(agent.companyId, issueId) : null;
+    const explicitIssueId = readNonEmptyString(context.issueId);
+    const taskIssueId = readNonEmptyString(context.taskId);
+    let issueContext = explicitIssueId ? await getIssueExecutionContext(agent.companyId, explicitIssueId) : null;
+    if (!issueContext && taskIssueId && taskIssueId !== explicitIssueId) {
+      issueContext = await getIssueExecutionContext(agent.companyId, taskIssueId);
+      if (issueContext && !explicitIssueId) {
+        context.issueId = issueContext.id;
+      }
+    }
+    const issueId = issueContext?.id ?? explicitIssueId;
     const issueDependencyReadiness = issueId
       ? await issuesSvc.listDependencyReadiness(agent.companyId, [issueId]).then((rows) => rows.get(issueId) ?? null)
       : null;
@@ -7735,6 +7899,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       shouldAutoCheckoutIssueForWake({
         contextSnapshot: context,
         issueStatus: issueContext.status,
+
         issueAssigneeAgentId: issueContext.assigneeAgentId,
         isDependencyReady: issueDependencyReadiness?.isDependencyReady ?? true,
         agentId: agent.id,
@@ -8005,16 +8170,24 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     } else {
       delete context.paperclipTaskMarkdown;
     }
+    const contextExecutionWorkspaceId = readNonEmptyString(context.executionWorkspaceId);
+    const requestedExecutionWorkspaceId = issueRef?.executionWorkspaceId ?? contextExecutionWorkspaceId;
+    const loadedExecutionWorkspace = requestedExecutionWorkspaceId
+      ? await executionWorkspacesSvc.getById(requestedExecutionWorkspaceId)
+      : null;
     const existingExecutionWorkspace =
-      issueRef?.executionWorkspaceId ? await executionWorkspacesSvc.getById(issueRef.executionWorkspaceId) : null;
-    const requestedShouldReuseExisting =
-      issueRef?.executionWorkspacePreference === "reuse_existing" &&
-      existingExecutionWorkspace !== null &&
-      existingExecutionWorkspace.status !== "archived";
+      loadedExecutionWorkspace?.companyId === agent.companyId ? loadedExecutionWorkspace : null;
+    const requestedShouldReuseExisting = shouldReuseRequestedExecutionWorkspace({
+      existingWorkspace: existingExecutionWorkspace,
+      issueExecutionWorkspaceId: issueRef?.executionWorkspaceId ?? null,
+      issueExecutionWorkspacePreference: issueRef?.executionWorkspacePreference ?? null,
+      contextExecutionWorkspaceId,
+    });
     const requestedReusableExecutionWorkspaceConfig = requestedShouldReuseExisting
       ? existingExecutionWorkspace?.config ?? null
       : null;
     const defaultEnvironment = await environmentsSvc.ensureLocalEnvironment(agent.companyId);
+
     const environmentResolution = resolveExecutionWorkspaceEnvironmentId({
       projectPolicy: projectExecutionWorkspacePolicy,
       issueSettings: issueExecutionWorkspaceSettings,
@@ -8175,11 +8348,13 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       ...effectiveResolvedConfig,
       paperclipRuntimeSkills: runtimeSkillEntries,
     };
+    await assertSovereignRuntimeModel(agent.adapterType, runtimeConfig);
     const hostExecutionWorkspaceConfig = stripHostWorkspaceProvisionForLowTrustSandbox({
       config: runtimeConfig,
       trustPreset,
       selectedEnvironmentDriver: lowTrustPreflightEnvironmentDriver,
     });
+
     const workspaceOperationRecorder = workspaceOperationsSvc.createRecorder({
       companyId: agent.companyId,
       heartbeatRunId: run.id,
@@ -8244,6 +8419,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       existingMetadata: existingExecutionWorkspace?.metadata ?? null,
       source: executionWorkspace.source,
       createdByRuntime: executionWorkspace.created,
+      branchCreated: executionWorkspace.branchCreated,
       configSnapshot,
       shouldReuseExisting,
       baseRef: executionWorkspace.repoRef,
@@ -8455,7 +8631,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     });
     const runtimeSessionParams = runtimeSessionResolution.sessionParams;
     const runtimeWorkspaceWarnings = [
-      ...resolvedWorkspace.warnings,
+      ...(reusedExecutionWorkspace ? [] : resolvedWorkspace.warnings),
       ...executionWorkspace.warnings,
       ...(runtimeSessionResolution.warning ? [runtimeSessionResolution.warning] : []),
       ...(resetTaskSession && sessionResetReason
@@ -8466,6 +8642,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           ]
         : []),
     ];
+
     context.paperclipWorkspace = {
       cwd: executionWorkspace.cwd,
       source: executionWorkspace.source,
@@ -9606,18 +9783,57 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           payload: promotedPayload,
         });
 
+        if (shouldEnforceIssueAutomationWakeCooldown({
+          source: promotedSource,
+          contextSnapshot: promotedContextSnapshot,
+          wakeCommentId: deferredCommentIds.at(-1) ?? null,
+          requestedByActorType: deferred.requestedByActorType,
+        })) {
+          const latestPriorTerminalRun = await tx
+            .select({
+              finishedAt: heartbeatRuns.finishedAt,
+              updatedAt: heartbeatRuns.updatedAt,
+            })
+            .from(heartbeatRuns)
+            .where(and(
+              eq(heartbeatRuns.companyId, issue.companyId),
+              inArray(heartbeatRuns.status, [...HEARTBEAT_RUN_TERMINAL_STATUSES]),
+              sql`${heartbeatRuns.id} <> ${run.id}`,
+              sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issue.id}`,
+            ))
+            .orderBy(desc(sql`coalesce(${heartbeatRuns.finishedAt}, ${heartbeatRuns.updatedAt}, ${heartbeatRuns.createdAt})`))
+            .limit(1)
+            .then((rows) => rows[0] ?? null);
+          const priorTerminalAt = latestPriorTerminalRun?.finishedAt ?? latestPriorTerminalRun?.updatedAt;
+          if (isWithinIssueAutomationWakeCooldown(priorTerminalAt)) {
+            await tx
+              .update(agentWakeupRequests)
+              .set({
+                status: "skipped",
+                reason: "issue_automation_cooldown",
+                finishedAt: new Date(),
+                error: "Deferred automation wake suppressed by the post-terminal issue cooldown",
+                updatedAt: new Date(),
+              })
+              .where(eq(agentWakeupRequests.id, deferred.id));
+            continue;
+          }
+        }
+
         const sessionBefore =
           readNonEmptyString(promotedContextSnapshot.resumeSessionDisplayId) ??
           await resolveSessionBeforeForWakeup(deferredAgent, promotedTaskKey);
         const promotedContinuationAttempt = readContinuationAttempt(
           promotedContextSnapshot.livenessContinuationAttempt,
         );
+
         const now = new Date();
         const newRun = await tx
           .insert(heartbeatRuns)
           .values({
             companyId: deferredAgent.companyId,
             agentId: deferredAgent.id,
+
             invocationSource: promotedSource,
             triggerDetail: promotedTriggerDetail,
             status: "queued",
@@ -10235,6 +10451,45 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
                 })
                 .where(eq(issues.id, issue.id));
             }
+          }
+        }
+
+        if (!activeExecutionRun && shouldEnforceIssueAutomationWakeCooldown({
+          source,
+          contextSnapshot: enrichedContextSnapshot,
+          wakeCommentId,
+          requestedByActorType: opts.requestedByActorType,
+        })) {
+          const latestTerminalRun = await tx
+            .select({
+              finishedAt: heartbeatRuns.finishedAt,
+              updatedAt: heartbeatRuns.updatedAt,
+            })
+            .from(heartbeatRuns)
+            .where(and(
+              eq(heartbeatRuns.companyId, issue.companyId),
+              inArray(heartbeatRuns.status, [...HEARTBEAT_RUN_TERMINAL_STATUSES]),
+              sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issue.id}`,
+            ))
+            .orderBy(desc(sql`coalesce(${heartbeatRuns.finishedAt}, ${heartbeatRuns.updatedAt}, ${heartbeatRuns.createdAt})`))
+            .limit(1)
+            .then((rows) => rows[0] ?? null);
+          const terminalAt = latestTerminalRun?.finishedAt ?? latestTerminalRun?.updatedAt;
+          if (isWithinIssueAutomationWakeCooldown(terminalAt)) {
+            await tx.insert(agentWakeupRequests).values({
+              companyId: agent.companyId,
+              agentId,
+              source,
+              triggerDetail,
+              reason: "issue_automation_cooldown",
+              payload,
+              status: "skipped",
+              requestedByActorType: opts.requestedByActorType ?? null,
+              requestedByActorId: opts.requestedByActorId ?? null,
+              idempotencyKey: opts.idempotencyKey ?? null,
+              finishedAt: new Date(),
+            });
+            return { kind: "skipped" as const };
           }
         }
 
@@ -11136,6 +11391,26 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       let enqueued = 0;
       let skipped = 0;
 
+      // The skip is recorded where enqueueWakeup records its own refusals
+      // (agent_wakeup_requests, status "skipped"): no heartbeat run is created,
+      // so no adapter can be invoked on this path.
+      const writeTimerSkip = async (agent: { id: string; companyId: string }, reason: string, error?: string) => {
+        await db.insert(agentWakeupRequests).values({
+          companyId: agent.companyId,
+          agentId: agent.id,
+          source: "timer",
+          triggerDetail: "system",
+          reason,
+          status: "skipped",
+          requestedByActorType: "system",
+          requestedByActorId: "heartbeat_scheduler",
+          requestedAt: now,
+          finishedAt: now,
+          error: error ?? null,
+        });
+      };
+
+      const gatedAgentIds = new Set<string>();
       for (const agent of allAgents) {
         const invokability = evaluateAgentInvokability(toAgentOrgRow(agent), agentsByCompany.get(agent.companyId) ?? []);
         if (!invokability.invokable) continue;
@@ -11143,9 +11418,51 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         if (!policy.enabled || policy.intervalSec <= 0) continue;
 
         checked += 1;
-        const baseline = new Date(agent.lastHeartbeatAt ?? agent.createdAt).getTime();
+        const lastRunAt = new Date(agent.lastHeartbeatAt ?? agent.createdAt).getTime();
+        const gateState = policy.requireActionableWork ? timerGateStates.get(agent.id) : undefined;
+        if (policy.requireActionableWork) gatedAgentIds.add(agent.id);
+        // A skipped agent is re-evaluated only once its interval has elapsed
+        // again: one bounded lookup per interval, no query per tick.
+        const baseline = Math.max(lastRunAt, gateState?.checkedAt ?? 0);
         const elapsedMs = now.getTime() - baseline;
         if (elapsedMs < policy.intervalSec * 1000) continue;
+
+        // The card the gate found is handed to the run: adapters export it as
+        // PAPERCLIP_TASK_ID, and a launcher that refuses task-less runs would
+        // otherwise skip the very work that justified waking the agent.
+        let timerIssueId: string | null = null;
+        if (policy.requireActionableWork) {
+          // Timer gate (#2985): no session is spawned to discover that there is
+          // nothing to do. The lookup is the inbox's own query (issuesSvc.list),
+          // bounded to one row; a failed lookup is fail-closed for this agent and
+          // kept distinct from "no work" in the audit trail.
+          let skipReason: string | null = null;
+          let skipError: string | undefined;
+          try {
+            const actionable = await issuesSvc.list(agent.companyId, {
+              assigneeAgentId: agent.id,
+              status: TIMER_ACTIONABLE_ISSUE_STATUS_FILTER,
+              limit: 1,
+            });
+            if (actionable.length === 0) skipReason = TIMER_SKIP_NO_ACTIONABLE_WORK;
+            else timerIssueId = actionable[0]?.id ?? null;
+          } catch (err) {
+            logger.error({ err, agentId: agent.id, companyId: agent.companyId }, TIMER_SKIP_LOOKUP_FAILED);
+            skipReason = TIMER_SKIP_LOOKUP_FAILED;
+            skipError = err instanceof Error ? err.message : String(err);
+          }
+          if (skipReason) {
+            // One audit row per idle period (entering the skipped state, or a new
+            // reason), not one per interval: the table does not grow with uptime.
+            if (gateState?.reason !== skipReason) {
+              await writeTimerSkip(agent, skipReason, skipError);
+            }
+            timerGateStates.set(agent.id, { checkedAt: now.getTime(), reason: skipReason });
+            skipped += 1;
+            continue;
+          }
+          timerGateStates.delete(agent.id);
+        }
 
         const run = await enqueueWakeup(agent.id, {
           source: "timer",
@@ -11157,10 +11474,15 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
             source: "scheduler",
             reason: "interval_elapsed",
             now: now.toISOString(),
+            ...(timerIssueId ? { issueId: timerIssueId, taskId: timerIssueId } : {}),
           },
         });
         if (run) enqueued += 1;
         else skipped += 1;
+      }
+
+      for (const agentId of timerGateStates.keys()) {
+        if (!gatedAgentIds.has(agentId)) timerGateStates.delete(agentId);
       }
 
       const issueMonitors = await tickDueIssueMonitors(now);
