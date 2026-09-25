@@ -731,19 +731,20 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   };
 
   try {
-    const initial = await runAttempt(sessionId);
+    let finished = await runAttempt(sessionId);
+    let clearSessionOnRetry = false;
     if (
       sessionId &&
-      !initial.proc.timedOut &&
-      (initial.proc.exitCode ?? 0) !== 0 &&
-      isCursorUnknownSessionError(initial.proc.stdout, initial.proc.stderr)
+      !finished.proc.timedOut &&
+      (finished.proc.exitCode ?? 0) !== 0 &&
+      isCursorUnknownSessionError(finished.proc.stdout, finished.proc.stderr)
     ) {
       await onLog(
         "stdout",
         `[paperclip] Cursor resume session "${sessionId}" is unavailable; retrying with a fresh session.\n`,
       );
-      const retry = await runAttempt(null);
-      return toResult(retry, true);
+      finished = await runAttempt(null);
+      clearSessionOnRetry = true;
     }
     try {
       const deliveryEnv = Object.fromEntries(
@@ -758,7 +759,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         config,
         context,
         executionTargetIsRemote,
-        exitCode: initial.proc.exitCode,
+        exitCode: finished.proc.exitCode,
         adapterType: "cursor",
         agentId: agent.id,
         model: model || null,
@@ -777,7 +778,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     } catch (err) {
       await onLog("stderr", `[paperclip] delivery hook error (non-fatal): ${(err as Error).message}\n`);
     }
-    return toResult(initial);
+    return toResult(finished, clearSessionOnRetry);
   } finally {
     if (paperclipBridge) {
 

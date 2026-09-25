@@ -54,6 +54,18 @@ number in the configured repository. Exit zero without this evidence, a bare
 URL, another repository's URL or duplicate result lines cannot claim delivery.
 Local success does not establish hosted CI, review, merge or deployment success.
 
+## Harness delivery guard
+
+When `PAPERCLIP_AUTONOMOUS_DELIVERY=1`, a run for an agent with `deliveryRepo` set, on an issue that expects code (not planning, review, or approval), is delivery-expected. The heartbeat records that run as `succeeded` only if the hook returns proof:
+
+- `created`, `updated`, or `pr_exists` with a `pr_url`
+- `issue_already_merged` with a `pr_url` (the change is already on the base branch)
+- `no_diff` only after `origin/<base>..HEAD` is empty and any upstream has nothing left unpushed. A local base ref is not that check.
+
+A missing hook invocation is `delivery_missing`. Commits ahead of the remote base or left unpushed are `unpublished_commits`. An unreadable remote base, or a missing upstream while HEAD differs from that remote base, is `publication_unverified`. Every other hook outcome, including `delivery_hook_disabled`, `delivery_blocked:*`, and `push_failed`, fails the run with `error_code=not_delivered`. The run log contains one line: `[paperclip] delivery: not_delivered reason=<hook outcome>`. Narrative text such as "implementation complete" is not proof. If that run produced the issue's current `done` or `in_review` status, the harness restores the previous status without resetting `startedAt`. A newer status written by another actor is left in place.
+
+Set `PAPERCLIP_DELIVERY_GUARD=0` to disable the guard without a code deploy. The guard is on by default while autonomous delivery is on. Agents with no `deliveryRepo` are unchanged.
+
 ## First supervised run and fleet release
 
 After the code is merged with required checks and deployed, use one assigned,

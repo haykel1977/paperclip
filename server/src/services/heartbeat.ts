@@ -214,6 +214,14 @@ import {
   type SessionCompactionPolicy,
 } from "@paperclipai/adapter-utils";
 import {
+  applyDeliveryGuardToAdapterResult,
+  formatNotDeliveredLogLine,
+  resolveDeliveryGuard,
+  snapshotDeliveryGuardEnv,
+  takeNotedDeliveryInvocation,
+} from "@paperclipai/adapter-utils/delivery-guard";
+import { revertUndeliveredIssueDisposition } from "./delivery-disposition.js";
+import {
   readPaperclipSkillSyncPreference,
   writePaperclipSkillSyncPreference,
 } from "@paperclipai/adapter-utils/server-utils";
@@ -8785,6 +8793,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       lastOutputFlushAt = pendingOutputProgress.at;
       outputProgressState.pending = null;
     };
+    let undeliveredReason: string | null = null;
     try {
       const startedAt = run.startedAt ?? new Date();
       const runningWithSession = await db
@@ -9047,6 +9056,22 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           },
           authToken: authToken ?? undefined,
         });
+        const notedDelivery = takeNotedDeliveryInvocation(run.id);
+        const adapterWouldSucceed = !adapterResult.timedOut
+          && (adapterResult.exitCode ?? 0) === 0
+          && !adapterResult.errorMessage;
+        const deliveryResolution = resolveDeliveryGuard({
+          env: notedDelivery?.env ?? snapshotDeliveryGuardEnv(process.env),
+          config: notedDelivery?.config ?? runtimeConfig,
+          context: notedDelivery?.context ?? context,
+          invocation: notedDelivery?.invocation ?? null,
+          adapterWouldSucceed,
+        });
+        if (deliveryResolution.status === "failed" && deliveryResolution.reason) {
+          undeliveredReason = deliveryResolution.reason;
+          await onLog("stdout", formatNotDeliveredLogLine(deliveryResolution.reason));
+          adapterResult = applyDeliveryGuardToAdapterResult(adapterResult, deliveryResolution);
+        }
         // Adapter returned cleanly, which means its workspace-restore finally
         // block also ran without throwing. Record the workspace_finalize
         // barrier so dependents that share this executionWorkspace can wake.
@@ -9055,6 +9080,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         // finalize row.
         await recordWorkspaceFinalize("succeeded");
       } catch (adapterErr) {
+        takeNotedDeliveryInvocation(run.id);
         // Adapter (or its restore finally) threw — or the finalize record
         // write itself threw. Either way the workspace may be in a partial
         // state. Best-effort record finalize=failed so the dependent readiness
@@ -9254,6 +9280,22 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
 
       const finalizedRun = persistedRun ?? (await getRun(run.id));
       if (finalizedRun) {
+        if (undeliveredReason && issueId && outcome === "failed") {
+          try {
+            await revertUndeliveredIssueDisposition(db, {
+              companyId: run.companyId,
+              issueId,
+              runId: run.id,
+              agentId: agent.id,
+              reason: undeliveredReason,
+            });
+          } catch (revertErr) {
+            logger.warn(
+              { err: revertErr, runId: run.id, issueId },
+              "failed to revert issue disposition after not_delivered",
+            );
+          }
+        }
         await appendRunEvent(finalizedRun, seq++, {
           eventType: "lifecycle",
           stream: "system",
@@ -9395,6 +9437,22 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       }
       await finalizeAgentStatus(agent.id, outcome);
     } catch (err) {
+      if (undeliveredReason && issueId) {
+        try {
+          await revertUndeliveredIssueDisposition(db, {
+            companyId: run.companyId,
+            issueId,
+            runId: run.id,
+            agentId: agent.id,
+            reason: undeliveredReason,
+          });
+        } catch (revertErr) {
+          logger.warn(
+            { err: revertErr, runId: run.id, issueId },
+            "failed to revert issue disposition after not_delivered",
+          );
+        }
+      }
       const message = redactCurrentUserText(
         err instanceof Error ? err.message : "Unknown adapter failure",
         await getCurrentUserRedactionOptions(),

@@ -994,20 +994,21 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   };
 
   try {
-    const initial = await runAttempt(sessionId ?? null);
+    let finished = await runAttempt(sessionId ?? null);
+    let clearSessionOnRetry = false;
     if (
       sessionId &&
-      !initial.proc.timedOut &&
-      (initial.proc.exitCode ?? 0) !== 0 &&
-      initial.parsed &&
-      isClaudeUnknownSessionError(initial.parsed)
+      !finished.proc.timedOut &&
+      (finished.proc.exitCode ?? 0) !== 0 &&
+      finished.parsed &&
+      isClaudeUnknownSessionError(finished.parsed)
     ) {
       await onLog(
         "stdout",
         `[paperclip] Claude resume session "${sessionId}" is unavailable; retrying with a fresh session.\n`,
       );
-      const retry = await runAttempt(null);
-      return toAdapterResult(retry, { fallbackSessionId: null, clearSessionOnMissingSession: true });
+      finished = await runAttempt(null);
+      clearSessionOnRetry = true;
     }
 
     try {
@@ -1025,7 +1026,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         config,
         context,
         executionTargetIsRemote,
-        exitCode: initial.proc.exitCode,
+        exitCode: finished.proc.exitCode,
         adapterType: "claude_local",
         agentId: agent.id,
         model: model || null,
@@ -1045,7 +1046,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       await onLog("stderr", `[paperclip] delivery hook error (non-fatal): ${(err as Error).message}\n`);
     }
 
-    return toAdapterResult(initial, { fallbackSessionId: runtimeSessionId || runtime.sessionId });
+    return toAdapterResult(
+      finished,
+      clearSessionOnRetry
+        ? { fallbackSessionId: null, clearSessionOnMissingSession: true }
+        : { fallbackSessionId: runtimeSessionId || runtime.sessionId },
+    );
   } finally {
     if (paperclipBridge) {
 

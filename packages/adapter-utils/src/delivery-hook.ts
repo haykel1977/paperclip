@@ -1,6 +1,12 @@
 import fs from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import path from "node:path";
+import {
+  classifyNoDiffPublication,
+  hasNotedDeliveryInvocation,
+  noteConfiguredDeliveryInvocation,
+  type CommitPublication,
+} from "./delivery-guard.js";
 import { DeliveryTokenError, readDeliveryTokenFile } from "./delivery-token.js";
 
 export type DeliveryHookRunProcess = (
@@ -16,6 +22,7 @@ export type DeliveryHookResult = {
   delivered: boolean;
   prUrl: string | null;
   reason: string;
+  publicationChecked?: boolean;
 };
 
 export type ExecuteDeliveryHookInput = {
@@ -1240,6 +1247,73 @@ export function buildQuantumPrBody(input: {
  * - autonomous lane requires signed commits before push
  * - fix: `executeConfiguredDeliveryHook` no longer creates a second redactor
  */
+function parseRevListCount(stdout: string): number | null {
+  const trimmed = stdout.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  return Number(trimmed);
+}
+
+async function readCommitPublication(input: {
+  baseBranch: string;
+  worktreeCwd: string;
+  env: Record<string, string>;
+  runProc: DeliveryHookRunProcess;
+}): Promise<CommitPublication> {
+  const baseName = input.baseBranch.replace(/^origin\//, "");
+  const originRef = `origin/${baseName}`;
+  const ahead = await input.runProc("git", ["rev-list", "--count", `${originRef}..HEAD`], input.worktreeCwd, input.env);
+  const aheadOfRemoteBase = ahead.exitCode === 0 ? parseRevListCount(ahead.stdout) : null;
+  if (aheadOfRemoteBase == null) {
+    return { aheadOfRemoteBase: null, hasUpstream: false, unpushed: null };
+  }
+
+  const upstream = await input.runProc(
+    "git",
+    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+    input.worktreeCwd,
+    input.env,
+  );
+  const upstreamName = upstream.exitCode === 0 ? upstream.stdout.trim() : "";
+  const hasUpstream = upstreamName.length > 0 && upstreamName !== "@{upstream}" && upstreamName !== "HEAD";
+  if (!hasUpstream) {
+    return { aheadOfRemoteBase, hasUpstream: false, unpushed: null };
+  }
+  const unpushedResult = await input.runProc(
+    "git",
+    ["rev-list", "--count", "@{upstream}..HEAD"],
+    input.worktreeCwd,
+    input.env,
+  );
+  return {
+    aheadOfRemoteBase,
+    hasUpstream: true,
+    unpushed: unpushedResult.exitCode === 0 ? parseRevListCount(unpushedResult.stdout) : null,
+  };
+}
+
+async function concludeEmptyDelivery(input: {
+  baseBranch: string;
+  worktreeCwd: string;
+  env: Record<string, string>;
+  runProc: DeliveryHookRunProcess;
+  log: DeliveryHookLog;
+  ts: string;
+}): Promise<DeliveryHookResult> {
+  const verdict = classifyNoDiffPublication(await readCommitPublication(input));
+  const detail = verdict === "no_diff"
+    ? "nothing to deliver"
+    : verdict === "publication_unverified"
+      ? "remote base or upstream could not prove publication"
+      : "commits ahead of base or unpushed";
+  await input.log("stdout", `[delivery ${input.ts}] result=${verdict} reason="${detail}"\n`);
+  return {
+    delivered: false,
+    prUrl: null,
+    reason: verdict,
+    ...(verdict === "no_diff" ? { publicationChecked: true } : {}),
+  };
+}
+
 export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Promise<DeliveryHookResult> {
   try {
     return await executeDeliveryHookWithToken(input);
@@ -1320,8 +1394,14 @@ async function executeDeliveryHookWithToken(input: ExecuteDeliveryHookInput): Pr
     return { delivered: false, prUrl: null, reason: "git_status_failed" };
   }
   if (!status.stdout.trim() && !quantumDelivery) {
-    await log("stdout", `[delivery ${ts()}] result=no_diff reason="nothing to deliver"\n`);
-    return { delivered: false, prUrl: null, reason: "no_diff" };
+    return concludeEmptyDelivery({
+      baseBranch: input.baseBranch,
+      worktreeCwd,
+      env,
+      runProc,
+      log,
+      ts: ts(),
+    });
   }
   if (/^(UU|AA|DD) /m.test(status.stdout)) {
     await log("stderr", `[delivery ${ts()}] result=conflict reason="unresolved git index conflict — abort, no force"\n`);
@@ -1495,8 +1575,14 @@ async function executeDeliveryHookWithToken(input: ExecuteDeliveryHookInput): Pr
       ...parseDiffNameOnly(branchDiff.stdout),
     ]);
     if (!status.stdout.trim() && quantumChangedPaths.length === 0 && !existingPrUrl) {
-      await log("stdout", `[delivery ${ts()}] result=no_diff reason="nothing to deliver"\n`);
-      return { delivered: false, prUrl: null, reason: "no_diff" };
+      return concludeEmptyDelivery({
+        baseBranch: input.baseBranch,
+        worktreeCwd,
+        env,
+        runProc,
+        log,
+        ts: ts(),
+      });
     }
   }
 
@@ -1863,11 +1949,29 @@ async function executeDeliveryHookWithToken(input: ExecuteDeliveryHookInput): Pr
   return { delivered: true, prUrl: url, reason: "created" };
 }
 
+function noteDeliverySkip(input: ExecuteConfiguredDeliveryHookInput, reason: string) {
+  noteConfiguredDeliveryInvocation(input, { type: "skipped", reason });
+}
+
 export async function executeConfiguredDeliveryHook(
+  input: ExecuteConfiguredDeliveryHookInput,
+): Promise<DeliveryHookResult | null> {
+  try {
+    return await executeConfiguredDeliveryHookBody(input);
+  } catch (error) {
+    if (!hasNotedDeliveryInvocation(input.runId)) {
+      noteConfiguredDeliveryInvocation(input, { type: "error", reason: "delivery_hook_error" });
+    }
+    throw error;
+  }
+}
+
+async function executeConfiguredDeliveryHookBody(
   input: ExecuteConfiguredDeliveryHookInput,
 ): Promise<DeliveryHookResult | null> {
   if (input.config.deliveryHookEnabled === false) {
     await input.log("stdout", "[paperclip] delivery: skipped reason=delivery_hook_disabled\n");
+    noteDeliverySkip(input, "delivery_hook_disabled");
     return null;
   }
   const remoteDeliveryEnabled =
@@ -1876,10 +1980,12 @@ export async function executeConfiguredDeliveryHook(
     readBooleanEnv(input.env, "PAPERCLIP_DELIVERY_REMOTE_ENABLED");
   if (input.executionTargetIsRemote && !remoteDeliveryEnabled) {
     await input.log("stdout", "[paperclip] delivery: skipped reason=remote_delivery_not_enabled\n");
+    noteDeliverySkip(input, "remote_delivery_not_enabled");
     return null;
   }
   if ((input.exitCode ?? 1) !== 0) {
     await input.log("stdout", "[paperclip] delivery: skipped reason=adapter_exit_nonzero\n");
+    noteDeliverySkip(input, "adapter_exit_nonzero");
     return null;
   }
   const baseBranch = asString(input.config.deliveryBaseBranch, "main");
@@ -1920,10 +2026,12 @@ export async function executeConfiguredDeliveryHook(
           await input.log("stdout", `[paperclip] delivery: checked out existing PR branch=${branch}\n`);
         } else {
           await input.log("stderr", `[paperclip] delivery: skipped reason=branch_checkout_failed detail=${checkoutExisting.stderr.trim()}\n`);
+          noteDeliverySkip(input, "branch_checkout_failed");
           return null;
         }
       } else {
         await input.log("stderr", `[paperclip] delivery: skipped reason=branch_checkout_failed detail=${createBranch.stderr.trim()}\n`);
+        noteDeliverySkip(input, "branch_checkout_failed");
         return null;
       }
     } else {
@@ -1933,10 +2041,12 @@ export async function executeConfiguredDeliveryHook(
   }
   if (!branch) {
     await input.log("stdout", "[paperclip] delivery: skipped reason=missing_branch\n");
+    noteDeliverySkip(input, "missing_branch");
     return null;
   }
   if (branch === baseBranch) {
     await input.log("stdout", "[paperclip] delivery: skipped reason=base_branch\n");
+    noteDeliverySkip(input, "base_branch");
     return null;
   }
 
@@ -1979,9 +2089,14 @@ export async function executeConfiguredDeliveryHook(
     runProc: input.runProc,
     log: input.log,
   });
-  await input.log(
-    "stdout",
-    `[paperclip] delivery: ${delivery.reason}${delivery.prUrl ? " -> " + delivery.prUrl : ""}\n`,
-  );
+  noteConfiguredDeliveryInvocation(input, { type: "result", result: delivery });
+  try {
+    await input.log(
+      "stdout",
+      `[paperclip] delivery: ${delivery.reason}${delivery.prUrl ? " -> " + delivery.prUrl : ""}\n`,
+    );
+  } catch {
+    // The noted result is the harness contract. A log failure must not replace it.
+  }
   return delivery;
 }
