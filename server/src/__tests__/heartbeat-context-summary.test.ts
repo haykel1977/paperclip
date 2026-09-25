@@ -278,6 +278,11 @@ describe("shouldEnforceIssueAutomationWakeCooldown", () => {
       wakeCommentId: null,
       requestedByActorType: "user",
     })).toBe(false);
+    expect(shouldEnforceIssueAutomationWakeCooldown({
+      source: "timer",
+      contextSnapshot: { wakeReason: "heartbeat_timer" },
+      wakeCommentId: null,
+    })).toBe(false);
     for (const wakeReason of [
       "issue_assigned",
       "issue_assignment_recovery",

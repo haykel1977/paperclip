@@ -268,6 +268,7 @@ const ISSUE_AUTOMATION_WAKE_COOLDOWN_EXEMPT_REASONS = new Set([
   "max_turns_continuation_retry",
   "run_liveness_continuation",
   "process_lost_retry",
+  "heartbeat_timer",
   FINISH_SUCCESSFUL_RUN_HANDOFF_REASON,
 ]);
 
