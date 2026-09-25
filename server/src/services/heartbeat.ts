@@ -11395,8 +11395,9 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
 
     tickTimers: async (now = new Date()) => {
       // First candidate (in the inbox's order) that enqueueWakeup would accept
-      // for a timer wake: dependencies ready, no active subtree pause hold, no
-      // budget block, outside the issue automation cooldown. Read-only.
+      // for a timer wake: dependencies ready, no run already on its execution
+      // path, no active subtree pause hold, no budget block, outside the issue
+      // automation cooldown. Read-only.
       const selectTimerRunnableIssue = async (
         companyId: string,
         agentId: string,
@@ -11417,6 +11418,18 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           ))
           .groupBy(sql`${heartbeatRuns.contextSnapshot} ->> 'issueId'`);
         const lastTerminalAt = new Map(lastTerminalRows.map((row) => [row.issueId, row.terminalAt]));
+        // A card that already has a run on its execution path (queued, running,
+        // deferred...) would only coalesce or defer the wake; its siblings must
+        // get the chance instead of the same locked card every interval.
+        const lockedRows = await db
+          .select({ issueId: sql<string>`${heartbeatRuns.contextSnapshot} ->> 'issueId'` })
+          .from(heartbeatRuns)
+          .where(and(
+            eq(heartbeatRuns.companyId, companyId),
+            inArray(heartbeatRuns.status, [...EXECUTION_PATH_HEARTBEAT_RUN_STATUSES]),
+            inArray(sql<string>`${heartbeatRuns.contextSnapshot} ->> 'issueId'`, ids),
+          ));
+        const lockedIssueIds = new Set(lockedRows.map((row) => row.issueId));
         const timerCooldownApplies = shouldEnforceIssueAutomationWakeCooldown({
           source: "timer",
           contextSnapshot: { source: "scheduler", reason: "interval_elapsed" },
@@ -11425,6 +11438,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         });
         for (const candidate of candidates) {
           if (readiness.get(candidate.id)?.isDependencyReady === false) continue;
+          if (lockedIssueIds.has(candidate.id)) continue;
           if (timerCooldownApplies && isWithinIssueAutomationWakeCooldown(lastTerminalAt.get(candidate.id))) continue;
           if (await treeControlSvc.getActivePauseHoldGate(companyId, candidate.id)) continue;
           const budgetBlock = await budgets.getInvocationBlock(companyId, agentId, {

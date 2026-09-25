@@ -490,4 +490,33 @@ describeEmbeddedPostgres("heartbeat timer gate (#2985)", () => {
     const contexts = (await runContextsFor(agentId)).filter((context) => context.source === "scheduler");
     expect(contexts).toEqual([expect.objectContaining({ issueId: freshIssueId, taskId: freshIssueId })]);
   });
+  it("a card whose run is already on its execution path does not starve a sibling card (review #133)", async () => {
+    const companyId = await seedCompany();
+    const agentId = await seedAgent(companyId, "Locked Card Bot");
+    const otherAgentId = await seedAgent(companyId, "Lock Holder Bot", {});
+    const lockedIssueId = await seedIssue(companyId, agentId, "in_progress");
+    await db.update(issues).set({ priority: "critical" }).where(eq(issues.id, lockedIssueId));
+    const lockRunId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: lockRunId,
+      companyId,
+      agentId: otherAgentId,
+      invocationSource: "assignment",
+      triggerDetail: "system",
+      status: "scheduled_retry",
+      contextSnapshot: { issueId: lockedIssueId },
+    });
+    const siblingIssueId = await seedIssue(companyId, agentId, "todo");
+    await db.update(issues).set({ priority: "low" }).where(eq(issues.id, siblingIssueId));
+    // Only the gated agent is due in this tick.
+    await db.update(agents).set({ lastHeartbeatAt: TICK_AT }).where(eq(agents.id, otherAgentId));
+
+    const result = await heartbeatService(db).tickTimers(TICK_AT);
+
+    expect(result).toMatchObject({ enqueued: 1 });
+    const contexts = (await runContextsFor(agentId)).filter((context) => context.source === "scheduler");
+    expect(contexts).toEqual([expect.objectContaining({ issueId: siblingIssueId, taskId: siblingIssueId })]);
+    // The seeded lock is not a live run: remove it so the side-effect wait settles.
+    await db.delete(heartbeatRuns).where(eq(heartbeatRuns.id, lockRunId));
+  });
 });
