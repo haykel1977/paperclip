@@ -16,7 +16,9 @@ import {
   heartbeatRuns,
   issueComments,
   issueDocuments,
+  issueRelations,
   issues,
+  projects,
   workspaceRuntimeServices,
 } from "@paperclipai/db";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
@@ -112,7 +114,9 @@ describeEmbeddedPostgres("heartbeat timer gate (#2985)", () => {
     await db.delete(activityLog);
     await db.delete(environmentLeases);
     await db.delete(workspaceRuntimeServices);
+    await db.delete(issueRelations);
     await db.delete(issues);
+    await db.delete(projects);
     await db.delete(heartbeatRuns);
     await db.delete(agentWakeupRequests);
     await db.delete(agentRuntimeState);
@@ -187,8 +191,38 @@ describeEmbeddedPostgres("heartbeat timer gate (#2985)", () => {
     return issueId;
   }
 
+  async function seedUnassignedIssue(companyId: string, status: string, extra: { projectId?: string } = {}) {
+    issueCounter += 1;
+    const issueId = randomUUID();
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: `Unassigned ${status}`,
+      status,
+      priority: "medium",
+      issueNumber: issueCounter,
+      identifier: `TG-${issueCounter}`,
+      ...extra,
+    });
+    return issueId;
+  }
+
+  async function blockIssue(companyId: string, blockedIssueId: string) {
+    const blockerId = await seedUnassignedIssue(companyId, "todo");
+    await db.insert(issueRelations).values({ companyId, issueId: blockerId, relatedIssueId: blockedIssueId, type: "blocks" });
+    return blockerId;
+  }
+
   async function runsFor(agentId: string) {
     return db.select({ id: heartbeatRuns.id, status: heartbeatRuns.status }).from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId));
+  }
+
+  async function runContextsFor(agentId: string) {
+    const rows = await db
+      .select({ contextSnapshot: heartbeatRuns.contextSnapshot })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, agentId));
+    return rows.map((row) => (row.contextSnapshot ?? {}) as Record<string, unknown>);
   }
 
   async function wakeupRequestsFor(agentId: string) {
@@ -206,13 +240,16 @@ describeEmbeddedPostgres("heartbeat timer gate (#2985)", () => {
   it("timer wakes an agent holding a todo issue", async () => {
     const companyId = await seedCompany();
     const agentId = await seedAgent(companyId, "Todo Bot");
-    await seedIssue(companyId, agentId, "todo");
+    const issueId = await seedIssue(companyId, agentId, "todo");
 
     const result = await heartbeatService(db).tickTimers(TICK_AT);
 
     expect(result).toMatchObject({ enqueued: 1, skipped: 0 });
     expect((await runsFor(agentId)).length).toBe(1);
     expect((await wakeupRequestsFor(agentId)).filter((row) => row.status === "skipped")).toEqual([]);
+    // The card the gate found travels with the run, so adapters can export it
+    // as PAPERCLIP_TASK_ID and a task-requiring launcher does not skip it.
+    expect(await runContextsFor(agentId)).toEqual([expect.objectContaining({ issueId, taskId: issueId })]);
   });
 
   it("timer wakes an agent holding an in_progress issue", async () => {
@@ -265,6 +302,9 @@ describeEmbeddedPostgres("heartbeat timer gate (#2985)", () => {
 
     expect(result).toMatchObject({ checked: 1, enqueued: 1, skipped: 0 });
     expect((await runsFor(ceoAgentId)).length).toBe(1);
+    const [ceoContext] = await runContextsFor(ceoAgentId);
+    expect(ceoContext?.issueId).toBeUndefined();
+    expect(ceoContext?.taskId).toBeUndefined();
     expect((await wakeupRequestsFor(ceoAgentId)).filter((row) => row.status === "skipped")).toEqual([]);
   });
 
@@ -356,5 +396,127 @@ describeEmbeddedPostgres("heartbeat timer gate (#2985)", () => {
     expect(await runsFor(brokenAgentId)).toEqual([]);
     expect((await wakeupRequestsFor(idleAgentId)).map((row) => row.reason)).toEqual(["timer.no_actionable_work"]);
     expect((await wakeupRequestsFor(brokenAgentId)).map((row) => row.reason)).toEqual(["timer.actionable_work_lookup_failed"]);
+  });
+  it("a dependency-blocked card does not hide a runnable card of the same agent (review #133)", async () => {
+    const companyId = await seedCompany();
+    const agentId = await seedAgent(companyId, "Two Cards Bot");
+    const blockedIssueId = await seedIssue(companyId, agentId, "todo");
+    await db.update(issues).set({ priority: "critical" }).where(eq(issues.id, blockedIssueId));
+    await blockIssue(companyId, blockedIssueId);
+    const runnableIssueId = await seedIssue(companyId, agentId, "todo");
+    await db.update(issues).set({ priority: "low" }).where(eq(issues.id, runnableIssueId));
+
+    const result = await heartbeatService(db).tickTimers(TICK_AT);
+
+    expect(result).toMatchObject({ enqueued: 1, skipped: 0 });
+    expect(await runContextsFor(agentId)).toEqual([
+      expect.objectContaining({ issueId: runnableIssueId, taskId: runnableIssueId }),
+    ]);
+    expect((await wakeupRequestsFor(agentId)).filter((row) => row.status === "skipped")).toEqual([]);
+  });
+
+  it("only dependency-blocked cards: no run, recorded as no_runnable_work once per idle period", async () => {
+    const companyId = await seedCompany();
+    const agentId = await seedAgent(companyId, "Blocked Cards Bot");
+    const blockedIssueId = await seedIssue(companyId, agentId, "todo");
+    await blockIssue(companyId, blockedIssueId);
+    const heartbeat = heartbeatService(db);
+
+    const first = await heartbeat.tickTimers(TICK_AT);
+    const second = await heartbeat.tickTimers(new Date(TICK_AT.getTime() + 61_000));
+
+    expect(first).toMatchObject({ enqueued: 0, skipped: 1 });
+    expect(second).toMatchObject({ enqueued: 0, skipped: 1 });
+    expect(await runsFor(agentId)).toEqual([]);
+    expect((await wakeupRequestsFor(agentId)).map((row) => row.reason)).toEqual(["timer.no_runnable_work"]);
+  });
+
+  it("a card in a budget-paused project neither aborts the tick nor blocks the other agents (review #133)", async () => {
+    const companyId = await seedCompany();
+    const projectId = randomUUID();
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Paused Project",
+      status: "in_progress",
+      pausedAt: TEN_MINUTES_BEFORE_TICK,
+      pauseReason: "budget",
+    });
+    const pausedAgentId = await seedAgent(companyId, "Paused Project Bot");
+    const pausedIssueId = await seedIssue(companyId, pausedAgentId, "todo");
+    await db.update(issues).set({ projectId }).where(eq(issues.id, pausedIssueId));
+    const otherAgentId = await seedAgent(companyId, "Other Bot");
+    await seedIssue(companyId, otherAgentId, "todo");
+
+    const result = await heartbeatService(db).tickTimers(TICK_AT);
+
+    expect(result).toMatchObject({ checked: 2, enqueued: 1, skipped: 1 });
+    expect(await runsFor(pausedAgentId)).toEqual([]);
+    expect((await runsFor(otherAgentId)).length).toBe(1);
+    expect((await wakeupRequestsFor(pausedAgentId)).map((row) => row.reason)).toEqual(["timer.no_runnable_work"]);
+  });
+
+  it("a card in the issue automation cooldown is passed over, and the agent is not re-examined every tick", async () => {
+    const companyId = await seedCompany();
+    const agentId = await seedAgent(companyId, "Cooldown Bot");
+    const coolingIssueId = await seedIssue(companyId, agentId, "in_progress");
+    // The cooldown is measured against the wall clock, not the tick time.
+    const finishedAt = new Date(Date.now() - 5 * 60_000);
+    await db.insert(heartbeatRuns).values({
+      companyId,
+      agentId,
+      invocationSource: "timer",
+      triggerDetail: "system",
+      status: "succeeded",
+      contextSnapshot: { issueId: coolingIssueId },
+      startedAt: finishedAt,
+      finishedAt,
+    });
+    const heartbeat = heartbeatService(db);
+
+    const first = await heartbeat.tickTimers(TICK_AT);
+    expect(first).toMatchObject({ enqueued: 0, skipped: 1 });
+    expect((await wakeupRequestsFor(agentId)).map((row) => row.reason)).toEqual(["timer.no_runnable_work"]);
+
+    // Next scheduler poll, interval not elapsed: no lookup, nothing written.
+    const second = await heartbeat.tickTimers(new Date(TICK_AT.getTime() + 30_000));
+    expect(second).toMatchObject({ enqueued: 0, skipped: 0 });
+    expect((await wakeupRequestsFor(agentId)).length).toBe(1);
+
+    // A second, fresh card is picked on the next interval.
+    const freshIssueId = await seedIssue(companyId, agentId, "todo");
+    const third = await heartbeat.tickTimers(new Date(TICK_AT.getTime() + 61_000));
+    expect(third).toMatchObject({ enqueued: 1, skipped: 0 });
+    const contexts = (await runContextsFor(agentId)).filter((context) => context.source === "scheduler");
+    expect(contexts).toEqual([expect.objectContaining({ issueId: freshIssueId, taskId: freshIssueId })]);
+  });
+  it("a card whose run is already on its execution path does not starve a sibling card (review #133)", async () => {
+    const companyId = await seedCompany();
+    const agentId = await seedAgent(companyId, "Locked Card Bot");
+    const otherAgentId = await seedAgent(companyId, "Lock Holder Bot", {});
+    const lockedIssueId = await seedIssue(companyId, agentId, "in_progress");
+    await db.update(issues).set({ priority: "critical" }).where(eq(issues.id, lockedIssueId));
+    const lockRunId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: lockRunId,
+      companyId,
+      agentId: otherAgentId,
+      invocationSource: "assignment",
+      triggerDetail: "system",
+      status: "scheduled_retry",
+      contextSnapshot: { issueId: lockedIssueId },
+    });
+    const siblingIssueId = await seedIssue(companyId, agentId, "todo");
+    await db.update(issues).set({ priority: "low" }).where(eq(issues.id, siblingIssueId));
+    // Only the gated agent is due in this tick.
+    await db.update(agents).set({ lastHeartbeatAt: TICK_AT }).where(eq(agents.id, otherAgentId));
+
+    const result = await heartbeatService(db).tickTimers(TICK_AT);
+
+    expect(result).toMatchObject({ enqueued: 1 });
+    const contexts = (await runContextsFor(agentId)).filter((context) => context.source === "scheduler");
+    expect(contexts).toEqual([expect.objectContaining({ issueId: siblingIssueId, taskId: siblingIssueId })]);
+    // The seeded lock is not a live run: remove it so the side-effect wait settles.
+    await db.delete(heartbeatRuns).where(eq(heartbeatRuns.id, lockRunId));
   });
 });

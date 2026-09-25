@@ -18,6 +18,19 @@ const TIMER_ACTIONABLE_ISSUE_STATUS_FILTER = "todo,in_progress";
 /** Audit reasons written to agent_wakeup_requests (status "skipped") by the timer gate. */
 const TIMER_SKIP_NO_ACTIONABLE_WORK = "timer.no_actionable_work";
 const TIMER_SKIP_LOOKUP_FAILED = "timer.actionable_work_lookup_failed";
+/**
+ * The agent holds todo/in_progress cards, but none can be woken right now:
+ * dependency-blocked, under an active subtree pause hold, budget-blocked, or
+ * still in the issue automation cooldown. Distinct from "no work" in the audit.
+ */
+const TIMER_SKIP_NO_RUNNABLE_WORK = "timer.no_runnable_work";
+/**
+ * enqueueWakeup refused or failed the timer wake (it records its own reason).
+ * Kept as a gate state so the agent is retried at its interval, not every tick.
+ */
+const TIMER_SKIP_ENQUEUE_REFUSED = "timer.enqueue_refused";
+/** Candidate cards examined per gated agent and interval (one bounded list query). */
+const TIMER_ACTIONABLE_CANDIDATE_LIMIT = 20;
 // Timer gate baseline, in memory: when an agent's actionable-work check ran
 // and why it was skipped. Bounded by the number of gated agents, rebuilt after
 // a restart from lastHeartbeatAt (one extra check per agent, nothing else).
@@ -11381,6 +11394,63 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     buildRunOutputSilence,
 
     tickTimers: async (now = new Date()) => {
+      // First candidate (in the inbox's order) that enqueueWakeup would accept
+      // for a timer wake: dependencies ready, no run already on its execution
+      // path, no active subtree pause hold, no budget block, outside the issue
+      // automation cooldown. Read-only.
+      const selectTimerRunnableIssue = async (
+        companyId: string,
+        agentId: string,
+        candidates: Array<{ id: string; projectId?: string | null }>,
+      ): Promise<string | null> => {
+        const ids = candidates.map((candidate) => candidate.id);
+        const readiness = await issuesSvc.listDependencyReadiness(companyId, ids);
+        const lastTerminalRows = await db
+          .select({
+            issueId: sql<string>`${heartbeatRuns.contextSnapshot} ->> 'issueId'`,
+            terminalAt: sql<string | null>`max(coalesce(${heartbeatRuns.finishedAt}, ${heartbeatRuns.updatedAt}))`,
+          })
+          .from(heartbeatRuns)
+          .where(and(
+            eq(heartbeatRuns.companyId, companyId),
+            inArray(heartbeatRuns.status, [...HEARTBEAT_RUN_TERMINAL_STATUSES]),
+            inArray(sql<string>`${heartbeatRuns.contextSnapshot} ->> 'issueId'`, ids),
+          ))
+          .groupBy(sql`${heartbeatRuns.contextSnapshot} ->> 'issueId'`);
+        const lastTerminalAt = new Map(lastTerminalRows.map((row) => [row.issueId, row.terminalAt]));
+        // A card that already has a run on its execution path (queued, running,
+        // deferred...) would only coalesce or defer the wake; its siblings must
+        // get the chance instead of the same locked card every interval.
+        const lockedRows = await db
+          .select({ issueId: sql<string>`${heartbeatRuns.contextSnapshot} ->> 'issueId'` })
+          .from(heartbeatRuns)
+          .where(and(
+            eq(heartbeatRuns.companyId, companyId),
+            inArray(heartbeatRuns.status, [...EXECUTION_PATH_HEARTBEAT_RUN_STATUSES]),
+            inArray(sql<string>`${heartbeatRuns.contextSnapshot} ->> 'issueId'`, ids),
+          ));
+        const lockedIssueIds = new Set(lockedRows.map((row) => row.issueId));
+        const timerCooldownApplies = shouldEnforceIssueAutomationWakeCooldown({
+          source: "timer",
+          contextSnapshot: { source: "scheduler", reason: "interval_elapsed" },
+          wakeCommentId: null,
+          requestedByActorType: "system",
+        });
+        for (const candidate of candidates) {
+          if (readiness.get(candidate.id)?.isDependencyReady === false) continue;
+          if (lockedIssueIds.has(candidate.id)) continue;
+          if (timerCooldownApplies && isWithinIssueAutomationWakeCooldown(lastTerminalAt.get(candidate.id))) continue;
+          if (await treeControlSvc.getActivePauseHoldGate(companyId, candidate.id)) continue;
+          const budgetBlock = await budgets.getInvocationBlock(companyId, agentId, {
+            issueId: candidate.id,
+            projectId: candidate.projectId ?? null,
+          });
+          if (budgetBlock) continue;
+          return candidate.id;
+        }
+        return null;
+      };
+
       const allAgents = await db
         .select({ ...getTableColumns(agents) })
         .from(agents)
@@ -11427,6 +11497,10 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         const elapsedMs = now.getTime() - baseline;
         if (elapsedMs < policy.intervalSec * 1000) continue;
 
+        // The card the gate found is handed to the run: adapters export it as
+        // PAPERCLIP_TASK_ID, and a launcher that refuses task-less runs would
+        // otherwise skip the very work that justified waking the agent.
+        let timerIssueId: string | null = null;
         if (policy.requireActionableWork) {
           // Timer gate (#2985): no session is spawned to discover that there is
           // nothing to do. The lookup is the inbox's own query (issuesSvc.list),
@@ -11438,9 +11512,17 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
             const actionable = await issuesSvc.list(agent.companyId, {
               assigneeAgentId: agent.id,
               status: TIMER_ACTIONABLE_ISSUE_STATUS_FILTER,
-              limit: 1,
+              limit: TIMER_ACTIONABLE_CANDIDATE_LIMIT,
             });
-            if (actionable.length === 0) skipReason = TIMER_SKIP_NO_ACTIONABLE_WORK;
+            if (actionable.length === 0) {
+              skipReason = TIMER_SKIP_NO_ACTIONABLE_WORK;
+            } else {
+              // The card handed to the run must be one enqueueWakeup will accept:
+              // the first candidate is often a blocked or cooling-down card, and
+              // binding it would leave a runnable card behind it idle forever.
+              timerIssueId = await selectTimerRunnableIssue(agent.companyId, agent.id, actionable);
+              if (!timerIssueId) skipReason = TIMER_SKIP_NO_RUNNABLE_WORK;
+            }
           } catch (err) {
             logger.error({ err, agentId: agent.id, companyId: agent.companyId }, TIMER_SKIP_LOOKUP_FAILED);
             skipReason = TIMER_SKIP_LOOKUP_FAILED;
@@ -11459,20 +11541,40 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           timerGateStates.delete(agent.id);
         }
 
-        const run = await enqueueWakeup(agent.id, {
-          source: "timer",
-          triggerDetail: "system",
-          reason: "heartbeat_timer",
-          requestedByActorType: "system",
-          requestedByActorId: "heartbeat_scheduler",
-          contextSnapshot: {
-            source: "scheduler",
-            reason: "interval_elapsed",
-            now: now.toISOString(),
-          },
-        });
-        if (run) enqueued += 1;
-        else skipped += 1;
+        // One agent's refusal (budget conflict, not invokable...) must not end
+        // the tick for the agents after it, nor for the issue monitors. The
+        // refusal row is written by enqueueWakeup itself.
+        let run: Awaited<ReturnType<typeof enqueueWakeup>> = null;
+        let refused = false;
+        try {
+          run = await enqueueWakeup(agent.id, {
+            source: "timer",
+            triggerDetail: "system",
+            reason: "heartbeat_timer",
+            requestedByActorType: "system",
+            requestedByActorId: "heartbeat_scheduler",
+            contextSnapshot: {
+              source: "scheduler",
+              reason: "interval_elapsed",
+              now: now.toISOString(),
+              ...(timerIssueId ? { issueId: timerIssueId, taskId: timerIssueId } : {}),
+            },
+          });
+          refused = !run;
+        } catch (err) {
+          logger.warn({ err, agentId: agent.id, companyId: agent.companyId }, TIMER_SKIP_ENQUEUE_REFUSED);
+          refused = true;
+        }
+        if (run) {
+          enqueued += 1;
+        } else {
+          skipped += 1;
+          // lastHeartbeatAt does not move on a refusal: without a baseline the
+          // gated agent would be re-examined (and refused again) on every tick.
+          if (refused && policy.requireActionableWork) {
+            timerGateStates.set(agent.id, { checkedAt: now.getTime(), reason: TIMER_SKIP_ENQUEUE_REFUSED });
+          }
+        }
       }
 
       for (const agentId of timerGateStates.keys()) {
