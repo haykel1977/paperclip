@@ -354,7 +354,7 @@ describe("delivery guard", () => {
       runProc: async (cmd, args) => {
         if (cmd === "git" && args[0] === "status") return { exitCode: 0, stdout: "", stderr: "" };
         if (cmd === "git" && args[0] === "rev-list") return { exitCode: 0, stdout: "0\n", stderr: "" };
-        if (cmd === "git" && args[0] === "rev-parse") return { exitCode: 128, stdout: "", stderr: "no upstream" };
+        if (cmd === "git" && args[0] === "rev-parse") return { exitCode: 0, stdout: "origin/feature\n", stderr: "" };
         throw new Error(`unexpected ${cmd} ${args.join(" ")}`);
       },
       log: async (_stream, chunk) => {

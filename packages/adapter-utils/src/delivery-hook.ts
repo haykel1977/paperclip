@@ -1260,10 +1260,9 @@ async function readCommitPublication(input: {
 }): Promise<{ aheadOfBase: number | null; unpushed: number | null }> {
   const baseName = input.baseBranch.replace(/^origin\//, "");
   const originRef = `origin/${baseName}`;
-  let ahead = await input.runProc("git", ["rev-list", "--count", `${originRef}..HEAD`], input.worktreeCwd, input.env);
-  if (ahead.exitCode !== 0) {
-    ahead = await input.runProc("git", ["rev-list", "--count", `${baseName}..HEAD`], input.worktreeCwd, input.env);
-  }
+  // Fail closed: an unreadable origin ref is not a local base of zero, and a
+  // missing upstream is not a readable unpushed count.
+  const ahead = await input.runProc("git", ["rev-list", "--count", `${originRef}..HEAD`], input.worktreeCwd, input.env);
   const aheadOfBase = ahead.exitCode === 0 ? parseRevListCount(ahead.stdout) : null;
 
   const upstream = await input.runProc(
@@ -1274,7 +1273,7 @@ async function readCommitPublication(input: {
   );
   const upstreamName = upstream.exitCode === 0 ? upstream.stdout.trim() : "";
   if (!upstreamName || upstreamName === "@{upstream}" || upstreamName === "HEAD") {
-    return { aheadOfBase, unpushed: aheadOfBase };
+    return { aheadOfBase, unpushed: null };
   }
   const unpushedResult = await input.runProc(
     "git",

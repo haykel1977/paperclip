@@ -103,7 +103,7 @@ describe("executeDeliveryHook", () => {
     const runProc = mkRunProc({
       "git status --porcelain": { exitCode: 0, stdout: "" },
       "git rev-list --count": { exitCode: 0, stdout: "0\n" },
-      "git rev-parse --abbrev-ref": { exitCode: 128, stderr: "no upstream" },
+      "git rev-parse --abbrev-ref": { exitCode: 0, stdout: "origin/codex/HAS-222-x\n" },
     });
     const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
     expect(result).toMatchObject({ reason: "no_diff", publicationChecked: true });
