@@ -110,7 +110,7 @@ describe("executeDeliveryHook", () => {
     expect(runProc.mock.calls.some((call) => call[1]?.[0] === "commit" || call[1]?.[0] === "push")).toBe(false);
   });
 
-  it("no diff with commits ahead of the base is unpublished", async () => {
+  it("no diff with no upstream and commits ahead of the remote base is unverified", async () => {
     const worktreeCwd = mkWorktree();
     const runProc = mkRunProc({
       "git status --porcelain": { exitCode: 0, stdout: "" },
@@ -118,7 +118,8 @@ describe("executeDeliveryHook", () => {
       "git rev-parse --abbrev-ref": { exitCode: 128, stderr: "no upstream" },
     });
     const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
-    expect(result).toMatchObject({ reason: "unpublished_commits", delivered: false, prUrl: null });
+    expect(result).toMatchObject({ reason: "publication_unverified", delivered: false, prUrl: null });
+    expect(result.publicationChecked).not.toBe(true);
     expect(runProc.mock.calls.some((call) => call[1]?.[0] === "commit" || call[1]?.[0] === "push")).toBe(false);
   });
 

@@ -88,12 +88,23 @@ describe("delivery guard", () => {
     expect(resolution).toEqual({ status: "succeeded", errorCode: null, reason: "no_diff" });
   });
 
-  it("classifies commits ahead of the base or left unpushed as unpublished", () => {
-    expect(classifyNoDiffPublication({ aheadOfBase: 0, unpushed: 0 })).toBe("no_diff");
-    expect(classifyNoDiffPublication({ aheadOfBase: 2, unpushed: 0 })).toBe("unpublished_commits");
-    expect(classifyNoDiffPublication({ aheadOfBase: 0, unpushed: 3 })).toBe("unpublished_commits");
-    expect(classifyNoDiffPublication({ aheadOfBase: null, unpushed: 0 })).toBe("unpublished_commits");
-    expect(classifyNoDiffPublication({ aheadOfBase: 0, unpushed: null })).toBe("unpublished_commits");
+  it("classifies remote publication as no_diff, unpublished, or unverified", () => {
+    expect(classifyNoDiffPublication({ aheadOfRemoteBase: 0, hasUpstream: true, unpushed: 0 })).toBe("no_diff");
+    expect(classifyNoDiffPublication({ aheadOfRemoteBase: 0, hasUpstream: false, unpushed: null })).toBe("no_diff");
+    expect(classifyNoDiffPublication({ aheadOfRemoteBase: 2, hasUpstream: true, unpushed: 0 })).toBe("unpublished_commits");
+    expect(classifyNoDiffPublication({ aheadOfRemoteBase: 0, hasUpstream: true, unpushed: 3 })).toBe("unpublished_commits");
+    expect(classifyNoDiffPublication({ aheadOfRemoteBase: null, hasUpstream: false, unpushed: null })).toBe("publication_unverified");
+    expect(classifyNoDiffPublication({ aheadOfRemoteBase: 2, hasUpstream: false, unpushed: null })).toBe("publication_unverified");
+    expect(classifyNoDiffPublication({ aheadOfRemoteBase: 0, hasUpstream: true, unpushed: null })).toBe("publication_unverified");
+  });
+
+  it("fails a delivery-expected run when publication cannot be verified", () => {
+    const resolution = resolve(result("publication_unverified", null, false));
+    expect(resolution).toEqual({
+      status: "failed",
+      errorCode: "not_delivered",
+      reason: "publication_unverified",
+    });
   });
 
   it("fails a delivery-expected run that never invoked the hook", () => {

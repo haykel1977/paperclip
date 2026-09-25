@@ -5,6 +5,7 @@ import {
   classifyNoDiffPublication,
   hasNotedDeliveryInvocation,
   noteConfiguredDeliveryInvocation,
+  type CommitPublication,
 } from "./delivery-guard.js";
 import { DeliveryTokenError, readDeliveryTokenFile } from "./delivery-token.js";
 
@@ -1257,14 +1258,14 @@ async function readCommitPublication(input: {
   worktreeCwd: string;
   env: Record<string, string>;
   runProc: DeliveryHookRunProcess;
-}): Promise<{ aheadOfBase: number | null; unpushed: number | null }> {
+}): Promise<CommitPublication> {
   const baseName = input.baseBranch.replace(/^origin\//, "");
   const originRef = `origin/${baseName}`;
-  let ahead = await input.runProc("git", ["rev-list", "--count", `${originRef}..HEAD`], input.worktreeCwd, input.env);
-  if (ahead.exitCode !== 0) {
-    ahead = await input.runProc("git", ["rev-list", "--count", `${baseName}..HEAD`], input.worktreeCwd, input.env);
+  const ahead = await input.runProc("git", ["rev-list", "--count", `${originRef}..HEAD`], input.worktreeCwd, input.env);
+  const aheadOfRemoteBase = ahead.exitCode === 0 ? parseRevListCount(ahead.stdout) : null;
+  if (aheadOfRemoteBase == null) {
+    return { aheadOfRemoteBase: null, hasUpstream: false, unpushed: null };
   }
-  const aheadOfBase = ahead.exitCode === 0 ? parseRevListCount(ahead.stdout) : null;
 
   const upstream = await input.runProc(
     "git",
@@ -1273,8 +1274,9 @@ async function readCommitPublication(input: {
     input.env,
   );
   const upstreamName = upstream.exitCode === 0 ? upstream.stdout.trim() : "";
-  if (!upstreamName || upstreamName === "@{upstream}" || upstreamName === "HEAD") {
-    return { aheadOfBase, unpushed: aheadOfBase };
+  const hasUpstream = upstreamName.length > 0 && upstreamName !== "@{upstream}" && upstreamName !== "HEAD";
+  if (!hasUpstream) {
+    return { aheadOfRemoteBase, hasUpstream: false, unpushed: null };
   }
   const unpushedResult = await input.runProc(
     "git",
@@ -1283,7 +1285,8 @@ async function readCommitPublication(input: {
     input.env,
   );
   return {
-    aheadOfBase,
+    aheadOfRemoteBase,
+    hasUpstream: true,
     unpushed: unpushedResult.exitCode === 0 ? parseRevListCount(unpushedResult.stdout) : null,
   };
 }
@@ -1297,9 +1300,18 @@ async function concludeEmptyDelivery(input: {
   ts: string;
 }): Promise<DeliveryHookResult> {
   const verdict = classifyNoDiffPublication(await readCommitPublication(input));
-  const detail = verdict === "no_diff" ? "nothing to deliver" : "commits ahead of base or unpushed";
+  const detail = verdict === "no_diff"
+    ? "nothing to deliver"
+    : verdict === "publication_unverified"
+      ? "remote base or upstream could not prove publication"
+      : "commits ahead of base or unpushed";
   await input.log("stdout", `[delivery ${input.ts}] result=${verdict} reason="${detail}"\n`);
-  return { delivered: false, prUrl: null, reason: verdict, publicationChecked: true };
+  return {
+    delivered: false,
+    prUrl: null,
+    reason: verdict,
+    ...(verdict === "no_diff" ? { publicationChecked: true } : {}),
+  };
 }
 
 export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Promise<DeliveryHookResult> {

@@ -13,6 +13,7 @@ function fixture(options: {
   existing?: boolean; existingBranch?: string; issuePrUrl?: string;
   qualityFailure?: boolean; signature?: string; diff?: string; diffExitCode?: number;
   aheadOfBase?: number | null; unpushed?: number | null;
+  remoteBaseUnreadable?: boolean;
   wrapperAfterCheckout?: boolean; statusAfterCheckout?: string;
   mutateWrapperDuringQuality?: boolean;
   beforeCommand?: (cmd: string, env: Record<string, string>) => void | Promise<void>;
@@ -68,8 +69,14 @@ function fixture(options: {
         if (options.unpushed == null) return { exitCode: 128, stdout: "", stderr: "no upstream" };
         return { exitCode: 0, stdout: `${options.unpushed}\n`, stderr: "" };
       }
-      if (aheadOfBase == null) return { exitCode: 128, stdout: "", stderr: "unreadable" };
-      return { exitCode: 0, stdout: `${aheadOfBase}\n`, stderr: "" };
+      if (range.startsWith("origin/")) {
+        if (options.remoteBaseUnreadable || aheadOfBase == null) {
+          return { exitCode: 128, stdout: "", stderr: "origin missing" };
+        }
+        return { exitCode: 0, stdout: `${aheadOfBase}\n`, stderr: "" };
+      }
+      // A local base of 0 must not be accepted as publication proof.
+      return { exitCode: 0, stdout: "0\n", stderr: "" };
     }
     if (cmd === "git" && args[0] === "rev-parse" && args.includes("@{upstream}")) {
       if (options.unpushed == null) return { exitCode: 128, stdout: "", stderr: "no upstream" };
@@ -248,9 +255,30 @@ describe("Quantum wrapper owns remote delivery", () => {
     expectNoExternalDelivery(f.calls);
   });
 
-  it("refuses no_diff when commits are ahead of the base", async () => {
+  it("accepts no_diff when the remote base contains HEAD and the upstream is pushed", async () => {
+    const f = fixture({ clean: true, diff: "", aheadOfBase: 0, unpushed: 0 });
+    expect(await executeDeliveryHook(f.input)).toMatchObject({
+      delivered: false, prUrl: null, reason: "no_diff", publicationChecked: true,
+    });
+    expect(f.calls.some(([cmd]) => cmd === f.wrapper)).toBe(false);
+    expectNoExternalDelivery(f.calls);
+  });
+
+  it("does not treat an unreadable remote base as no_diff", async () => {
+    const f = fixture({ clean: true, diff: "", remoteBaseUnreadable: true });
+    const result = await executeDeliveryHook(f.input);
+    expect(result).toMatchObject({ delivered: false, prUrl: null, reason: "publication_unverified" });
+    expect(result.publicationChecked).not.toBe(true);
+    expect(f.calls.some((call) => call[0] === "git" && call[1] === "rev-list" && call[3] === "main..HEAD")).toBe(false);
+    expect(f.calls.some(([cmd]) => cmd === f.wrapper)).toBe(false);
+    expectNoExternalDelivery(f.calls);
+  });
+
+  it("does not verify publication when there is no upstream and HEAD differs from the remote base", async () => {
     const f = fixture({ clean: true, diff: "", aheadOfBase: 2 });
-    expect(await executeDeliveryHook(f.input)).toMatchObject({ delivered: false, prUrl: null, reason: "unpublished_commits" });
+    const result = await executeDeliveryHook(f.input);
+    expect(result).toMatchObject({ delivered: false, prUrl: null, reason: "publication_unverified" });
+    expect(result.publicationChecked).not.toBe(true);
     expect(f.calls.some(([cmd]) => cmd === f.wrapper)).toBe(false);
     expectNoExternalDelivery(f.calls);
   });

@@ -19,8 +19,9 @@ import {
  * | `updated` with pr_url                | succeeded (wrapper refreshed a PR)   |
  * | `pr_exists` with pr_url              | succeeded                            |
  * | `issue_already_merged` with pr_url   | succeeded (already on the base)      |
- * | `no_diff` after a publication check  | succeeded (legitimate no-op)         |
- * | `no_diff` without that check, or commits ahead of the base / unpushed | failed `not_delivered` reason `unpublished_commits` |
+ * | `no_diff` after a remote publication check | succeeded (legitimate no-op)    |
+ * | `no_diff` without that check, or commits ahead of the remote base / unpushed | failed `not_delivered` reason `unpublished_commits` |
+ * | remote base unreadable, or no upstream while HEAD differs from that base | failed `not_delivered` reason `publication_unverified` |
  * | no hook invocation                   | failed `not_delivered` reason `delivery_missing` |
  * | `created` / `updated` / `pr_exists` / `issue_already_merged` without pr_url | failed `not_delivered` |
  * | `delivery_hook_disabled`             | failed `not_delivered`               |
@@ -30,9 +31,11 @@ import {
  * | other skips (`remote_delivery_not_enabled`, `missing_branch`, `base_branch`, `branch_checkout_failed`, hook throw) | failed `not_delivered` |
  * | `adapter_exit_nonzero` while the adapter result is already a failure | unchanged |
  *
- * `no_diff` is proof only after the hook has checked that HEAD is not ahead of
- * the base and has no unpushed commits. A missing invocation is `delivery_missing`
- * when delivery is expected and the adapter itself would have succeeded.
+ * `no_diff` is proof only after `origin/<base>..HEAD` is 0 and any upstream has
+ * nothing unpushed. A local base ref is not that proof. An unreadable remote
+ * base, or a missing upstream while HEAD differs from the remote base, is
+ * `publication_unverified`. A missing invocation is `delivery_missing` when
+ * delivery is expected and the adapter itself would have succeeded.
  *
  * Delivery-expected means all of:
  * - `PAPERCLIP_AUTONOMOUS_DELIVERY=1`
@@ -161,17 +164,28 @@ function proofUrl(prUrl: string | null): string | null {
 }
 
 export type CommitPublication = {
-  aheadOfBase: number | null;
+  /** Commits reachable from HEAD but not from `origin/<base>`. Null if that ref cannot be read. */
+  aheadOfRemoteBase: number | null;
+  /** True when `@{upstream}` names a real remote-tracking branch. */
+  hasUpstream: boolean;
+  /** Commits not on `@{upstream}`. Null when there is no upstream or the count cannot be read. */
   unpushed: number | null;
 };
 
 /**
- * `no_diff` is proof only when both counts were read and are zero.
- * An unreadable count fails closed as `unpublished_commits`.
+ * `no_diff` requires a readable remote base that already contains HEAD, and no
+ * unpushed commits when an upstream exists. A local base count is not accepted.
  */
-export function classifyNoDiffPublication(publication: CommitPublication): "no_diff" | "unpublished_commits" {
-  if (publication.aheadOfBase == null || publication.aheadOfBase > 0) return "unpublished_commits";
-  if (publication.unpushed == null || publication.unpushed > 0) return "unpublished_commits";
+export function classifyNoDiffPublication(
+  publication: CommitPublication,
+): "no_diff" | "unpublished_commits" | "publication_unverified" {
+  if (publication.aheadOfRemoteBase == null) return "publication_unverified";
+  if (!publication.hasUpstream) {
+    if (publication.aheadOfRemoteBase > 0) return "publication_unverified";
+    return "no_diff";
+  }
+  if (publication.unpushed == null) return "publication_unverified";
+  if (publication.aheadOfRemoteBase > 0 || publication.unpushed > 0) return "unpublished_commits";
   return "no_diff";
 }
 
