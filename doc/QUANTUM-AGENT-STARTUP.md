@@ -60,9 +60,9 @@ When `PAPERCLIP_AUTONOMOUS_DELIVERY=1`, a run for an agent with `deliveryRepo` s
 
 - `created`, `updated`, or `pr_exists` with a `pr_url`
 - `issue_already_merged` with a `pr_url` (the change is already on the base branch)
-- `no_diff` (the hook found nothing to deliver)
+- `no_diff` only after the hook has checked that no commit is ahead of the base and none are unpushed
 
-Every other hook outcome, including `delivery_hook_disabled`, `delivery_blocked:*`, and `push_failed`, fails the run with `error_code=not_delivered`. The run log contains one line: `[paperclip] delivery: not_delivered reason=<hook outcome>`. Narrative text such as "implementation complete" is not proof. If that run moved the issue to `done` or `in_review`, the harness restores the previous status.
+A missing hook invocation is `delivery_missing`. Commits ahead of the base or left unpushed are `unpublished_commits`. Every other hook outcome, including `delivery_hook_disabled`, `delivery_blocked:*`, and `push_failed`, fails the run with `error_code=not_delivered`. The run log contains one line: `[paperclip] delivery: not_delivered reason=<hook outcome>`. Narrative text such as "implementation complete" is not proof. If that run produced the issue's current `done` or `in_review` status, the harness restores the previous status without resetting `startedAt`. A newer status written by another actor is left in place.
 
 Set `PAPERCLIP_DELIVERY_GUARD=0` to disable the guard without a code deploy. The guard is on by default while autonomous delivery is on. Agents with no `deliveryRepo` are unchanged.
 

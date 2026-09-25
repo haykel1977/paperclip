@@ -804,20 +804,21 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     };
 
     try {
-      const initial = await runAttempt(sessionId);
+      let finished = await runAttempt(sessionId);
+      let clearSessionOnRetry = false;
       const initialFailed =
-        !initial.proc.timedOut && ((initial.proc.exitCode ?? 0) !== 0 || Boolean(initial.parsed.errorMessage));
+        !finished.proc.timedOut && ((finished.proc.exitCode ?? 0) !== 0 || Boolean(finished.parsed.errorMessage));
       if (
         sessionId &&
         initialFailed &&
-        isOpenCodeUnknownSessionError(initial.proc.stdout, initial.rawStderr)
+        isOpenCodeUnknownSessionError(finished.proc.stdout, finished.rawStderr)
       ) {
         await onLog(
           "stdout",
           `[paperclip] OpenCode session "${sessionId}" is unavailable; retrying with a fresh session.\n`,
         );
-        const retry = await runAttempt(null);
-        return toResult(retry, true);
+        finished = await runAttempt(null);
+        clearSessionOnRetry = true;
       }
 
       try {
@@ -830,7 +831,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           config,
           context,
           executionTargetIsRemote,
-          exitCode: initial.proc.exitCode,
+          exitCode: finished.proc.exitCode,
           adapterType: "opencode_local",
           agentId: agent.id,
           model: model || null,
@@ -850,7 +851,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         await onLog("stderr", `[paperclip] delivery hook error (non-fatal): ${(err as Error).message}\n`);
       }
 
-      return toResult(initial);
+      return toResult(finished, clearSessionOnRetry);
     } finally {
       await Promise.all([
 

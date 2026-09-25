@@ -100,10 +100,26 @@ describe("executeDeliveryHook", () => {
 
   it("no diff -> silent skip, no commit", async () => {
     const worktreeCwd = mkWorktree();
-    const runProc = mkRunProc({ "git status --porcelain": { exitCode: 0, stdout: "" } });
+    const runProc = mkRunProc({
+      "git status --porcelain": { exitCode: 0, stdout: "" },
+      "git rev-list --count": { exitCode: 0, stdout: "0\n" },
+      "git rev-parse --abbrev-ref": { exitCode: 128, stderr: "no upstream" },
+    });
     const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
-    expect(result.reason).toBe("no_diff");
-    expect(runProc).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ reason: "no_diff", publicationChecked: true });
+    expect(runProc.mock.calls.some((call) => call[1]?.[0] === "commit" || call[1]?.[0] === "push")).toBe(false);
+  });
+
+  it("no diff with commits ahead of the base is unpublished", async () => {
+    const worktreeCwd = mkWorktree();
+    const runProc = mkRunProc({
+      "git status --porcelain": { exitCode: 0, stdout: "" },
+      "git rev-list --count": { exitCode: 0, stdout: "2\n" },
+      "git rev-parse --abbrev-ref": { exitCode: 128, stderr: "no upstream" },
+    });
+    const result = await executeDeliveryHook({ ...base, worktreeCwd, runProc });
+    expect(result).toMatchObject({ reason: "unpublished_commits", delivered: false, prUrl: null });
+    expect(runProc.mock.calls.some((call) => call[1]?.[0] === "commit" || call[1]?.[0] === "push")).toBe(false);
   });
 
   it("blocks tracked and untracked files containing real conflict markers", async () => {

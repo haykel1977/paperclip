@@ -1,7 +1,11 @@
 import fs from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import path from "node:path";
-import { noteConfiguredDeliveryInvocation } from "./delivery-guard.js";
+import {
+  classifyNoDiffPublication,
+  hasNotedDeliveryInvocation,
+  noteConfiguredDeliveryInvocation,
+} from "./delivery-guard.js";
 import { DeliveryTokenError, readDeliveryTokenFile } from "./delivery-token.js";
 
 export type DeliveryHookRunProcess = (
@@ -17,6 +21,7 @@ export type DeliveryHookResult = {
   delivered: boolean;
   prUrl: string | null;
   reason: string;
+  publicationChecked?: boolean;
 };
 
 export type ExecuteDeliveryHookInput = {
@@ -1241,6 +1246,62 @@ export function buildQuantumPrBody(input: {
  * - autonomous lane requires signed commits before push
  * - fix: `executeConfiguredDeliveryHook` no longer creates a second redactor
  */
+function parseRevListCount(stdout: string): number | null {
+  const trimmed = stdout.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  return Number(trimmed);
+}
+
+async function readCommitPublication(input: {
+  baseBranch: string;
+  worktreeCwd: string;
+  env: Record<string, string>;
+  runProc: DeliveryHookRunProcess;
+}): Promise<{ aheadOfBase: number | null; unpushed: number | null }> {
+  const baseName = input.baseBranch.replace(/^origin\//, "");
+  const originRef = `origin/${baseName}`;
+  let ahead = await input.runProc("git", ["rev-list", "--count", `${originRef}..HEAD`], input.worktreeCwd, input.env);
+  if (ahead.exitCode !== 0) {
+    ahead = await input.runProc("git", ["rev-list", "--count", `${baseName}..HEAD`], input.worktreeCwd, input.env);
+  }
+  const aheadOfBase = ahead.exitCode === 0 ? parseRevListCount(ahead.stdout) : null;
+
+  const upstream = await input.runProc(
+    "git",
+    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+    input.worktreeCwd,
+    input.env,
+  );
+  const upstreamName = upstream.exitCode === 0 ? upstream.stdout.trim() : "";
+  if (!upstreamName || upstreamName === "@{upstream}" || upstreamName === "HEAD") {
+    return { aheadOfBase, unpushed: aheadOfBase };
+  }
+  const unpushedResult = await input.runProc(
+    "git",
+    ["rev-list", "--count", "@{upstream}..HEAD"],
+    input.worktreeCwd,
+    input.env,
+  );
+  return {
+    aheadOfBase,
+    unpushed: unpushedResult.exitCode === 0 ? parseRevListCount(unpushedResult.stdout) : null,
+  };
+}
+
+async function concludeEmptyDelivery(input: {
+  baseBranch: string;
+  worktreeCwd: string;
+  env: Record<string, string>;
+  runProc: DeliveryHookRunProcess;
+  log: DeliveryHookLog;
+  ts: string;
+}): Promise<DeliveryHookResult> {
+  const verdict = classifyNoDiffPublication(await readCommitPublication(input));
+  const detail = verdict === "no_diff" ? "nothing to deliver" : "commits ahead of base or unpushed";
+  await input.log("stdout", `[delivery ${input.ts}] result=${verdict} reason="${detail}"\n`);
+  return { delivered: false, prUrl: null, reason: verdict, publicationChecked: true };
+}
+
 export async function executeDeliveryHook(input: ExecuteDeliveryHookInput): Promise<DeliveryHookResult> {
   try {
     return await executeDeliveryHookWithToken(input);
@@ -1321,8 +1382,14 @@ async function executeDeliveryHookWithToken(input: ExecuteDeliveryHookInput): Pr
     return { delivered: false, prUrl: null, reason: "git_status_failed" };
   }
   if (!status.stdout.trim() && !quantumDelivery) {
-    await log("stdout", `[delivery ${ts()}] result=no_diff reason="nothing to deliver"\n`);
-    return { delivered: false, prUrl: null, reason: "no_diff" };
+    return concludeEmptyDelivery({
+      baseBranch: input.baseBranch,
+      worktreeCwd,
+      env,
+      runProc,
+      log,
+      ts: ts(),
+    });
   }
   if (/^(UU|AA|DD) /m.test(status.stdout)) {
     await log("stderr", `[delivery ${ts()}] result=conflict reason="unresolved git index conflict — abort, no force"\n`);
@@ -1496,8 +1563,14 @@ async function executeDeliveryHookWithToken(input: ExecuteDeliveryHookInput): Pr
       ...parseDiffNameOnly(branchDiff.stdout),
     ]);
     if (!status.stdout.trim() && quantumChangedPaths.length === 0 && !existingPrUrl) {
-      await log("stdout", `[delivery ${ts()}] result=no_diff reason="nothing to deliver"\n`);
-      return { delivered: false, prUrl: null, reason: "no_diff" };
+      return concludeEmptyDelivery({
+        baseBranch: input.baseBranch,
+        worktreeCwd,
+        env,
+        runProc,
+        log,
+        ts: ts(),
+      });
     }
   }
 
@@ -1874,7 +1947,9 @@ export async function executeConfiguredDeliveryHook(
   try {
     return await executeConfiguredDeliveryHookBody(input);
   } catch (error) {
-    noteConfiguredDeliveryInvocation(input, { type: "error", reason: "delivery_hook_error" });
+    if (!hasNotedDeliveryInvocation(input.runId)) {
+      noteConfiguredDeliveryInvocation(input, { type: "error", reason: "delivery_hook_error" });
+    }
     throw error;
   }
 }
@@ -2002,10 +2077,14 @@ async function executeConfiguredDeliveryHookBody(
     runProc: input.runProc,
     log: input.log,
   });
-  await input.log(
-    "stdout",
-    `[paperclip] delivery: ${delivery.reason}${delivery.prUrl ? " -> " + delivery.prUrl : ""}\n`,
-  );
   noteConfiguredDeliveryInvocation(input, { type: "result", result: delivery });
+  try {
+    await input.log(
+      "stdout",
+      `[paperclip] delivery: ${delivery.reason}${delivery.prUrl ? " -> " + delivery.prUrl : ""}\n`,
+    );
+  } catch {
+    // The noted result is the harness contract. A log failure must not replace it.
+  }
   return delivery;
 }

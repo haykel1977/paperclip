@@ -19,7 +19,9 @@ import {
  * | `updated` with pr_url                | succeeded (wrapper refreshed a PR)   |
  * | `pr_exists` with pr_url              | succeeded                            |
  * | `issue_already_merged` with pr_url   | succeeded (already on the base)      |
- * | `no_diff`                            | succeeded (legitimate no-op)         |
+ * | `no_diff` after a publication check  | succeeded (legitimate no-op)         |
+ * | `no_diff` without that check, or commits ahead of the base / unpushed | failed `not_delivered` reason `unpublished_commits` |
+ * | no hook invocation                   | failed `not_delivered` reason `delivery_missing` |
  * | `created` / `updated` / `pr_exists` / `issue_already_merged` without pr_url | failed `not_delivered` |
  * | `delivery_hook_disabled`             | failed `not_delivered`               |
  * | `delivery_blocked` and `delivery_blocked:*` | failed `not_delivered`          |
@@ -28,8 +30,9 @@ import {
  * | other skips (`remote_delivery_not_enabled`, `missing_branch`, `base_branch`, `branch_checkout_failed`, hook throw) | failed `not_delivered` |
  * | `adapter_exit_nonzero` while the adapter result is already a failure | unchanged |
  *
- * `no_diff` stays succeeded: the hook logged `result=no_diff reason="nothing to deliver"`.
- * That is an explicit empty-tree outcome, not a skipped hook.
+ * `no_diff` is proof only after the hook has checked that HEAD is not ahead of
+ * the base and has no unpushed commits. A missing invocation is `delivery_missing`
+ * when delivery is expected and the adapter itself would have succeeded.
  *
  * Delivery-expected means all of:
  * - `PAPERCLIP_AUTONOMOUS_DELIVERY=1`
@@ -52,8 +55,6 @@ const PROOF_REASONS_REQUIRING_URL = new Set([
   "issue_already_merged",
 ]);
 
-const LEGITIMATE_NOOP_REASONS = new Set(["no_diff"]);
-
 const RESTORABLE_ISSUE_STATUSES = new Set([
   "backlog",
   "todo",
@@ -67,6 +68,8 @@ export type DeliveryGuardHookResult = {
   delivered: boolean;
   prUrl: string | null;
   reason: string;
+  /** Set when the hook verified that a `no_diff` tree has nothing unpublished. */
+  publicationChecked?: boolean;
 };
 
 export type DeliveryInvocation =
@@ -157,6 +160,21 @@ function proofUrl(prUrl: string | null): string | null {
   return trimmed.length > 0 && trimmed !== "null" ? trimmed : null;
 }
 
+export type CommitPublication = {
+  aheadOfBase: number | null;
+  unpushed: number | null;
+};
+
+/**
+ * `no_diff` is proof only when both counts were read and are zero.
+ * An unreadable count fails closed as `unpublished_commits`.
+ */
+export function classifyNoDiffPublication(publication: CommitPublication): "no_diff" | "unpublished_commits" {
+  if (publication.aheadOfBase == null || publication.aheadOfBase > 0) return "unpublished_commits";
+  if (publication.unpushed == null || publication.unpushed > 0) return "unpublished_commits";
+  return "no_diff";
+}
+
 export function classifyDeliveryInvocation(invocation: DeliveryInvocation): {
   proof: boolean;
   reason: string;
@@ -165,8 +183,9 @@ export function classifyDeliveryInvocation(invocation: DeliveryInvocation): {
     return { proof: false, reason: invocation.reason };
   }
   const reason = invocation.result.reason.trim();
-  if (LEGITIMATE_NOOP_REASONS.has(reason)) {
-    return { proof: true, reason };
+  if (reason === "no_diff") {
+    if (invocation.result.publicationChecked === true) return { proof: true, reason: "no_diff" };
+    return { proof: false, reason: "unpublished_commits" };
   }
   if (PROOF_REASONS_REQUIRING_URL.has(reason)) {
     if (!proofUrl(invocation.result.prUrl)) {
@@ -181,11 +200,18 @@ export function resolveDeliveryGuard(input: {
   env: DeliveryGuardEnv;
   config: Record<string, unknown>;
   context: Record<string, unknown>;
-  invocation: DeliveryInvocation;
+  invocation: DeliveryInvocation | null;
   adapterWouldSucceed: boolean;
 }): DeliveryGuardResolution {
   if (!isDeliveryGuardEnabled(input.env) || !isDeliveryExpected(input) || !input.adapterWouldSucceed) {
     return { status: "unchanged", errorCode: null, reason: null };
+  }
+  if (!input.invocation) {
+    return {
+      status: "failed",
+      errorCode: NOT_DELIVERED_ERROR_CODE,
+      reason: "delivery_missing",
+    };
   }
   const classified = classifyDeliveryInvocation(input.invocation);
   if (classified.proof) {
@@ -249,6 +275,10 @@ export function noteConfiguredDeliveryInvocation(
   });
 }
 
+export function hasNotedDeliveryInvocation(runId: string): boolean {
+  return notedByRunId.has(runId);
+}
+
 export function takeNotedDeliveryInvocation(runId: string): NotedDeliveryInvocation | null {
   const noted = notedByRunId.get(runId) ?? null;
   if (noted) notedByRunId.delete(runId);
@@ -262,7 +292,8 @@ export type IssueStatusUpdate = {
 
 export function readIssueStatusUpdate(details: unknown): IssueStatusUpdate | null {
   const record = parseObject(details);
-  const nextStatus = readNonEmptyString(record.status);
+  const patch = parseObject(record.patch);
+  const nextStatus = readNonEmptyString(record.status) ?? readNonEmptyString(patch.status);
   const previous = parseObject(record._previous);
   const previousStatus = readNonEmptyString(previous.status);
   if (!nextStatus && !previousStatus) return null;
@@ -271,20 +302,53 @@ export function readIssueStatusUpdate(details: unknown): IssueStatusUpdate | nul
 
 /**
  * Status to put back when this run moved an issue to done or in_review without
- * delivery proof. Returns null when this run did not make that move.
+ * delivery proof. The current terminal status must be the one this run wrote
+ * last. Returns null when a later actor owns the current status.
  */
 export function statusToRestoreAfterUndeliveredRun(
   currentStatus: string,
   updates: IssueStatusUpdate[],
 ): string | null {
   if (currentStatus !== "done" && currentStatus !== "in_review") return null;
-  for (const update of updates) {
-    const next = update.nextStatus;
-    const previous = update.previousStatus;
-    if (next !== "done" && next !== "in_review") continue;
-    if (!previous || previous === currentStatus || previous === "done") continue;
-    if (!RESTORABLE_ISSUE_STATUSES.has(previous)) continue;
-    return previous;
-  }
-  return null;
+  const dispositions = updates.filter((update) => update.nextStatus === "done" || update.nextStatus === "in_review");
+  const last = dispositions.at(-1);
+  if (!last || last.nextStatus !== currentStatus) return null;
+  const previous = dispositions[0]?.previousStatus ?? null;
+  if (!previous || previous === currentStatus || previous === "done") return null;
+  if (!RESTORABLE_ISSUE_STATUSES.has(previous)) return null;
+  return previous;
+}
+
+export type DispositionRestorePatch = {
+  status: string;
+  updatedAt: Date;
+  completedAt: Date | null;
+  cancelledAt: Date | null;
+};
+
+/** Status patch that does not reset `startedAt`. */
+export function dispositionRestorePatch(restoreStatus: string, updatedAt: Date): DispositionRestorePatch {
+  return {
+    status: restoreStatus,
+    updatedAt,
+    completedAt: restoreStatus === "done" ? updatedAt : null,
+    cancelledAt: restoreStatus === "cancelled" ? updatedAt : null,
+  };
+}
+
+/**
+ * Compare-and-set the issue status, then record activity. A lost race records nothing.
+ */
+export async function applyDispositionRestore(input: {
+  expectedStatus: string;
+  restoreStatus: string;
+  updatedAt?: Date;
+  compareAndSet: (expectedStatus: string, patch: DispositionRestorePatch) => Promise<boolean>;
+  record: () => Promise<void>;
+}): Promise<boolean> {
+  const patch = dispositionRestorePatch(input.restoreStatus, input.updatedAt ?? new Date());
+  const claimed = await input.compareAndSet(input.expectedStatus, patch);
+  if (!claimed) return false;
+  await input.record();
+  return true;
 }

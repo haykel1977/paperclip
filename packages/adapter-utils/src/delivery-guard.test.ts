@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import { executeConfiguredDeliveryHook } from "./delivery-hook.js";
 import {
   applyDeliveryGuardToAdapterResult,
+  applyDispositionRestore,
+  classifyNoDiffPublication,
   formatNotDeliveredLogLine,
   NOT_DELIVERED_ERROR_CODE,
+  readIssueStatusUpdate,
   resolveDeliveryGuard,
   statusToRestoreAfterUndeliveredRun,
   takeNotedDeliveryInvocation,
@@ -34,8 +37,21 @@ function resolve(invocation: DeliveryInvocation, overrides: {
   });
 }
 
-function result(reason: string, url: string | null, delivered = url != null): DeliveryInvocation {
-  return { type: "result", result: { delivered, prUrl: url, reason } };
+function result(
+  reason: string,
+  url: string | null,
+  delivered = url != null,
+  publicationChecked?: boolean,
+): DeliveryInvocation {
+  return {
+    type: "result",
+    result: {
+      delivered,
+      prUrl: url,
+      reason,
+      ...(publicationChecked === undefined ? {} : { publicationChecked }),
+    },
+  };
 }
 
 describe("delivery guard", () => {
@@ -58,9 +74,61 @@ describe("delivery guard", () => {
     expect(resolution).toEqual({ status: "succeeded", errorCode: null, reason: "issue_already_merged" });
   });
 
-  it("treats no_diff as a legitimate no-op and leaves the run succeeded", () => {
+  it("does not treat bare no_diff as proof until publication is checked", () => {
     const resolution = resolve(result("no_diff", null, false));
+    expect(resolution).toEqual({
+      status: "failed",
+      errorCode: "not_delivered",
+      reason: "unpublished_commits",
+    });
+  });
+
+  it("treats no_diff as a legitimate no-op after publication is verified", () => {
+    const resolution = resolve(result("no_diff", null, false, true));
     expect(resolution).toEqual({ status: "succeeded", errorCode: null, reason: "no_diff" });
+  });
+
+  it("classifies commits ahead of the base or left unpushed as unpublished", () => {
+    expect(classifyNoDiffPublication({ aheadOfBase: 0, unpushed: 0 })).toBe("no_diff");
+    expect(classifyNoDiffPublication({ aheadOfBase: 2, unpushed: 0 })).toBe("unpublished_commits");
+    expect(classifyNoDiffPublication({ aheadOfBase: 0, unpushed: 3 })).toBe("unpublished_commits");
+    expect(classifyNoDiffPublication({ aheadOfBase: null, unpushed: 0 })).toBe("unpublished_commits");
+    expect(classifyNoDiffPublication({ aheadOfBase: 0, unpushed: null })).toBe("unpublished_commits");
+  });
+
+  it("fails a delivery-expected run that never invoked the hook", () => {
+    const resolution = resolveDeliveryGuard({
+      env: autonomousEnv,
+      config: codingConfig,
+      context: codingContext,
+      invocation: null,
+      adapterWouldSucceed: true,
+    });
+    expect(resolution).toEqual({
+      status: "failed",
+      errorCode: "not_delivered",
+      reason: "delivery_missing",
+    });
+    expect(formatNotDeliveredLogLine(resolution.reason!)).toBe(
+      "[paperclip] delivery: not_delivered reason=delivery_missing\n",
+    );
+  });
+
+  it("does not invent delivery_missing when the adapter already failed or delivery is not expected", () => {
+    expect(resolveDeliveryGuard({
+      env: autonomousEnv,
+      config: codingConfig,
+      context: codingContext,
+      invocation: null,
+      adapterWouldSucceed: false,
+    }).status).toBe("unchanged");
+    expect(resolveDeliveryGuard({
+      env: autonomousEnv,
+      config: {},
+      context: codingContext,
+      invocation: null,
+      adapterWouldSucceed: true,
+    }).status).toBe("unchanged");
   });
 
   it("fails a delivery-expected run when the hook is disabled", () => {
@@ -212,5 +280,92 @@ describe("delivery guard", () => {
     expect(statusToRestoreAfterUndeliveredRun("in_progress", [
       { nextStatus: "done", previousStatus: "in_progress" },
     ])).toBeNull();
+  });
+
+  it("does not restore when another actor moved the issue to done after this run", () => {
+    expect(statusToRestoreAfterUndeliveredRun("done", [
+      { nextStatus: "in_review", previousStatus: "in_progress" },
+    ])).toBeNull();
+  });
+
+  it("reads a plugin status update from details.patch.status", () => {
+    expect(readIssueStatusUpdate({
+      patch: { status: "done" },
+      _previous: { status: "in_progress" },
+    })).toEqual({ nextStatus: "done", previousStatus: "in_progress" });
+    expect(statusToRestoreAfterUndeliveredRun("done", [
+      readIssueStatusUpdate({
+        patch: { status: "done" },
+        _previous: { status: "in_progress" },
+      })!,
+    ])).toBe("in_progress");
+  });
+
+  it("does not record a restore when another actor wins the status race", async () => {
+    let recorded = false;
+    const claimed = await applyDispositionRestore({
+      expectedStatus: "in_review",
+      restoreStatus: "in_progress",
+      updatedAt: new Date("2026-09-25T00:00:00.000Z"),
+      compareAndSet: async (expectedStatus, patch) => {
+        expect(expectedStatus).toBe("in_review");
+        expect(patch).toMatchObject({ status: "in_progress", completedAt: null, cancelledAt: null });
+        expect(patch).not.toHaveProperty("startedAt");
+        return false;
+      },
+      record: async () => {
+        recorded = true;
+      },
+    });
+    expect(claimed).toBe(false);
+    expect(recorded).toBe(false);
+  });
+
+  it("records the restore only after the conditional update succeeds", async () => {
+    let recorded = false;
+    const claimed = await applyDispositionRestore({
+      expectedStatus: "done",
+      restoreStatus: "in_progress",
+      updatedAt: new Date("2026-09-25T00:00:00.000Z"),
+      compareAndSet: async (_expectedStatus, patch) => {
+        expect(patch).not.toHaveProperty("startedAt");
+        expect(patch.status).toBe("in_progress");
+        return true;
+      },
+      record: async () => {
+        recorded = true;
+      },
+    });
+    expect(claimed).toBe(true);
+    expect(recorded).toBe(true);
+  });
+
+  it("keeps a noted delivery result when the summary log throws", async () => {
+    const runId = "delivery-guard-log-throw";
+    const result = await executeConfiguredDeliveryHook({
+      runId,
+      worktreeCwd: "/tmp/unused",
+      branch: "feature",
+      env: {},
+      config: { deliveryRepo: "other/repo", deliveryBaseBranch: "main" },
+      context: {},
+      executionTargetIsRemote: false,
+      exitCode: 0,
+      runProc: async (cmd, args) => {
+        if (cmd === "git" && args[0] === "status") return { exitCode: 0, stdout: "", stderr: "" };
+        if (cmd === "git" && args[0] === "rev-list") return { exitCode: 0, stdout: "0\n", stderr: "" };
+        if (cmd === "git" && args[0] === "rev-parse") return { exitCode: 128, stdout: "", stderr: "no upstream" };
+        throw new Error(`unexpected ${cmd} ${args.join(" ")}`);
+      },
+      log: async (_stream, chunk) => {
+        if (chunk.startsWith("[paperclip] delivery:")) throw new Error("log failed");
+      },
+    });
+    expect(result).toMatchObject({ reason: "no_diff", publicationChecked: true });
+    const noted = takeNotedDeliveryInvocation(runId);
+    expect(noted?.invocation).toEqual({
+      type: "result",
+      result: { delivered: false, prUrl: null, reason: "no_diff", publicationChecked: true },
+    });
   });
 });

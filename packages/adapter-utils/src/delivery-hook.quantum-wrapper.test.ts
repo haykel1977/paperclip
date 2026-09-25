@@ -12,6 +12,7 @@ function fixture(options: {
   wrapper?: boolean; stdout?: string; exitCode?: number; clean?: boolean;
   existing?: boolean; existingBranch?: string; issuePrUrl?: string;
   qualityFailure?: boolean; signature?: string; diff?: string; diffExitCode?: number;
+  aheadOfBase?: number | null; unpushed?: number | null;
   wrapperAfterCheckout?: boolean; statusAfterCheckout?: string;
   mutateWrapperDuringQuality?: boolean;
   beforeCommand?: (cmd: string, env: Record<string, string>) => void | Promise<void>;
@@ -60,6 +61,20 @@ function fixture(options: {
     if (cmd === "git" && args[0] === "log") stdout = options.signature ?? "N\n";
     if (cmd === "git" && args[0] === "status") stdout = checkedOut && options.statusAfterCheckout !== undefined
       ? options.statusAfterCheckout : options.clean ? "" : " M src/fix.ts\n";
+    if (cmd === "git" && args[0] === "rev-list" && args[1] === "--count") {
+      const range = args[2] ?? "";
+      const aheadOfBase = options.aheadOfBase === undefined ? 0 : options.aheadOfBase;
+      if (range.includes("@{upstream}")) {
+        if (options.unpushed == null) return { exitCode: 128, stdout: "", stderr: "no upstream" };
+        return { exitCode: 0, stdout: `${options.unpushed}\n`, stderr: "" };
+      }
+      if (aheadOfBase == null) return { exitCode: 128, stdout: "", stderr: "unreadable" };
+      return { exitCode: 0, stdout: `${aheadOfBase}\n`, stderr: "" };
+    }
+    if (cmd === "git" && args[0] === "rev-parse" && args.includes("@{upstream}")) {
+      if (options.unpushed == null) return { exitCode: 128, stdout: "", stderr: "no upstream" };
+      return { exitCode: 0, stdout: "origin/feature\n", stderr: "" };
+    }
     if (cmd === "git" && args[0] === "diff") return {
       exitCode: wrapperModified && args[1] === "--quiet" ? 1 : options.diffExitCode ?? 0,
       stdout: options.diff ?? "src/fix.ts\n", stderr: "",
@@ -228,7 +243,21 @@ describe("Quantum wrapper owns remote delivery", () => {
 
   it("returns no_diff for a clean branch with no committed change and no PR", async () => {
     const f = fixture({ clean: true, diff: "" });
-    expect(await executeDeliveryHook(f.input)).toMatchObject({ delivered: false, prUrl: null, reason: "no_diff" });
+    expect(await executeDeliveryHook(f.input)).toMatchObject({ delivered: false, prUrl: null, reason: "no_diff", publicationChecked: true });
+    expect(f.calls.some(([cmd]) => cmd === f.wrapper)).toBe(false);
+    expectNoExternalDelivery(f.calls);
+  });
+
+  it("refuses no_diff when commits are ahead of the base", async () => {
+    const f = fixture({ clean: true, diff: "", aheadOfBase: 2 });
+    expect(await executeDeliveryHook(f.input)).toMatchObject({ delivered: false, prUrl: null, reason: "unpublished_commits" });
+    expect(f.calls.some(([cmd]) => cmd === f.wrapper)).toBe(false);
+    expectNoExternalDelivery(f.calls);
+  });
+
+  it("refuses no_diff when commits are unpushed", async () => {
+    const f = fixture({ clean: true, diff: "", aheadOfBase: 0, unpushed: 1 });
+    expect(await executeDeliveryHook(f.input)).toMatchObject({ delivered: false, prUrl: null, reason: "unpublished_commits" });
     expect(f.calls.some(([cmd]) => cmd === f.wrapper)).toBe(false);
     expectNoExternalDelivery(f.calls);
   });

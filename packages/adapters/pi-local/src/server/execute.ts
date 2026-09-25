@@ -838,14 +838,15 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   };
 
   try {
-    const initial = await runAttempt(sessionPath);
+    let finished = await runAttempt(sessionPath);
+    let clearSessionOnRetry = false;
     const initialFailed =
-      !initial.proc.timedOut && ((initial.proc.exitCode ?? 0) !== 0 || initial.parsed.errors.length > 0);
+      !finished.proc.timedOut && ((finished.proc.exitCode ?? 0) !== 0 || finished.parsed.errors.length > 0);
 
     if (
       canResumeSession &&
       initialFailed &&
-      isPiUnknownSessionError(initial.proc.stdout, initial.rawStderr)
+      isPiUnknownSessionError(finished.proc.stdout, finished.rawStderr)
     ) {
       await onLog(
         "stdout",
@@ -871,8 +872,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           }
         }
       }
-      const retry = await runAttempt(newSessionPath);
-      return toResult(retry, true);
+      finished = await runAttempt(newSessionPath);
+      clearSessionOnRetry = true;
     }
 
     try {
@@ -885,7 +886,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         config,
         context,
         executionTargetIsRemote,
-        exitCode: initial.proc.exitCode,
+        exitCode: finished.proc.exitCode,
         adapterType: "pi_local",
         agentId: agent.id,
         model: model || null,
@@ -905,7 +906,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       await onLog("stderr", `[paperclip] delivery hook error (non-fatal): ${(err as Error).message}\n`);
     }
 
-    return toResult(initial);
+    return toResult(finished, clearSessionOnRetry);
   } finally {
     await Promise.all([
 

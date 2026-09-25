@@ -2,6 +2,7 @@ import { and, asc, eq } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { activityLog, issues } from "@paperclipai/db";
 import {
+  applyDispositionRestore,
   readIssueStatusUpdate,
   statusToRestoreAfterUndeliveredRun,
 } from "@paperclipai/adapter-utils/delivery-guard";
@@ -49,39 +50,54 @@ export async function revertUndeliveredIssueDisposition(
   if (!restoreStatus) return null;
 
   const issuesSvc = issueService(db);
-  const updated = await issuesSvc.update(issue.id, { status: restoreStatus });
-  if (!updated || updated.status !== restoreStatus) return null;
+  const claimed = await applyDispositionRestore({
+    expectedStatus: issue.status,
+    restoreStatus,
+    compareAndSet: async (expectedStatus, patch) => {
+      const rows = await db
+        .update(issues)
+        .set(patch)
+        .where(and(
+          eq(issues.id, issue.id),
+          eq(issues.companyId, input.companyId),
+          eq(issues.status, expectedStatus),
+        ))
+        .returning({ id: issues.id });
+      return rows.length > 0;
+    },
+    record: async () => {
+      await logActivity(db, {
+        companyId: input.companyId,
+        actorType: "system",
+        actorId: "heartbeat",
+        agentId: input.agentId,
+        runId: input.runId,
+        action: "issue.updated",
+        entityType: "issue",
+        entityId: issue.id,
+        details: {
+          identifier: issue.identifier,
+          status: restoreStatus,
+          source: "delivery_guard",
+          errorCode: "not_delivered",
+          reason: input.reason,
+          _previous: { status: issue.status },
+        },
+      });
 
-  await logActivity(db, {
-    companyId: input.companyId,
-    actorType: "system",
-    actorId: "heartbeat",
-    agentId: input.agentId,
-    runId: input.runId,
-    action: "issue.updated",
-    entityType: "issue",
-    entityId: issue.id,
-    details: {
-      identifier: issue.identifier,
-      status: restoreStatus,
-      source: "delivery_guard",
-      errorCode: "not_delivered",
-      reason: input.reason,
-      _previous: { status: issue.status },
+      await issuesSvc.addComment(
+        issue.id,
+        [
+          "Harness rejected this run's disposition because delivery was not proven.",
+          "",
+          `\`not_delivered\` reason=\`${input.reason}\`.`,
+          `Status restored to \`${restoreStatus}\`.`,
+        ].join("\n"),
+        { runId: input.runId },
+        { authorType: "system" },
+      );
     },
   });
 
-  await issuesSvc.addComment(
-    issue.id,
-    [
-      "Harness rejected this run's disposition because delivery was not proven.",
-      "",
-      `\`not_delivered\` reason=\`${input.reason}\`.`,
-      `Status restored to \`${restoreStatus}\`.`,
-    ].join("\n"),
-    { runId: input.runId },
-    { authorType: "system" },
-  );
-
-  return restoreStatus;
+  return claimed ? restoreStatus : null;
 }

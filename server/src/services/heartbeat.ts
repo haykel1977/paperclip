@@ -217,6 +217,7 @@ import {
   applyDeliveryGuardToAdapterResult,
   formatNotDeliveredLogLine,
   resolveDeliveryGuard,
+  snapshotDeliveryGuardEnv,
   takeNotedDeliveryInvocation,
 } from "@paperclipai/adapter-utils/delivery-guard";
 import { revertUndeliveredIssueDisposition } from "./delivery-disposition.js";
@@ -9056,22 +9057,20 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           authToken: authToken ?? undefined,
         });
         const notedDelivery = takeNotedDeliveryInvocation(run.id);
-        if (notedDelivery) {
-          const adapterWouldSucceed = !adapterResult.timedOut
-            && (adapterResult.exitCode ?? 0) === 0
-            && !adapterResult.errorMessage;
-          const deliveryResolution = resolveDeliveryGuard({
-            env: notedDelivery.env,
-            config: notedDelivery.config,
-            context: notedDelivery.context,
-            invocation: notedDelivery.invocation,
-            adapterWouldSucceed,
-          });
-          if (deliveryResolution.status === "failed" && deliveryResolution.reason) {
-            undeliveredReason = deliveryResolution.reason;
-            await onLog("stdout", formatNotDeliveredLogLine(deliveryResolution.reason));
-            adapterResult = applyDeliveryGuardToAdapterResult(adapterResult, deliveryResolution);
-          }
+        const adapterWouldSucceed = !adapterResult.timedOut
+          && (adapterResult.exitCode ?? 0) === 0
+          && !adapterResult.errorMessage;
+        const deliveryResolution = resolveDeliveryGuard({
+          env: notedDelivery?.env ?? snapshotDeliveryGuardEnv(process.env),
+          config: notedDelivery?.config ?? runtimeConfig,
+          context: notedDelivery?.context ?? context,
+          invocation: notedDelivery?.invocation ?? null,
+          adapterWouldSucceed,
+        });
+        if (deliveryResolution.status === "failed" && deliveryResolution.reason) {
+          undeliveredReason = deliveryResolution.reason;
+          await onLog("stdout", formatNotDeliveredLogLine(deliveryResolution.reason));
+          adapterResult = applyDeliveryGuardToAdapterResult(adapterResult, deliveryResolution);
         }
         // Adapter returned cleanly, which means its workspace-restore finally
         // block also ran without throwing. Record the workspace_finalize
