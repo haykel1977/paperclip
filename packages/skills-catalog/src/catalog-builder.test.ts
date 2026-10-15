@@ -136,7 +136,12 @@ describe("skills catalog manifest", () => {
     expect(result.manifest.skills[0]!.contentHash).toMatch(/^sha256:[a-f0-9]{64}$/);
   });
 
-  it("uses GitHub auth headers when a token is available", async () => {
+  it.each([
+    ["github.com", true],
+    ["WWW.GITHUB.COM", true],
+    ["git.example.test", false],
+    ["github.com.example.test", false],
+  ])("scopes GitHub auth headers to %s (authenticated: %s)", async (hostname, authenticated) => {
     const packageDir = await createCatalogPackage();
     const skillMarkdown = [
       "---",
@@ -150,7 +155,7 @@ describe("skills catalog manifest", () => {
     await writeReference(packageDir, "optional", "research", "remote-research", {
       source: {
         type: "github",
-        hostname: "github.com",
+        hostname,
         owner: "example",
         repo: "remote-skill",
         ref: "v1.0.0",
@@ -159,7 +164,9 @@ describe("skills catalog manifest", () => {
       },
       files: ["SKILL.md"],
     });
+    vi.stubEnv("PAPERCLIP_GITHUB_TOKEN", "test-token");
     vi.stubEnv("GITHUB_TOKEN", "test-token");
+    vi.stubEnv("GH_TOKEN", "test-token");
     const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
       if (url.includes("/git/trees/")) {
         return new Response(JSON.stringify({
@@ -183,14 +190,21 @@ describe("skills catalog manifest", () => {
     expect(result.errors).toEqual([]);
     expect(fetchMock).toHaveBeenCalled();
     const treeCall = fetchMock.mock.calls.find(([url]) => String(url).includes("/git/trees/"));
-    const headers = (treeCall?.[1] as { headers?: Record<string, string> } | undefined)?.headers;
     expect(treeCall?.[1]).toMatchObject({
       headers: expect.objectContaining({
         accept: "application/vnd.github+json",
       }),
     });
-    expect(typeof headers?.authorization).toBe("string");
-    expect(headers?.authorization?.length ?? 0).toBeGreaterThan(10);
+    for (const [, init] of fetchMock.mock.calls) {
+      const requestHeaders = init?.headers as Record<string, string>;
+      if (authenticated) {
+        expect(requestHeaders.authorization).toBe(["Bearer", process.env.GITHUB_TOKEN].join(" "));
+        expect(requestHeaders["x-github-api-version"]).toBe("2022-11-28");
+      } else {
+        expect(requestHeaders.authorization).toBeUndefined();
+        expect(requestHeaders["x-github-api-version"]).toBeUndefined();
+      }
+    }
   });
 
   it("reports frontmatter, directory, uniqueness, and inventory errors together", async () => {
