@@ -146,6 +146,17 @@ const QUANTUM_MAKER_CI_RE = /Qwen3-[0-9]+[A-Z]*/;
 const QUANTUM_ADR_GOV_007_BRANCH_RE =
   /^(feat\/agent-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-ticket-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-[A-Za-z0-9._-]+|fix\/paperclip-[A-Za-z0-9._/-]+|pr-learning\/.+)$/;
 const QUANTUM_MAX_NON_DOC_FILES = 3;
+// Operator-tunable cap for experimentation (decision 2026-10-15). Bounded so a
+// typo cannot silently disable the scope guard: values outside 1..10 or not an
+// integer fall back to the default of 3.
+const QUANTUM_MAX_NON_DOC_FILES_CEILING = 10;
+export function resolveQuantumMaxNonDocFiles(env: Record<string, string> = {}): number {
+  const raw = nonEmpty(env.PAPERCLIP_QUANTUM_MAX_NON_DOC_FILES);
+  if (!raw || !/^\d+$/.test(raw)) return QUANTUM_MAX_NON_DOC_FILES;
+  const n = Number(raw);
+  if (!Number.isSafeInteger(n) || n < 1 || n > QUANTUM_MAX_NON_DOC_FILES_CEILING) return QUANTUM_MAX_NON_DOC_FILES;
+  return n;
+}
 const QUANTUM_DOC_EXT_RE = /\.(md|yaml|yml|txt|json)$/i;
 const QUANTUM_PR_WRAPPER_REL = path.join("scripts", "agent-pr-create.sh");
 
@@ -196,8 +207,16 @@ export function deriveQuantumMakerToken(
   const exact = raw.match(QUANTUM_MAKER_CI_RE);
   if (exact) return exact[0];
   const loose = raw.match(/qwen3(?:\.\d+)?[-_]?[a-z]*[-_]?(\d+)\s*([a-z]*)/i);
-  if (!loose) return null;
-  return `Qwen3-${loose[1]}${(loose[2] ?? "").toUpperCase()}`;
+  if (loose) return `Qwen3-${loose[1]}${(loose[2] ?? "").toUpperCase()}`;
+  // Non-Qwen makers admitted by a live `model_exception` in quantum's
+  // AGENT_IDENTITY_MAP.json. The token must match that exception's `model`
+  // exactly; maker-checker-enforcer.yml stays the authority and refuses a PR
+  // whose author has no unexpired exception for it.
+  const glm = raw.match(/(?:^|[/\s])glm[-_ ]?(\d+(?:\.\d+)?)(?:[-_]?(flash|air|turbo))?(?![\w.])/i);
+  if (glm) return `GLM-${glm[1]}${glm[2] ? `-${glm[2][0]!.toUpperCase()}${glm[2].slice(1).toLowerCase()}` : ""}`;
+  const deepseek = raw.match(/(?:^|[/\s])deepseek[-_ ]?v(\d+(?:\.\d+)?)(?:[-_]?(flash|pro))?(?![\w.])/i);
+  if (deepseek) return `DeepSeek-V${deepseek[1]}${deepseek[2] ? `-${deepseek[2][0]!.toUpperCase()}${deepseek[2].slice(1).toLowerCase()}` : ""}`;
+  return null;
 }
 
 // A repository-qualified reference must never become an unqualified local issue.
@@ -1623,8 +1642,9 @@ async function executeDeliveryHookWithToken(input: ExecuteDeliveryHookInput): Pr
       await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="quantum_junk_files" files="${detail}"\n`);
       return { delivered: false, prUrl: null, reason: `delivery_blocked: quantum_junk_files: ${detail}` };
     }
-    if (nonDocPaths.length > QUANTUM_MAX_NON_DOC_FILES) {
-      const detail = `${nonDocPaths.length} non-doc files (max ${QUANTUM_MAX_NON_DOC_FILES}): ${nonDocPaths.join(", ")}. Split the change into smaller PRs.`;
+    const maxNonDocFiles = resolveQuantumMaxNonDocFiles(env);
+    if (nonDocPaths.length > maxNonDocFiles) {
+      const detail = `${nonDocPaths.length} non-doc files (max ${maxNonDocFiles}): ${nonDocPaths.join(", ")}. Split the change into smaller PRs.`;
       await log("stderr", `[delivery ${ts()}] result=delivery_blocked reason="quantum_scope_exceeded" detail="${detail}"\n`);
       return { delivered: false, prUrl: null, reason: `delivery_blocked: quantum_scope_exceeded: ${detail}` };
     }

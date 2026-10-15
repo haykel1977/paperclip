@@ -17,6 +17,7 @@ import {
   isQuantumJunkPath,
   parseChangedPathsFromPorcelain,
   resolveGithubIssueNumber,
+  resolveQuantumMaxNonDocFiles,
   type DeliveryHookRunProcess,
 } from "./delivery-hook.js";
 
@@ -334,6 +335,45 @@ describe("executeDeliveryHook Quantum fail-closed contract", () => {
     expect(result.reason).toContain("Split the change");
     expect(calls.some((call) => call[0] === "git" && call[1] === "commit")).toBe(false);
     expect(calls.some((call) => call[0] === "gh" && call[1] === "pr" && call[2] === "create")).toBe(false);
+  });
+
+  it("honours PAPERCLIP_QUANTUM_MAX_NON_DOC_FILES within 1..10", async () => {
+    const worktreeCwd = mkWorktree();
+    const calls: string[][] = [];
+    const runProc = vi.fn(async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args]);
+      if (cmd === "git" && args[0] === "status") {
+        return { exitCode: 0, stdout: " M a.ts\n M b.ts\n M c.ts\n M d.ts\n M e.ts\n", stderr: "" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    const result = await executeDeliveryHook({
+      ...quantumBase,
+      env: { ...quantumBase.env, PAPERCLIP_QUANTUM_MAX_NON_DOC_FILES: "5" },
+      worktreeCwd,
+      runProc,
+    });
+    expect(result.reason ?? "").not.toMatch(/quantum_scope_exceeded/);
+  });
+
+  it("keeps the default cap of 3 for invalid PAPERCLIP_QUANTUM_MAX_NON_DOC_FILES values", () => {
+    expect(resolveQuantumMaxNonDocFiles({})).toBe(3);
+    expect(resolveQuantumMaxNonDocFiles({ PAPERCLIP_QUANTUM_MAX_NON_DOC_FILES: "5" })).toBe(5);
+    expect(resolveQuantumMaxNonDocFiles({ PAPERCLIP_QUANTUM_MAX_NON_DOC_FILES: "10" })).toBe(10);
+    for (const bad of ["0", "11", "999", "-1", "4.5", "five", " ", "1e1"]) {
+      expect(resolveQuantumMaxNonDocFiles({ PAPERCLIP_QUANTUM_MAX_NON_DOC_FILES: bad })).toBe(3);
+    }
+  });
+
+  it("derives exception-backed GLM and DeepSeek maker tokens", () => {
+    expect(deriveQuantumMakerToken("opencode/glm-5.3", {})).toBe("GLM-5.3");
+    expect(deriveQuantumMakerToken("opencode/glm-5.3-flash", {})).toBe("GLM-5.3-Flash");
+    expect(deriveQuantumMakerToken("zai/GLM-5.2", {})).toBe("GLM-5.2");
+    expect(deriveQuantumMakerToken("opencode/deepseek-v4-flash", {})).toBe("DeepSeek-V4-Flash");
+    expect(deriveQuantumMakerToken("opencode/deepseek-v4-pro", {})).toBe("DeepSeek-V4-Pro");
+    expect(deriveQuantumMakerToken("vllm-sovereign/Qwen/Qwen3-Coder-30B-A3B-Instruct", {})).toBe("Qwen3-30B");
+    expect(deriveQuantumMakerToken("opencode/kimi-k3", {})).toBeNull();
+    expect(deriveQuantumMakerToken("opencode/bigglm-5", {})).toBeNull();
   });
 
   it("blocks RULE-DRIFT-004 junk files before commit", async () => {
