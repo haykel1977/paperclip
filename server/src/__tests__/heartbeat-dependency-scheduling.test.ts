@@ -78,6 +78,14 @@ async function ensureIssueRelationsTable(db: ReturnType<typeof createDb>) {
   `));
 }
 
+function isForeignKeyViolation(error: unknown): boolean {
+  for (let current: unknown = error, depth = 0; current && depth < 5; depth += 1) {
+    if (typeof current === "object" && (current as { code?: unknown }).code === "23503") return true;
+    current = typeof current === "object" ? (current as { cause?: unknown }).cause : undefined;
+  }
+  return false;
+}
+
 async function waitForCondition(fn: () => Promise<boolean>, timeoutMs = 3_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -135,7 +143,20 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
     await db.delete(documents);
     await db.delete(issueRelations);
     await db.delete(issueTreeHolds);
-    await db.delete(issues);
+    // A run finishing in the background can still acquire an environment lease
+    // for an issue after the idle poll above; that lease then blocks the issue
+    // delete with a foreign-key violation (23503). Clear the leases again and
+    // retry, so teardown is deterministic instead of flaky.
+    for (let attempt = 0; ; attempt += 1) {
+      await db.delete(environmentLeases);
+      try {
+        await db.delete(issues);
+        break;
+      } catch (error) {
+        if (attempt >= 20 || !isForeignKeyViolation(error)) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
     await db.delete(heartbeatRunEvents);
     await db.delete(activityLog);
     await db.delete(heartbeatRuns);
