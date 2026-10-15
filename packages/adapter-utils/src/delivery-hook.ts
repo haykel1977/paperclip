@@ -212,9 +212,9 @@ export function deriveQuantumMakerToken(
   // AGENT_IDENTITY_MAP.json. The token must match that exception's `model`
   // exactly; maker-checker-enforcer.yml stays the authority and refuses a PR
   // whose author has no unexpired exception for it.
-  const glm = raw.match(/(?:^|[/\s])glm[-_ ]?(\d+(?:\.\d+)?)(?:[-_]?(flash|air|turbo))?(?![\w.])/i);
+  const glm = raw.match(/(?:^|[/\s])glm[-_ ]?(\d+(?:\.\d+)?)(?:[-_]?(flash|air|turbo))?$/i);
   if (glm) return `GLM-${glm[1]}${glm[2] ? `-${glm[2][0]!.toUpperCase()}${glm[2].slice(1).toLowerCase()}` : ""}`;
-  const deepseek = raw.match(/(?:^|[/\s])deepseek[-_ ]?v(\d+(?:\.\d+)?)(?:[-_]?(flash|pro))?(?![\w.])/i);
+  const deepseek = raw.match(/(?:^|[/\s])deepseek[-_ ]?v(\d+(?:\.\d+)?)(?:[-_]?(flash|pro))?$/i);
   if (deepseek) return `DeepSeek-V${deepseek[1]}${deepseek[2] ? `-${deepseek[2][0]!.toUpperCase()}${deepseek[2].slice(1).toLowerCase()}` : ""}`;
   return null;
 }
