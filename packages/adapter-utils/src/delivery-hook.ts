@@ -151,7 +151,8 @@ const QUANTUM_MAX_NON_DOC_FILES = 3;
 // integer fall back to the default of 3.
 const QUANTUM_MAX_NON_DOC_FILES_CEILING = 10;
 export function resolveQuantumMaxNonDocFiles(env: Record<string, string> = {}): number {
-  const raw = nonEmpty(env.PAPERCLIP_QUANTUM_MAX_NON_DOC_FILES);
+  const raw = nonEmpty(env.PAPERCLIP_QUANTUM_MAX_NON_DOC_FILES)
+    ?? nonEmpty(process.env.PAPERCLIP_QUANTUM_MAX_NON_DOC_FILES);
   if (!raw || !/^\d+$/.test(raw)) return QUANTUM_MAX_NON_DOC_FILES;
   const n = Number(raw);
   if (!Number.isSafeInteger(n) || n < 1 || n > QUANTUM_MAX_NON_DOC_FILES_CEILING) return QUANTUM_MAX_NON_DOC_FILES;
