@@ -38,7 +38,10 @@ async function createControlledGatewayServer() {
   let firstWaitGate = new Promise<void>((resolve) => {
     firstWaitRelease = resolve;
   });
-  let waitCount = 0;
+  // Only the first agent run's wait is held. Keying on wait order instead would
+  // hold the follow-up run whenever the first run is cancelled before its own
+  // agent.wait reaches the gateway, exposing it to waitTimeoutMs (flaky).
+  let firstRunId: string | null = null;
 
   wss.on("connection", (socket) => {
     socket.send(
@@ -85,6 +88,7 @@ async function createControlledGatewayServer() {
           typeof frame.params?.idempotencyKey === "string"
             ? frame.params.idempotencyKey
             : `run-${agentPayloads.length}`;
+        firstRunId ??= runId;
 
         socket.send(
           JSON.stringify({
@@ -102,8 +106,7 @@ async function createControlledGatewayServer() {
       }
 
       if (frame.method === "agent.wait") {
-        waitCount += 1;
-        if (waitCount === 1) {
+        if (firstRunId !== null && frame.params?.runId === firstRunId) {
           await firstWaitGate;
         }
         socket.send(
@@ -867,10 +870,17 @@ describe("heartbeat comment wake batching", () => {
       expect(String(promotedPayload.message ?? "")).toContain("Queued follow-up");
 
       gateway.releaseFirstWait();
+      let lastRuns: Array<typeof heartbeatRuns.$inferSelect> = [];
       await waitFor(async () => {
-        const runs = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId));
-        return runs.length === 2 && runs.every((run) => ["cancelled", "succeeded"].includes(run.status));
-      }, 90_000);
+        lastRuns = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId));
+        return lastRuns.length === 2 && lastRuns.every((run) => ["cancelled", "succeeded"].includes(run.status));
+      }, 90_000).catch((error) => {
+        throw new Error(
+          `${(error as Error).message}; runs: ${JSON.stringify(
+            lastRuns.map((run) => ({ id: run.id, status: run.status, errorCode: run.errorCode, error: run.error })),
+          )}`,
+        );
+      });
     } finally {
       gateway.releaseFirstWait();
       await gateway.close();
