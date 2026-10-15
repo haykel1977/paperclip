@@ -338,22 +338,31 @@ describe("executeDeliveryHook Quantum fail-closed contract", () => {
   });
 
   it("honours PAPERCLIP_QUANTUM_MAX_NON_DOC_FILES within 1..10", async () => {
-    const worktreeCwd = mkWorktree();
-    const calls: string[][] = [];
-    const runProc = vi.fn(async (cmd: string, args: string[]) => {
-      calls.push([cmd, ...args]);
-      if (cmd === "git" && args[0] === "status") {
-        return { exitCode: 0, stdout: " M a.ts\n M b.ts\n M c.ts\n M d.ts\n M e.ts\n", stderr: "" };
-      }
-      return { exitCode: 0, stdout: "", stderr: "" };
-    });
-    const result = await executeDeliveryHook({
-      ...quantumBase,
-      env: { ...quantumBase.env, PAPERCLIP_QUANTUM_MAX_NON_DOC_FILES: "5" },
-      worktreeCwd,
-      runProc,
-    });
-    expect(result.reason ?? "").not.toMatch(/quantum_scope_exceeded/);
+    const fiveFiles = " M a.ts\n M b.ts\n M c.ts\n M d.ts\n M e.ts\n";
+    const run = async (env: Record<string, string>) => {
+      const worktreeCwd = mkWorktree();
+      const calls: string[][] = [];
+      const runProc = vi.fn(async (cmd: string, args: string[]) => {
+        calls.push([cmd, ...args]);
+        if (cmd === "git" && args[0] === "status") return { exitCode: 0, stdout: fiveFiles, stderr: "" };
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const result = await executeDeliveryHook({ ...quantumBase, env, worktreeCwd, runProc });
+      return { result, calls };
+    };
+
+    // Control: default cap of 3 blocks before any commit.
+    const blocked = await run({ ...quantumBase.env });
+    expect(blocked.result.reason).toMatch(/quantum_scope_exceeded: 5 non-doc files \(max 3\)/);
+    expect(blocked.calls.some((call) => call[0] === "git" && call.includes("commit"))).toBe(false);
+
+    // Cap 5: the five-file change passes the scope guard, is committed, and reaches the PR wrapper.
+    const allowed = await run({ ...quantumBase.env, PAPERCLIP_QUANTUM_MAX_NON_DOC_FILES: "5" });
+    expect(allowed.result.reason ?? "").not.toMatch(/quantum_scope_exceeded/);
+    expect(allowed.calls.some((call) => call[0] === "git" && call.includes("commit"))).toBe(true);
+    expect(allowed.calls.some((call) => call[0].endsWith("/scripts/agent-pr-create.sh"))).toBe(true);
+    // The stubbed wrapper prints no RESULT line, so the hook stops right after it (fail-closed).
+    expect(allowed.result.reason).toBe("delivery_blocked: quantum_pr_wrapper_invalid_result");
   });
 
   it.each([
