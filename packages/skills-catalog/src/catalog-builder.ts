@@ -784,9 +784,9 @@ function githubRequestHeaders(hostname: string, base: Record<string, string> = {
     ...base,
     "user-agent": "paperclip-skills-catalog-builder",
   };
-  const token = process.env.PAPERCLIP_GITHUB_TOKEN ?? process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
-  if (token) headers.authorization = "Bearer " + token;
   if (isDotComGitHubHost(hostname.toLowerCase())) {
+    const token = process.env.PAPERCLIP_GITHUB_TOKEN ?? process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
+    if (token) headers.authorization = "Bearer " + token;
     headers["x-github-api-version"] = "2022-11-28";
   }
   return headers;

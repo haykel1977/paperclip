@@ -76,6 +76,39 @@ test('review: the required contexts it enforces match the single source of truth
 
 // ── pr.yml: verify aggregates every lane and always terminates ────────────────
 
+test('PR workflow: superseded runs are cancelled without changing coverage', () => {
+  assert.match(prWorkflow, /group: pr-\$\{\{ github\.event\.pull_request\.number \}\}/);
+  assert.match(prWorkflow, /cancel-in-progress: true/);
+});
+
+test('PR workflow: lockfile downloads require a producer and fail closed', () => {
+  const downloads = prWorkflow.match(
+    /- name: Restore regenerated PR lockfile \(if policy uploaded one\)[\s\S]*?(?=\n      - name:)/g,
+  );
+  assert.equal(downloads?.length, 6);
+  for (const download of downloads) {
+    assert.match(download, /if: needs\.policy\.outputs\.lockfile_regenerated == '1'/);
+    assert.doesNotMatch(download, /continue-on-error:/);
+    assert.match(download, /name: pr-lockfile/);
+  }
+  assert.match(prWorkflow, /lockfile_regenerated: \$\{\{ steps\.regen_lockfile\.outputs\.regenerated \}\}/);
+  assert.match(prWorkflow, /if: steps\.regen_lockfile\.outputs\.regenerated == '1'/);
+  assert.match(prWorkflow, /if-no-files-found: error/);
+});
+
+test('Build: pinned catalog fetches receive only a read-only step-scoped token', () => {
+  const buildJob = prWorkflow.slice(
+    prWorkflow.indexOf('\n  build:'),
+    prWorkflow.indexOf('\n  verify_serialized_server:'),
+  );
+  assert.match(buildJob, /permissions:\n      contents: read/);
+  assert.doesNotMatch(buildJob, /: write/);
+  const buildStep = buildJob.slice(stepIndex(buildJob, 'Build'));
+  assert.match(buildStep, /env:\n          GITHUB_TOKEN: \$\{\{ github\.token \}\}/);
+  assert.match(buildStep, /run: pnpm build/);
+  assert.doesNotMatch(buildJob.slice(0, stepIndex(buildJob, 'Build')), /GITHUB_TOKEN:/);
+});
+
 test('verify: aggregates every sibling lane in the workflow', () => {
   const verifyJob = prWorkflow.slice(
     prWorkflow.indexOf('\n  verify:'),
