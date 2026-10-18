@@ -59,5 +59,7 @@ describeEmbeddedPostgres("suppression d'une carte avec coûts et commentaires", 
       select count(*)::int as n from issue_comments where company_id = ${company.id}
     `;
     expect(comments.n).toBe(0);
-  });
+    // Démarrage de Postgres embarqué + chaîne complète des migrations : même délai que
+    // heartbeat-runs-listing-index.test.ts, le défaut de Vitest (5 s) ne suffit pas.
+  }, 180_000);
 });
