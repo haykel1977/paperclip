@@ -708,6 +708,13 @@
       "when": 1780534600000,
       "tag": "0100_heartbeat_runs_company_created_idx",
       "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1780534800000,
+      "tag": "0101_issue_delete_fk_rules",
+      "breakpoints": true
     }
   ]
 }
